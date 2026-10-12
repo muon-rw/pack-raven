@@ -1,0 +1,239 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use md5::{Digest, Md5};
+use serde_json::Value;
+
+use crate::pack::Pack;
+use crate::settings::Settings;
+
+pub struct ClientLaunch {
+    pub java: PathBuf,
+    pub args: Vec<String>,
+}
+
+fn os_name() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "osx"
+    } else {
+        "linux"
+    }
+}
+
+fn rule_matches(rule: &Value, features: &HashMap<&str, bool>) -> bool {
+    if let Some(os) = rule.get("os") {
+        if os.get("name").and_then(Value::as_str).is_some_and(|name| name != os_name()) {
+            return false;
+        }
+        if os.get("arch").and_then(Value::as_str) == Some("x86") {
+            return false;
+        }
+    }
+    if let Some(wanted) = rule.get("features").and_then(Value::as_object) {
+        return wanted.iter().all(|(k, v)| features.get(k.as_str()).copied().unwrap_or(false) == v.as_bool().unwrap_or(false));
+    }
+    true
+}
+
+fn allowed(rules: Option<&Value>, features: &HashMap<&str, bool>) -> bool {
+    let Some(rules) = rules.and_then(Value::as_array) else { return true };
+    let mut result = false;
+    for rule in rules {
+        if rule_matches(rule, features) {
+            result = rule.get("action").and_then(Value::as_str) == Some("allow");
+        }
+    }
+    result
+}
+
+fn maven_path(name: &str) -> Option<(String, String)> {
+    let parts: Vec<&str> = name.split(':').collect();
+    let (group, artifact, version) = (parts.first()?, parts.get(1)?, parts.get(2)?);
+    let classifier = parts.get(3).map(|c| format!("-{c}")).unwrap_or_default();
+    let key = format!("{group}:{artifact}{classifier}");
+    Some((key, format!("{}/{artifact}/{version}/{artifact}-{version}{classifier}.jar", group.replace('.', "/"))))
+}
+
+fn read_version(install: &Path, id: &str) -> Result<Value> {
+    let path = install.join("versions").join(id).join(format!("{id}.json"));
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("{} is missing; launch the profile once from CurseForge so it installs {id}", path.display()))?;
+    Ok(serde_json::from_str(&text)?)
+}
+
+fn offline_uuid(name: &str) -> String {
+    let mut bytes: [u8; 16] = Md5::digest(format!("OfflinePlayer:{name}").as_bytes()).into();
+    bytes[6] = (bytes[6] & 0x0f) | 0x30;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    hex::encode(bytes)
+}
+
+pub fn split_args(text: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quoted = false;
+    let mut has_token = false;
+    for c in text.chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                has_token = true;
+            }
+            c if c.is_whitespace() && !quoted => {
+                if has_token {
+                    args.push(std::mem::take(&mut current));
+                    has_token = false;
+                }
+            }
+            c => {
+                current.push(c);
+                has_token = true;
+            }
+        }
+    }
+    if has_token {
+        args.push(current);
+    }
+    args
+}
+
+struct LauncherProfile {
+    java: Option<PathBuf>,
+    java_args: Option<String>,
+}
+
+fn launcher_profile(install: &Path, instance: &Path) -> LauncherProfile {
+    let profiles: Option<Value> = std::fs::read_to_string(install.join("launcher_profiles.json")).ok().and_then(|t| serde_json::from_str(&t).ok());
+    let wanted = instance.to_string_lossy().trim_end_matches(['\\', '/']).to_lowercase();
+    let profile = profiles.as_ref().and_then(|p| p.get("profiles")).and_then(Value::as_object).and_then(|all| {
+        all.values().find(|p| {
+            p.get("gameDir").and_then(Value::as_str).is_some_and(|dir| dir.trim_end_matches(['\\', '/']).to_lowercase() == wanted)
+        })
+    });
+    LauncherProfile {
+        java: profile.and_then(|p| p.get("javaDir")).and_then(Value::as_str).map(PathBuf::from),
+        java_args: profile.and_then(|p| p.get("javaArgs")).and_then(Value::as_str).map(String::from),
+    }
+}
+
+fn console_java(path: PathBuf) -> PathBuf {
+    let console = path.with_file_name(if cfg!(windows) { "java.exe" } else { "java" });
+    if console.exists() { console } else { path }
+}
+
+pub fn java(settings: &Settings) -> Result<PathBuf> {
+    if let Some(java) = &settings.java {
+        return Ok(java.clone());
+    }
+    if let Some(java) = launcher_profile(&settings.install_dir, &settings.instance_dir).java.filter(|p| p.exists()) {
+        return Ok(console_java(java));
+    }
+    let platform = if cfg!(windows) { "windows-x64" } else if cfg!(target_arch = "aarch64") { "mac-os-arm64" } else { "mac-os" };
+    let runtime = settings.install_dir.join("runtime").join("java-runtime-delta").join(platform).join("java-runtime-delta");
+    let java = if cfg!(target_os = "macos") {
+        runtime.join("jre.bundle").join("Contents").join("Home").join("bin").join("java")
+    } else {
+        runtime.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" })
+    };
+    if java.exists() { Ok(java) } else { anyhow::bail!("no Java 21 found; set one in Settings") }
+}
+
+pub fn client(settings: &Settings, pack: &Pack, username: &str, server: Option<&str>, natives_dir: &Path) -> Result<ClientLaunch> {
+    let install = &settings.install_dir;
+    let id = pack.lock.loader()?.to_string();
+    let child = read_version(install, &id)?;
+    let parent_id = child.get("inheritsFrom").and_then(Value::as_str).unwrap_or(&id).to_string();
+    let parent = if parent_id == id { child.clone() } else { read_version(install, &parent_id)? };
+
+    let features: HashMap<&str, bool> = [("is_quick_play_multiplayer", server.is_some())].into_iter().collect();
+    let libraries_dir = install.join("libraries");
+    let mut order: Vec<String> = Vec::new();
+    let mut libraries: HashMap<String, PathBuf> = HashMap::new();
+    for version in [&child, &parent] {
+        for library in version.get("libraries").and_then(Value::as_array).into_iter().flatten() {
+            if !allowed(library.get("rules"), &features) {
+                continue;
+            }
+            let Some(name) = library.get("name").and_then(Value::as_str) else { continue };
+            let Some((key, derived)) = maven_path(name) else { continue };
+            if libraries.contains_key(&key) {
+                continue;
+            }
+            let relative = library.pointer("/downloads/artifact/path").and_then(Value::as_str).map(String::from).unwrap_or(derived);
+            order.push(key.clone());
+            libraries.insert(key, libraries_dir.join(relative));
+        }
+    }
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    let mut classpath: Vec<String> = order.iter().map(|k| libraries[k].to_string_lossy().into_owned()).collect();
+    let version_jar = install.join("versions").join(&id).join(format!("{id}.jar"));
+    let jar = if version_jar.exists() { version_jar } else { install.join("versions").join(&parent_id).join(format!("{parent_id}.jar")) };
+    classpath.push(jar.to_string_lossy().into_owned());
+
+    let assets_index = parent.get("assets").and_then(Value::as_str).unwrap_or_default().to_string();
+    let values: HashMap<&str, String> = [
+        ("auth_player_name", username.to_string()),
+        ("version_name", id.clone()),
+        ("game_directory", settings.instance_dir.to_string_lossy().into_owned()),
+        ("assets_root", install.join("assets").to_string_lossy().into_owned()),
+        ("assets_index_name", assets_index),
+        ("auth_uuid", offline_uuid(username)),
+        ("auth_access_token", "0".into()),
+        ("clientid", "0".into()),
+        ("auth_xuid", "0".into()),
+        ("user_type", "legacy".into()),
+        ("version_type", "release".into()),
+        ("quickPlayMultiplayer", server.unwrap_or_default().to_string()),
+        ("natives_directory", natives_dir.to_string_lossy().into_owned()),
+        ("launcher_name", "packraven".into()),
+        ("launcher_version", env!("CARGO_PKG_VERSION").into()),
+        ("classpath", classpath.join(separator)),
+        ("library_directory", libraries_dir.to_string_lossy().into_owned()),
+        ("classpath_separator", separator.into()),
+    ]
+    .into_iter()
+    .collect();
+    let substitute = |arg: &str| {
+        let mut out = arg.to_string();
+        for (key, value) in &values {
+            out = out.replace(&format!("${{{key}}}"), value);
+        }
+        out
+    };
+    let collect = |kind: &str, out: &mut Vec<String>| {
+        for version in [&parent, &child] {
+            for arg in version.pointer(&format!("/arguments/{kind}")).and_then(Value::as_array).into_iter().flatten() {
+                match arg {
+                    Value::String(s) => out.push(substitute(s)),
+                    Value::Object(_) if allowed(arg.get("rules"), &features) => match arg.get("value") {
+                        Some(Value::String(s)) => out.push(substitute(s)),
+                        Some(Value::Array(list)) => out.extend(list.iter().filter_map(Value::as_str).map(substitute)),
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        }
+    };
+
+    let profile = launcher_profile(install, &settings.instance_dir);
+    let mut args: Vec<String> = Vec::new();
+    collect("jvm", &mut args);
+    match profile.java_args {
+        Some(java_args) => args.extend(split_args(&java_args)),
+        None => args.push(format!("-Xmx{}", pack.config.test.client_memory)),
+    }
+    if let Some(logging) = parent.pointer("/logging/client") {
+        let file = logging.pointer("/file/id").and_then(Value::as_str).unwrap_or_default();
+        let config = install.join("assets").join("log_configs").join(file);
+        if let (true, Some(argument)) = (config.exists(), logging.get("argument").and_then(Value::as_str)) {
+            args.push(argument.replace("${path}", &config.to_string_lossy()));
+        }
+    }
+    args.push(child.get("mainClass").or(parent.get("mainClass")).and_then(Value::as_str).context("version has no main class")?.to_string());
+    collect("game", &mut args);
+    Ok(ClientLaunch { java: java(settings)?, args })
+}

@@ -1,0 +1,3 @@
+#!/bin/sh
+[ "$1" = rebase ] || exit 0
+"$(dirname "$0")/run.sh" restore || true

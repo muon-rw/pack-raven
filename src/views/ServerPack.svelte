@@ -1,0 +1,257 @@
+<script lang="ts">
+  import Notice from '../components/Notice.svelte'
+  import { onMount } from 'svelte'
+  import { openPath, openUrl } from '@tauri-apps/plugin-opener'
+  import { api, errorText, type ModSide, type Override } from '../lib/api'
+  import { job } from '../lib/jobs.svelte'
+  import LogView from '../components/LogView.svelte'
+
+  type Filter = 'excluded' | 'all' | 'overridden'
+
+  let mods: ModSide[] = $state([])
+  let loadError: string | null = $state(null)
+  let loading = $state(true)
+  let filter: Filter = $state('excluded')
+  let search = $state('')
+
+  async function load() {
+    loading = true
+    try {
+      mods = await api.serverSides()
+    } catch (error) {
+      loadError = `Couldn't read mod sides: ${errorText(error)}`
+    } finally {
+      loading = false
+    }
+  }
+
+  onMount(load)
+
+  async function setOverride(mod: ModSide, select: HTMLSelectElement) {
+    try {
+      await api.setSideOverride(mod.projectId, select.value as Override)
+    } catch (error) {
+      select.value = mod.override
+      loadError = `Couldn't change the override for ${mod.name}: ${errorText(error)}`
+    }
+    await load()
+  }
+
+  async function build() {
+    try {
+      loadError = null
+      await api.buildServerPack()
+    } catch (error) {
+      loadError = `Couldn't start the build: ${errorText(error)}`
+    }
+  }
+
+  let excludedCount = $derived(mods.filter((m) => m.side === 'client').length)
+  let visible = $derived(
+    mods.filter((m) => {
+      if (filter === 'excluded' && m.side !== 'client') return false
+      if (filter === 'overridden' && m.override === 'auto') return false
+      return !search || m.name.toLowerCase().includes(search.toLowerCase())
+    }),
+  )
+  let building = $derived(job('server-pack').phase === 'running')
+  let result = $derived(job('server-pack'))
+</script>
+
+<div class="server">
+  <div class="head">
+    <div>
+      <h2>Server pack</h2>
+      <p class="muted">
+        {mods.length} mods, {excludedCount} left out as client-only. Sides come from Modrinth and CurseForge metadata; override any that are wrong.
+      </p>
+    </div>
+    <button class="primary" class:busy={building} onclick={build} disabled={building}>{building ? 'Building' : 'Build server pack'}</button>
+  </div>
+
+  {#if loadError}
+    <Notice tone="error">
+      <p>{loadError}</p>
+      <p><button onclick={() => { loadError = null; load() }} disabled={loading}>Try again</button></p>
+    </Notice>
+  {/if}
+
+  <div class="tools">
+    <div class="filters" role="group" aria-label="Show">
+      {#each [['excluded', 'Left out'], ['overridden', 'Overridden'], ['all', 'All mods']] as const as [id, label] (id)}
+        <button aria-pressed={filter === id} class:on={filter === id} onclick={() => (filter = id)}>{label}</button>
+      {/each}
+    </div>
+    <input type="search" bind:value={search} placeholder="Find a mod" aria-label="Find a mod" />
+  </div>
+
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <div class="table" role="region" aria-label="Mods" tabindex="0">
+    <table aria-busy={loading && !mods.length}>
+      <thead>
+        <tr><th>Mod</th><th>Server</th><th>Why</th><th>Override</th></tr>
+      </thead>
+      <tbody>
+        {#if loading && !mods.length}
+          {#each { length: 8 } as _, row (row)}
+            <tr class="skeleton" aria-hidden="true">
+              <td><span style="width: {55 + ((row * 37) % 35)}%"></span><span class="short"></span></td>
+              <td><span></span></td>
+              <td><span style="width: {60 + ((row * 23) % 30)}%"></span></td>
+              <td><span></span></td>
+            </tr>
+          {/each}
+        {:else}
+          {#each visible as mod (mod.path)}
+            <tr>
+              <td>
+                {#if mod.url}<a href={mod.url} onclick={(e) => { e.preventDefault(); openUrl(mod.url!) }}>{mod.name}</a>{:else}{mod.name}{/if}
+                <div class="file muted">{mod.path.slice(5)}</div>
+              </td>
+              <td class="side {mod.side}">{mod.side === 'client' ? 'Left out' : mod.side === 'server' ? 'Server only' : 'Included'}</td>
+              <td class="muted">{mod.reason}</td>
+              <td>
+                <select value={mod.override} onchange={(e) => setOverride(mod, e.currentTarget)} aria-label="Override for {mod.name}">
+                  <option value="auto">Automatic</option>
+                  <option value="client">Leave out</option>
+                  <option value="keep">Keep on server</option>
+                </select>
+              </td>
+            </tr>
+          {:else}
+            <tr><td colspan="4" class="muted">No mods match. Try another filter or clear the search.</td></tr>
+          {/each}
+        {/if}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="output">
+    <div class="tools">
+      <h3>Build log</h3>
+      {#if result.phase === 'done' && result.message}
+        <button onclick={() => openPath(result.message!.replace(/[\\/][^\\/]+$/, ''))}>Show server pack</button>
+      {/if}
+    </div>
+    <LogView lines={result.lines} label="Server pack build log" empty="Build the server pack to see its log." />
+  </div>
+</div>
+
+<style>
+  .server {
+    display: grid;
+    gap: 18px;
+  }
+
+  .head,
+  .tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .head p {
+    margin-top: 4px;
+  }
+
+  .filters {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    padding: 3px;
+    gap: 3px;
+    background: var(--ink);
+    border: 1px solid var(--quill);
+    border-radius: var(--radius-control);
+  }
+
+  .filters button {
+    font-weight: 400;
+    padding: 5px 16px;
+    color: var(--ash);
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .filters button.on {
+    color: var(--bone);
+    font-weight: 700;
+    border-color: var(--quill-hi);
+    background: var(--quill);
+  }
+
+  .skeleton span {
+    display: block;
+    height: 0.9em;
+    width: 70%;
+    margin: 4px 0;
+    border-radius: 3px;
+    background: var(--quill);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+
+  .skeleton span.short {
+    width: 35%;
+    opacity: 0.6;
+  }
+
+  @keyframes pulse {
+    50% {
+      opacity: 0.45;
+    }
+  }
+
+  .tools input {
+    width: 240px;
+  }
+
+  .table {
+    max-height: 46vh;
+    overflow: auto;
+    border: 1px solid var(--quill);
+    border-radius: var(--radius-panel);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th {
+    position: sticky;
+    top: 0;
+    text-align: left;
+    font-size: var(--step--1);
+    color: var(--ash);
+    font-weight: 400;
+    background: var(--plume);
+    padding: 8px 12px;
+  }
+
+  td {
+    padding: 8px 12px;
+    border-top: 1px solid var(--quill);
+    vertical-align: top;
+  }
+
+  td a {
+    color: var(--bone);
+  }
+
+  .side.client {
+    color: var(--amber);
+  }
+
+  .side.server {
+    color: var(--violet);
+  }
+
+
+  .output {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 260px;
+  }
+</style>
