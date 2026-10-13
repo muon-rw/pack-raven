@@ -1,7 +1,7 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
   import { onMount } from 'svelte'
-  import { openPath, openUrl } from '@tauri-apps/plugin-opener'
+  import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
   import { api, errorText, type ModSide, type Override } from '../lib/api'
   import { job } from '../lib/jobs.svelte'
   import LogView from '../components/LogView.svelte'
@@ -63,7 +63,7 @@
     <div>
       <h2>Server pack</h2>
       <p class="muted">
-        {mods.length} mods, {excludedCount} left out as client-only. Sides come from Modrinth and CurseForge metadata; override any that are wrong.
+        {mods.length} mods, {excludedCount} excluded as client-only. Exclusions are populated by CF/Modrinth tags; override them here.
       </p>
     </div>
     <button class="primary" class:busy={building} onclick={build} disabled={building}>{building ? 'Building' : 'Build server pack'}</button>
@@ -78,7 +78,7 @@
 
   <div class="tools">
     <div class="filters" role="group" aria-label="Show">
-      {#each [['excluded', 'Left out'], ['overridden', 'Overridden'], ['all', 'All mods']] as const as [id, label] (id)}
+      {#each [['excluded', 'Excluded'], ['overridden', 'Overridden'], ['all', 'All mods']] as const as [id, label] (id)}
         <button aria-pressed={filter === id} class:on={filter === id} onclick={() => (filter = id)}>{label}</button>
       {/each}
     </div>
@@ -108,12 +108,12 @@
                 {#if mod.url}<a href={mod.url} onclick={(e) => { e.preventDefault(); openUrl(mod.url!) }}>{mod.name}</a>{:else}{mod.name}{/if}
                 <div class="file muted">{mod.path.slice(5)}</div>
               </td>
-              <td class="side {mod.side}">{mod.side === 'client' ? 'Left out' : mod.side === 'server' ? 'Server only' : 'Included'}</td>
+              <td><span class="chip {mod.side === 'client' ? 'change' : 'ok'}">{mod.side === 'client' ? 'Excluded' : mod.side === 'server' ? 'Included (for Singleplayer)' : 'Included'}</span></td>
               <td class="muted">{mod.reason}</td>
               <td>
                 <select value={mod.override} onchange={(e) => setOverride(mod, e.currentTarget)} aria-label="Override for {mod.name}">
                   <option value="auto">Automatic</option>
-                  <option value="client">Leave out</option>
+                  <option value="client">Exclude</option>
                   <option value="keep">Keep on server</option>
                 </select>
               </td>
@@ -130,7 +130,7 @@
     <div class="tools">
       <h3>Build log</h3>
       {#if result.phase === 'done' && result.message}
-        <button onclick={() => openPath(result.message!.replace(/[\\/][^\\/]+$/, ''))}>Show server pack</button>
+        <button onclick={() => revealItemInDir(result.message!).catch((e) => (loadError = `Couldn't open the folder: ${errorText(e)}`))}>Show server pack</button>
       {/if}
     </div>
     <LogView lines={result.lines} label="Server pack build log" empty="Build the server pack to see its log." />
@@ -161,24 +161,24 @@
     grid-template-columns: repeat(3, 1fr);
     padding: 3px;
     gap: 3px;
-    background: var(--ink);
-    border: 1px solid var(--quill);
+    background: var(--paper);
+    border: 1px solid var(--line);
     border-radius: var(--radius-control);
   }
 
   .filters button {
     font-weight: 400;
     padding: 5px 16px;
-    color: var(--ash);
+    color: var(--muted);
     background: transparent;
     border-color: transparent;
   }
 
   .filters button.on {
-    color: var(--bone);
+    color: var(--text);
     font-weight: 700;
-    border-color: var(--quill-hi);
-    background: var(--quill);
+    border-color: var(--control-edge);
+    background: var(--control);
   }
 
   .skeleton span {
@@ -187,7 +187,7 @@
     width: 70%;
     margin: 4px 0;
     border-radius: 3px;
-    background: var(--quill);
+    background: var(--line);
     animation: pulse 1.4s ease-in-out infinite;
   }
 
@@ -209,7 +209,7 @@
   .table {
     max-height: 46vh;
     overflow: auto;
-    border: 1px solid var(--quill);
+    border: 1px solid var(--line);
     border-radius: var(--radius-panel);
   }
 
@@ -223,29 +223,22 @@
     top: 0;
     text-align: left;
     font-size: var(--step--1);
-    color: var(--ash);
+    color: var(--muted);
     font-weight: 400;
-    background: var(--plume);
+    background: var(--surface);
     padding: 8px 12px;
   }
 
   td {
     padding: 8px 12px;
-    border-top: 1px solid var(--quill);
+    border-top: 1px solid var(--line);
     vertical-align: top;
   }
 
   td a {
-    color: var(--bone);
+    color: var(--text);
   }
 
-  .side.client {
-    color: var(--amber);
-  }
-
-  .side.server {
-    color: var(--violet);
-  }
 
 
   .output {

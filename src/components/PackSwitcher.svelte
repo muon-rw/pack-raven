@@ -98,9 +98,14 @@
     padding: 4px 6px;
     margin: -4px -6px;
     text-align: left;
+    color: inherit;
     background: transparent;
     border-color: transparent;
     font: inherit;
+  }
+
+  .trigger:focus-visible {
+    outline-color: var(--rail-text);
   }
 
   h1 {
@@ -108,6 +113,16 @@
     font-size: var(--step-2);
     line-height: 1.15;
     letter-spacing: -0.01em;
+  }
+
+  .switcher {
+    container-type: inline-size;
+  }
+
+  @container (max-width: 200px) {
+    h1 {
+      font-size: var(--step-1);
+    }
   }
 
   .trigger:hover {
@@ -124,7 +139,7 @@
     height: 14px;
     margin-top: 10px;
     fill: none;
-    stroke: var(--ash);
+    stroke: var(--rail-muted);
     stroke-width: 1.6;
   }
 
@@ -136,10 +151,10 @@
     right: -6px;
     display: grid;
     padding: 6px;
-    background: var(--quill);
-    border: 1px solid var(--quill-hi);
+    background: var(--line);
+    border: 1px solid var(--line-strong);
     border-radius: var(--radius-panel);
-    box-shadow: 0 12px 32px rgb(5 8 16 / 0.55);
+    box-shadow: 0 12px 32px var(--shadow);
   }
 
   .menu button {
@@ -152,28 +167,28 @@
   }
 
   .menu button:hover {
-    background: var(--quill-hi);
+    background: var(--line-strong);
   }
 
   .menu button:focus-visible {
-    background: var(--quill-hi);
-    outline: 2px solid var(--teal);
+    background: var(--line-strong);
+    outline: 2px solid var(--forest);
     outline-offset: -2px;
   }
 
   .menu [aria-checked='true'] .name {
     font-weight: 700;
-    color: var(--teal);
+    color: var(--forest);
   }
 
   .meta {
     font-size: var(--step--1);
-    color: var(--ash);
+    color: var(--muted);
   }
 
   .separator {
     height: 1px;
     margin: 6px 4px;
-    background: var(--quill-hi);
+    background: var(--line-strong);
   }
 </style>

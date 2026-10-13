@@ -1,21 +1,44 @@
 :root {
-  --ink: #1b2131;
-  --plume: #232a3d;
-  --quill: #2f374f;
-  --quill-hi: #3c4562;
-  --edge: #6c7597;
-  --bone: #e7e1d3;
-  --ash: #9da2b3;
-  --violet: #9886cf;
-  --teal: #4fa7a3;
-  --teal-hi: #63bbb6;
-  --rose: #e0697a;
-  --amber: #d6a848;
+  --paper: #f7f5ef;
+  --surface: #edeae0;
+  --field: #fdfcf8;
+  --line: #e2ded1;
+  --line-strong: #cfc9b8;
+  --edge: #8f8a78;
+  --control: #e8e5da;
+  --control-hi: #dcd8ca;
+  --control-edge: #a39e8c;
+  --text: #1e211b;
+  --muted: #595d4f;
+  --forest: #4d6b2f;
+  --forest-hi: #3c5524;
+  --sage: #7f9b5c;
+  --highlight: #e6e2d4;
+  --here: #efe2b8;
+  --ochre-ink: #694d0b;
+  --ochre: #e3c46f;
+  --busy: #77735f;
+  --fail: #9c3a2e;
+  --warn: #8a4a0c;
+  --warn-fill: #fbe6c8;
+  --warn-border: #d69a55;
+  --warn-icon: #9a520c;
+  --fail-fill: #f5dad3;
+  --fail-border: #c4584a;
+  --fail-icon: #9c3a2e;
+  --ok-fill: #e3ead2;
+  --ok-border: #9cb47a;
+  --shadow: rgb(30 33 27 / 0.18);
+  --selection: var(--ochre);
+  --here-border: #d8bd6e;
 
-  --rail: #18152c;
-  --rail-hi: #252042;
-  --rail-edge: #352e5c;
-  --rail-ash: #a49fc0;
+  --rail: #33412c;
+  --rail-hi: #3f4e37;
+  --rail-edge: #4d5c44;
+  --rail-text: #f1eee3;
+  --rail-muted: #bcc4ad;
+  --rail-strong: #e3c46f;
+  --rail-warn: #f0b867;
 
   --font-ui: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif;
   --font-log: 'JetBrains Mono', ui-monospace, monospace;
@@ -31,15 +54,57 @@
   --radius-control: 6px;
   --radius-panel: 10px;
 
-  color-scheme: dark;
-  scrollbar-color: var(--quill-hi) transparent;
-  caret-color: var(--teal);
+  color-scheme: light;
+  scrollbar-color: var(--line-strong) transparent;
+  caret-color: var(--forest);
   font-family: var(--font-ui);
   font-size: var(--step-0);
   line-height: 1.5;
-  color: var(--bone);
-  background: var(--ink);
+  color: var(--text);
+  background: var(--paper);
   -webkit-font-smoothing: antialiased;
+  accent-color: var(--forest);
+}
+
+
+:root[data-theme='dark'] {
+  --paper: #1a1d17;
+  --surface: #22261e;
+  --field: #161913;
+  --line: #2e3429;
+  --line-strong: #3e4637;
+  --edge: #737a68;
+  --control: #2a2f25;
+  --control-hi: #353b2f;
+  --control-edge: #5b6350;
+  --text: #e9e6da;
+  --muted: #a4a895;
+  --forest: #9cbf6e;
+  --forest-hi: #b3d385;
+  --sage: #6f8a50;
+  --highlight: #39412f;
+  --here: #463c20;
+  --ochre-ink: #ebcd7c;
+  --busy: #8d8a76;
+  --fail: #e58474;
+  --warn: #e8a35c;
+  --warn-fill: #3b2a14;
+  --warn-border: #8a5a24;
+  --warn-icon: #eda55a;
+  --fail-fill: #3d1f1a;
+  --fail-border: #9c4a3e;
+  --fail-icon: #ec8a7a;
+  --ok-fill: #26301c;
+  --ok-border: #56703a;
+  --shadow: rgb(0 0 0 / 0.45);
+  --selection: #5e4f24;
+  --here-border: #7a6630;
+
+  --rail: #20291b;
+  --rail-hi: #2b3524;
+  --rail-edge: #333f2b;
+
+  color-scheme: dark;
 }
 
 * {
@@ -47,7 +112,45 @@
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--teal) 40%, transparent);
+  background: var(--selection);
+}
+
+.chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border, var(--control-edge));
+  background: var(--chip-fill, var(--control));
+  color: var(--chip-ink, var(--text));
+  font-size: var(--step--1);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.chip.ok {
+  --chip-fill: var(--ok-fill);
+  --chip-border: var(--ok-border);
+  --chip-ink: var(--forest-hi);
+}
+
+.chip.change {
+  --chip-fill: var(--here);
+  --chip-border: var(--here-border);
+  --chip-ink: var(--ochre-ink);
+}
+
+.chip.pending {
+  --chip-fill: var(--warn-fill);
+  --chip-border: var(--warn-border);
+  --chip-ink: var(--warn);
+}
+
+.chip.fail {
+  --chip-fill: var(--fail-fill);
+  --chip-border: var(--fail-border);
+  --chip-ink: var(--fail-icon);
 }
 
 body {
@@ -79,65 +182,65 @@ p {
 }
 
 a {
-  color: var(--teal);
+  color: var(--forest);
   text-underline-offset: 0.18em;
 }
 
 :focus-visible {
-  outline: 2px solid var(--teal);
+  outline: 2px solid var(--forest);
   outline-offset: 2px;
 }
 
 button {
   font: inherit;
   font-weight: 700;
-  color: var(--bone);
-  background: var(--quill);
-  border: 1px solid var(--edge);
+  color: var(--text);
+  background: var(--control);
+  border: 1px solid var(--control-edge);
   border-radius: var(--radius-control);
   padding: 7px 14px;
   cursor: pointer;
 }
 
 button:hover:not(:disabled) {
-  background: var(--quill-hi);
+  background: var(--control-hi);
 }
 
 button:disabled {
-  color: var(--ash);
+  color: var(--muted);
   background: transparent;
-  border-color: var(--quill-hi);
+  border-color: var(--control-hi);
   cursor: not-allowed;
 }
 
 button.primary:not(:disabled) {
-  color: var(--ink);
-  background: var(--teal);
-  border-color: var(--teal);
+  color: var(--paper);
+  background: var(--forest);
+  border-color: var(--forest);
 }
 
 button.primary:hover:not(:disabled) {
-  background: var(--teal-hi);
-  border-color: var(--teal-hi);
+  background: var(--forest-hi);
+  border-color: var(--forest-hi);
 }
 
 button.busy:disabled {
-  color: var(--bone);
-  border-color: var(--violet);
+  color: var(--text);
+  border-color: var(--busy);
 }
 
 button.danger {
-  color: var(--rose);
+  color: var(--fail);
   background: transparent;
-  border-color: color-mix(in srgb, var(--rose) 75%, var(--ink));
+  border-color: color-mix(in srgb, var(--fail) 75%, var(--paper));
 }
 
 input,
 textarea,
 select {
   font: inherit;
-  color: var(--bone);
-  background: var(--ink);
+  color: var(--text);
+  background: var(--field);
   border: 1px solid var(--edge);
   border-radius: var(--radius-control);
   padding: 7px 10px;
@@ -156,13 +259,13 @@ textarea {
 label {
   display: grid;
   gap: 4px;
-  color: var(--ash);
+  color: var(--muted);
   font-size: var(--step--1);
 }
 
 label > input,
 label > select {
-  color: var(--bone);
+  color: var(--text);
   font-size: var(--step-0);
 }
 
@@ -170,12 +273,12 @@ label > select {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--bone);
+  color: var(--text);
   font-size: var(--step-0);
 }
 
 .muted {
-  color: var(--ash);
+  color: var(--muted);
 }
 
 .file {
@@ -188,13 +291,13 @@ kbd {
   font-family: var(--font-log);
   font-size: 0.8em;
   padding: 1px 5px;
-  color: var(--ash);
-  border: 1px solid var(--quill-hi);
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
   border-radius: 4px;
 }
 
 .failed {
-  color: var(--rose);
+  color: var(--fail);
 }
 
 button.busy::before {

@@ -25,11 +25,22 @@ pub struct AppState {
     pub data_dir: PathBuf,
     pub jobs: Jobs,
     pub test: Arc<TestRun>,
+    pub watcher: Mutex<Option<crate::watcher::PackWatcher>>,
 }
 
 impl AppState {
     pub(crate) fn settings(&self) -> Settings {
         self.settings.lock().unwrap().clone()
+    }
+
+    pub(crate) fn rewatch(&self, app: &AppHandle) {
+        let dir = self.settings().instance_dir;
+        let watcher = (!dir.as_os_str().is_empty()).then(|| crate::watcher::watch(app.clone(), dir).ok()).flatten();
+        *self.watcher.lock().unwrap() = watcher;
+    }
+
+    pub(crate) fn data_dir(&self) -> PathBuf {
+        self.data_dir.clone()
     }
 
     pub(crate) fn update_settings(&self, change: impl FnOnce(&mut Settings)) -> Result<()> {
@@ -42,10 +53,8 @@ impl AppState {
         Pack::open(&self.settings().instance_dir)
     }
 
-    fn pack_data(&self) -> PathBuf {
-        let name = self.settings().instance_dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let slug: String = name.chars().map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
-        self.data_dir.join("packs").join(slug)
+    pub(crate) fn pack_data(&self) -> PathBuf {
+        pack_data_dir(&self.data_dir, &self.settings().instance_dir)
     }
 
     fn cache_path(&self) -> PathBuf {
@@ -55,6 +64,12 @@ impl AppState {
     fn version(&self, pack: &Pack) -> String {
         pack.version().unwrap_or_else(|| "dev".into())
     }
+}
+
+pub fn pack_data_dir(data_dir: &std::path::Path, instance_dir: &std::path::Path) -> PathBuf {
+    let name = instance_dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let slug: String = name.chars().map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
+    data_dir.join("packs").join(slug)
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -83,6 +98,7 @@ pub struct Overview {
     minecraft: Option<String>,
     loader: Option<String>,
     lock_count: usize,
+    addons: AddonCounts,
     missing: Vec<String>,
     unlocked: Vec<String>,
     branch: Option<String>,
@@ -101,6 +117,31 @@ pub struct Overview {
     hooks: crate::setup::HooksState,
 }
 
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AddonCounts {
+    mods: usize,
+    resource_packs: usize,
+    shader_packs: usize,
+    data_packs: usize,
+    other: usize,
+}
+
+fn addon_counts(pack: &Pack) -> AddonCounts {
+    let mut counts = AddonCounts::default();
+    for entry in &pack.lock.files {
+        let slot = match entry.path.split('/').next().unwrap_or_default() {
+            "mods" => &mut counts.mods,
+            "resourcepacks" => &mut counts.resource_packs,
+            "shaderpacks" => &mut counts.shader_packs,
+            _ if entry.path.contains("datapacks/") => &mut counts.data_packs,
+            _ => &mut counts.other,
+        };
+        *slot += 1;
+    }
+    counts
+}
+
 #[tauri::command]
 pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
     let pack = state.pack().map_err(err)?;
@@ -112,6 +153,7 @@ pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
         minecraft: pack.lock.minecraft.clone(),
         loader: pack.lock.loader.clone(),
         lock_count: pack.lock.files.len(),
+        addons: addon_counts(&pack),
         missing: sync.missing,
         unlocked: sync.unlocked,
         branch: git::branch(&pack.dir),
@@ -259,6 +301,10 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, rebuild: bool, con
         }
         log.info("Syncing the test server folder");
         testrun::sync_server_dir(&built, &test_dir)?;
+        let dev_jars = testrun::add_dev_jars(&pack, &test_dir)?;
+        if !dev_jars.is_empty() {
+            log.info(format!("Added local dev builds: {}", dev_jars.join(", ")));
+        }
         let (ready_tx, mut ready_rx) = watch::channel(false);
         let server_pack = Pack::open(&pack.dir)?;
         let (server_app, server_run) = (job_app.clone(), run.clone());
@@ -278,7 +324,7 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, rebuild: bool, con
         let client_pack = Pack::open(&pack.dir)?;
         let client_app = job_app.clone();
         jobs.start(&job_app, "client", move |client_log| async move {
-            testrun::run_client(client_app, run, &settings, &client_pack, natives, client_log).await
+            testrun::run_client(client_app, run, &settings, &client_pack, natives, true, client_log).await
         })
         .map_err(anyhow::Error::msg)?;
         Ok("Server ready, client launching".into())
@@ -286,13 +332,13 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, rebuild: bool, con
 }
 
 #[tauri::command]
-pub fn start_client(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+pub fn start_client(app: AppHandle, state: State<'_, AppState>, join: bool) -> CmdResult<()> {
     let settings = state.settings();
     let pack = state.pack().map_err(err)?;
     let natives = state.pack_data().join("natives");
     let run = state.test.clone();
     let job_app = app.clone();
-    state.jobs.start(&app, "client", move |log| async move { testrun::run_client(job_app, run, &settings, &pack, natives, log).await })
+    state.jobs.start(&app, "client", move |log| async move { testrun::run_client(job_app, run, &settings, &pack, natives, join, log).await })
 }
 
 #[tauri::command]
@@ -312,8 +358,11 @@ pub fn kill_process(state: State<'_, AppState>, which: String) -> CmdResult<()> 
 
 #[tauri::command]
 pub fn publish(app: AppHandle, state: State<'_, AppState>, options: PublishOptions) -> CmdResult<()> {
+    let pack = state.pack().map_err(err)?;
+    let announce = pack.config.discord.announce_on_approval && state.settings().webhook(&pack.dir).is_some();
     let context = PublishContext {
-        pack: state.pack().map_err(err)?,
+        announce,
+        pack,
         java: launch::java(&state.settings()).map_err(err)?,
         data_dir: state.data_dir.clone(),
         pack_data: state.pack_data(),

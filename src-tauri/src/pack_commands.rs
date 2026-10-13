@@ -45,22 +45,28 @@ pub fn setup_instance(app: AppHandle, state: State<'_, AppState>, dir: PathBuf, 
     state.jobs.start(&app, "setup", move |log| async move {
         let message = setup::setup(dir.clone(), options, log).await?;
         use tauri::Manager;
-        finished.state::<AppState>().update_settings(|s| s.activate(&dir))?;
+        let state = finished.state::<AppState>();
+        state.update_settings(|s| s.activate(&dir))?;
+        state.rewatch(&finished);
         Ok(message)
     })
 }
 
 #[tauri::command]
-pub fn switch_pack(state: State<'_, AppState>, dir: PathBuf) -> CmdResult<()> {
+pub fn switch_pack(app: AppHandle, state: State<'_, AppState>, dir: PathBuf) -> CmdResult<()> {
     if state.test.server.lock().unwrap().is_some() || state.test.client.lock().unwrap().is_some() {
         return Err("Stop the test server and client before switching packs.".into());
     }
-    state.update_settings(|s| s.activate(&dir)).map_err(err)
+    state.update_settings(|s| s.activate(&dir)).map_err(err)?;
+    state.rewatch(&app);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn remove_pack(state: State<'_, AppState>, dir: PathBuf) -> CmdResult<()> {
-    state.update_settings(|s| s.remove(&dir)).map_err(err)
+pub fn remove_pack(app: AppHandle, state: State<'_, AppState>, dir: PathBuf) -> CmdResult<()> {
+    state.update_settings(|s| s.remove(&dir)).map_err(err)?;
+    state.rewatch(&app);
+    Ok(())
 }
 
 #[tauri::command]

@@ -26,6 +26,7 @@ usercache.json
 usernamecache.json
 
 # Per-machine mod state
+__pycache__/
 .mixin.out
 .bobby/
 .fabric/

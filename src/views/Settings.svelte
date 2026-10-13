@@ -3,7 +3,7 @@
   import { onMount } from 'svelte'
   import { ask, open } from '@tauri-apps/plugin-dialog'
   import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
-  import { api, errorText, type PackConfig, type Settings } from '../lib/api'
+  import { api, errorText, type DefenderView, type PackConfig, type Settings } from '../lib/api'
 
   let { onchange }: { onchange: () => void } = $props()
 
@@ -29,6 +29,7 @@
     try {
       config = await api.getPackConfig()
       configError = null
+      webhook = (await api.getWebhook()) ?? ''
       const overview = await api.overview()
       tokens = { core: overview.hasCoreKey, upload: overview.hasUploadToken }
     } catch (error) {
@@ -70,6 +71,7 @@
     try {
       await api.saveSettings({ ...settings, java: settings.java?.trim() || null })
       if (config) await api.savePackConfig(config)
+      await api.setWebhook(webhook)
       await load()
       onchange()
       messageFailed = false
@@ -77,6 +79,26 @@
     } catch (error) {
       messageFailed = true
       message = `Couldn't save: ${errorText(error)}`
+    }
+  }
+
+  let webhook = $state('')
+  let discordMessage = $state<string | null>(null)
+  let discordFailed = $state(false)
+  let testing = $state(false)
+
+  async function testWebhook() {
+    testing = true
+    try {
+      await api.setWebhook(webhook)
+      await api.discordTest()
+      discordFailed = false
+      discordMessage = 'Sent. Check the channel.'
+    } catch (error) {
+      discordFailed = true
+      discordMessage = errorText(error)
+    } finally {
+      testing = false
     }
   }
 
@@ -91,6 +113,33 @@
       autostart = !wanted
       autostartError = `Couldn't change the startup setting: ${errorText(error)}`
     }
+  }
+
+  let defender = $state<DefenderView | null>(null)
+  let defenderBusy = $state(false)
+  let defenderMessage = $state<string | null>(null)
+
+  onMount(async () => {
+    defender = await api.defenderStatus().catch(() => null)
+  })
+
+  async function excludeFolders() {
+    if (!defender) return
+    defenderBusy = true
+    try {
+      await api.defenderExclude(defender.missing)
+      defender = await api.defenderStatus()
+      defenderMessage = 'Folders excluded.'
+    } catch (error) {
+      defenderMessage = errorText(error)
+    } finally {
+      defenderBusy = false
+    }
+  }
+
+  async function setDefenderPrompt(enabled: boolean) {
+    await api.defenderDismiss(!enabled)
+    if (settings) settings.defenderDismissed = !enabled
   }
 </script>
 
@@ -165,6 +214,27 @@
           <input type="checkbox" bind:checked={config.curseforge.manual_release} /> Hold approved files until I release them on CurseForge
         </label>
       </section>
+
+      <section>
+        <h2>Discord announcements</h2>
+        <div class="field">
+          <label for="webhook">Webhook URL</label>
+          <div class="inline">
+            <input id="webhook" type="password" autocomplete="off" bind:value={webhook} placeholder="https://discord.com/api/webhooks/..." aria-describedby="webhook-hint" />
+            <button type="button" class:busy={testing} disabled={testing || !webhook.trim()} onclick={testWebhook}>{testing ? 'Sending' : 'Send test message'}</button>
+          </div>
+          <p class="hint" id="webhook-hint">From the channel's Settings, Integrations, Webhooks. Saved only on this machine, never in the pack repo.</p>
+          {#if discordMessage}<p class:muted={!discordFailed} class:failed={discordFailed} role="status">{discordMessage}</p>{/if}
+        </div>
+        <div class="grid">
+          <label>Role to ping <input bind:value={config.discord.role_id} placeholder="Role ID" title="Right-click the role with Developer Mode on, then Copy Role ID. Leave empty for no ping." /></label>
+          <label>Embed color <input type="color" bind:value={config.discord.color} /></label>
+        </div>
+        <label class="check">
+          <input type="checkbox" bind:checked={config.discord.announce_on_approval} /> Announce each release once CurseForge approves it
+        </label>
+        <p class="hint">packraven checks every few minutes while it's running in the tray. You can also announce a release by hand from Publish.</p>
+      </section>
     {/if}
 
     <div class="actions">
@@ -172,6 +242,28 @@
       <span class:muted={!messageFailed} class:failed={messageFailed} role="status">{message ?? ''}</span>
     </div>
   </form>
+
+  {#if defender?.active}
+    <section class="removal">
+      <h2>Windows Security</h2>
+      {#if defender.missing.length}
+        <p class="muted">
+          Windows Defender can slow things down. Excluding {defender.missing.length === 1 ? 'this folder makes it' : 'these folders makes them'} faster, but Defender will stop scanning files in {defender.missing.length === 1 ? 'it' : 'them'}.
+          {defender.exclusionsReadable ? '' : "Windows only shows exclusions to administrators, so folders you excluded outside packraven may still be listed."}
+        </p>
+        <ul class="folders">{#each defender.missing as path (path)}<li class="file">{path}</li>{/each}</ul>
+        <div><button type="button" class:busy={defenderBusy} disabled={defenderBusy} onclick={excludeFolders}>{defenderBusy ? 'Waiting for Windows' : 'Exclude folders'}</button></div>
+        <p class="muted">You'll get a pop-up from Windows.</p>
+      {:else}
+        <p class="muted">The pack, CurseForge and packraven folders are excluded from Defender scans.</p>
+      {/if}
+      {#if defenderMessage}<p class="muted">{defenderMessage}</p>{/if}
+      <label class="check">
+        <input type="checkbox" checked={!settings.defenderDismissed} onchange={(e) => setDefenderPrompt(e.currentTarget.checked)} />
+        Remind me when these folders aren't excluded
+      </label>
+    </section>
+  {/if}
 
   {#if settings.instanceDir}
     <section class="removal">
@@ -185,15 +277,51 @@
 {/if}
 
 <style>
+  input[type='color'] {
+    width: 52px;
+    height: 38px;
+    padding: 3px;
+    cursor: pointer;
+  }
+
+  .field {
+    display: grid;
+    gap: 6px;
+  }
+
+  .field > label {
+    color: var(--text);
+    font-size: var(--step-0);
+  }
+
+  .inline {
+    display: flex;
+    gap: 8px;
+  }
+
+  .inline input {
+    flex: 1;
+  }
+
+  .hint {
+    color: var(--muted);
+    font-size: var(--step--1);
+  }
+
   .settings {
     display: grid;
     gap: 36px;
     max-width: 760px;
   }
 
+  .folders {
+    margin: 0;
+    padding-left: 18px;
+  }
+
   .removal {
     padding-top: 28px;
-    border-top: 1px solid var(--quill);
+    border-top: 1px solid var(--line);
   }
 
   .switch-row {
@@ -202,7 +330,7 @@
     align-items: center;
     gap: 24px;
     padding-bottom: 28px;
-    border-bottom: 1px solid var(--quill);
+    border-bottom: 1px solid var(--line);
   }
 
   .switch {
@@ -212,7 +340,7 @@
     height: 26px;
     padding: 0;
     border-radius: 13px;
-    background: var(--quill);
+    background: var(--line);
   }
 
   .switch span {
@@ -222,17 +350,17 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--ash);
+    background: var(--muted);
     transition: transform 0.15s ease;
   }
 
   .switch[aria-checked='true'] {
-    background: var(--teal);
-    border-color: var(--teal);
+    background: var(--forest);
+    border-color: var(--forest);
   }
 
   .switch[aria-checked='true'] span {
-    background: var(--ink);
+    background: var(--paper);
     transform: translateX(20px);
   }
 
@@ -270,11 +398,11 @@
   .tokens {
     margin: 0;
     padding-left: 18px;
-    color: var(--ash);
+    color: var(--muted);
   }
 
   .tokens .missing {
-    color: var(--amber);
+    color: var(--warn);
   }
 
   .actions {

@@ -1,8 +1,9 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
   import { onMount } from 'svelte'
+  import { listen } from '@tauri-apps/api/event'
   import { ask } from '@tauri-apps/plugin-dialog'
-  import { openPath, openUrl } from '@tauri-apps/plugin-opener'
+  import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
   import { api, errorText, type Overview, type PackConfig, type ReleaseStatus } from '../lib/api'
   import { job } from '../lib/jobs.svelte'
   import { renderMarkdown } from '../lib/markdown'
@@ -18,6 +19,37 @@
   let changelogError: string | null = $state(null)
   let releases: ReleaseStatus[] = $state([])
   let releasesError: string | null = $state(null)
+  let hasWebhook = $state(false)
+  let announcing = $state<string | null>(null)
+  let discordError = $state<string | null>(null)
+
+  async function announceNow(version: string) {
+    announcing = version
+    try {
+      await api.announceRelease(version)
+      discordError = null
+      await loadReleases()
+    } catch (e) {
+      discordError = errorText(e)
+    } finally {
+      announcing = null
+    }
+  }
+
+  async function editInDiscohook(version: string) {
+    try {
+      openUrl(await api.discohookLink(version))
+      discordError = null
+    } catch (e) {
+      discordError = `Couldn't open Discohook: ${errorText(e)}`
+    }
+  }
+
+  function discordState(release: ReleaseStatus) {
+    if (release.announcedAt) return `Announced ${new Date(release.announcedAt).toLocaleDateString()}`
+    if (release.announce) return 'Posts when CurseForge approves it'
+    return 'Not announced'
+  }
   let error: string | null = $state(null)
   let published: { version: string; pushed: boolean } | null = $state(null)
 
@@ -28,6 +60,11 @@
       (c) => (config = c),
       () => (config = null),
     )
+    api.getWebhook().then((w) => (hasWebhook = !!w), () => (hasWebhook = false))
+    const unlisten = listen('release-announced', () => loadReleases())
+    return () => {
+      unlisten.then((stop) => stop())
+    }
   })
 
   async function loadChangelog() {
@@ -110,6 +147,10 @@
     } catch (e) {
       error = errorText(e)
     }
+  }
+
+  function statusTone(status: string) {
+    return /approved|released/i.test(status) ? 'ok' : /reject|delete|fail/i.test(status) ? 'fail' : 'pending'
   }
 
   function openLink(event: MouseEvent) {
@@ -247,27 +288,39 @@
       <div class="row">
         <button onclick={exportOnly} class:busy={exportJob.phase === 'running'} disabled={exportJob.phase === 'running'}>Build client zip only</button>
         {#if exportJob.phase === 'done' && exportJob.message}
-          <button onclick={() => openPath(exportJob.message!.replace(/[\\/][^\\/]+$/, ''))}>Show client zip</button>
+          <button onclick={() => revealItemInDir(exportJob.message!).catch((e) => (error = `Couldn't open the folder: ${errorText(e)}`))}>Show client zip</button>
         {/if}
         <button onclick={loadReleases}>Refresh</button>
       </div>
     </div>
     {#if exportJob.phase === 'failed'}<Notice tone="error"><p>{exportJob.message}</p></Notice>{/if}
     {#if releasesError}<p class="failed">{releasesError}</p>{/if}
+    {#if discordError}<p class="failed">{discordError}</p>{/if}
     {#if releases.length}
       <table>
         <thead>
-          <tr><th>Version</th><th>Published</th><th>Pack file</th><th>Server pack</th></tr>
+          <tr><th>Version</th><th>Published</th><th>Pack file</th><th>Server pack</th><th>Discord</th></tr>
         </thead>
         <tbody>
           {#each [...releases].reverse() as release (release.fileId)}
             <tr>
               <td class="file">{release.version}</td>
               <td>{new Date(release.publishedAt).toLocaleDateString()}</td>
-              <td>{release.status}</td>
+              <td><span class="chip {statusTone(release.status)}">{release.status}</span></td>
               <td>
-                {release.serverStatus}
-                {#if release.serverPackLinked === false}<span class="unlinked">not linked as the server pack</span>{/if}
+                <span class="chip {statusTone(release.serverStatus)}">{release.serverStatus}</span>
+                {#if release.serverPackLinked === false}<span class="chip pending">Not linked as the server pack</span>{/if}
+              </td>
+              <td class="discord">
+                <span class:muted={!release.announcedAt}>{discordState(release)}</span>
+                <span class="discord-actions">
+                  {#if hasWebhook}
+                    <button class="link" class:busy={announcing === release.version} disabled={announcing !== null} onclick={() => announceNow(release.version)}>
+                      {release.announcedAt ? 'Announce again' : 'Announce now'}
+                    </button>
+                  {/if}
+                  <button class="link" onclick={() => editInDiscohook(release.version)}>Edit in Discohook</button>
+                </span>
               </td>
             </tr>
           {/each}
@@ -280,15 +333,34 @@
 </div>
 
 <style>
+  .discord {
+    display: grid;
+    gap: 2px;
+  }
+
+  .discord-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+
+  .discord .link {
+    padding: 1px 4px;
+    font-weight: 400;
+    font-size: var(--step--1);
+    color: var(--forest);
+    background: transparent;
+    border-color: transparent;
+  }
+
   .publish {
     display: grid;
     gap: 22px;
   }
 
   .head {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: end;
     gap: 16px 24px;
   }
@@ -301,7 +373,7 @@
     font-family: var(--font-log);
     font-weight: 400;
     font-variant-numeric: tabular-nums;
-    color: var(--teal);
+    color: var(--forest);
   }
 
   .columns {
@@ -344,8 +416,8 @@
     max-height: 60vh;
     overflow: auto;
     padding: 18px 22px;
-    background: var(--plume);
-    border: 1px solid var(--quill);
+    background: var(--surface);
+    border: 1px solid var(--line);
     border-radius: var(--radius-panel);
     line-height: 1.6;
   }
@@ -353,7 +425,7 @@
   .changelog.empty {
     display: grid;
     gap: 12px;
-    color: var(--ash);
+    color: var(--muted);
   }
 
   .changelog :global(h1),
@@ -365,7 +437,7 @@
 
   .changelog :global(h3) {
     font-size: var(--step-0);
-    color: var(--ash);
+    color: var(--muted);
   }
 
   .changelog > :global(:first-child) {
@@ -391,7 +463,7 @@
   .ships {
     display: grid;
     margin: 0;
-    border-top: 1px solid var(--quill);
+    border-top: 1px solid var(--line);
   }
 
   .ships div {
@@ -401,11 +473,11 @@
     align-items: baseline;
     gap: 4px 16px;
     padding: 8px 0;
-    border-bottom: 1px solid var(--quill);
+    border-bottom: 1px solid var(--line);
   }
 
   .ships dt {
-    color: var(--ash);
+    color: var(--muted);
     font-size: var(--step--1);
   }
 
@@ -440,15 +512,15 @@
   }
 
   .checks .bad svg {
-    stroke: var(--rose);
+    stroke: var(--fail-icon);
   }
 
   .checks .warn svg {
-    stroke: var(--amber);
+    stroke: var(--warn-icon);
   }
 
   .checks .ok svg {
-    stroke: var(--teal);
+    stroke: var(--forest);
   }
 
   .go {
@@ -471,7 +543,7 @@
 
   .history {
     padding-top: 22px;
-    border-top: 1px solid var(--quill);
+    border-top: 1px solid var(--line);
   }
 
   table {
@@ -484,17 +556,13 @@
     text-align: left;
     font-size: var(--step--1);
     font-weight: 400;
-    color: var(--ash);
+    color: var(--muted);
     padding: 6px 12px 6px 0;
   }
 
   td {
     padding: 8px 12px 8px 0;
-    border-top: 1px solid var(--quill);
+    border-top: 1px solid var(--line);
   }
 
-  .unlinked {
-    color: var(--amber);
-    margin-left: 6px;
-  }
 </style>

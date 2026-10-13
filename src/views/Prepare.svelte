@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { modSyncSummary } from '../lib/modsync'
   import Notice from '../components/Notice.svelte'
   import { onMount } from 'svelte'
   import { api, errorText, type ModDiff, type Overview } from '../lib/api'
@@ -76,9 +77,9 @@
   )
   let readiness = $derived(
     [
-      outOfSync ? `${outOfSync} files out of sync with the lockfile` : 'Lockfile in sync',
+      overview ? modSyncSummary(overview) : null,
       diff?.since ? `${changeCount || 'No'} mod ${changeCount === 1 ? 'change' : 'changes'} since ${diff.since}` : null,
-      overview?.devJars.length ? `${overview.devJars.length} local dev ${overview.devJars.length === 1 ? 'build' : 'builds'} left out` : null,
+      overview?.devJars.length ? `${overview.devJars.length} local dev ${overview.devJars.length === 1 ? 'build' : 'builds'} excluded` : null,
     ]
       .filter(Boolean)
       .join('. ') + '.',
@@ -105,16 +106,16 @@
 
   {#if overview && outOfSync}
     <Notice tone="warn">
-      <p>The mods folder doesn't match mods.lock.json. Commit to record your changes, or pull to restore the locked files.</p>
+      <p>Your mods folder has changes that aren't committed yet. Commit to save them, or pull to get back the committed set.</p>
       <details>
         <summary>Show {outOfSync} {outOfSync === 1 ? 'file' : 'files'}</summary>
         {#if overview.unlocked.length}
-          <p class="muted">Not in the lockfile:</p>
+          <p class="muted">Not committed yet:</p>
           <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-          <ul tabindex="0" aria-label="Files not in the lockfile">{#each overview.unlocked as path (path)}<li class="file">{path}</li>{/each}</ul>
+          <ul tabindex="0" aria-label="Files not committed yet">{#each overview.unlocked as path (path)}<li class="file">{path}</li>{/each}</ul>
         {/if}
         {#if overview.missing.length}
-          <p class="muted">Missing or changed on disk:</p>
+          <p class="muted">Missing or changed, will download on pull:</p>
           <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
           <ul tabindex="0" aria-label="Files missing or changed on disk">{#each overview.missing as path (path)}<li class="file">{path}</li>{/each}</ul>
         {/if}
@@ -154,9 +155,9 @@
       {:else if diff && !changeCount}
         <p class="muted">No mods changed since {diff.since}.</p>
       {:else if diff}
-        {#each [['Added', diff.added], ['Updated', diff.updated], ['Removed', diff.removed]] as const as [title, list] (title)}
+        {#each [['Added', diff.added, 'ok'], ['Updated', diff.updated, 'change'], ['Removed', diff.removed, 'fail']] as const as [title, list, tone] (title)}
           {#if list.length}
-            <h4>{title} <span class="muted">{list.length}</span></h4>
+            <h4>{title} <span class="chip {tone}">{list.length}</span></h4>
             <ul class="changes">
               {#each list as change (change.name)}
                 <li>
@@ -179,9 +180,8 @@
   }
 
   .head {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: end;
     gap: 16px 24px;
   }
@@ -194,7 +194,7 @@
     font-family: var(--font-log);
     font-weight: 400;
     font-variant-numeric: tabular-nums;
-    color: var(--teal);
+    color: var(--forest);
   }
 
   .columns {
@@ -215,18 +215,18 @@
     display: flex;
     gap: 8px;
     align-items: baseline;
-    color: var(--bone);
+    color: var(--text);
     font-weight: 700;
   }
 
   .label-row .file {
     font-weight: 400;
-    color: var(--ash);
+    color: var(--muted);
   }
 
   summary {
     cursor: pointer;
-    color: var(--bone);
+    color: var(--text);
   }
 
   details[open] summary {

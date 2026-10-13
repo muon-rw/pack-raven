@@ -153,3 +153,32 @@ fn client_export_manifest() {
     let zip = export::client_export(&pack, "test", &scratch().join("build"), &Log::console("client-export")).unwrap();
     println!("zip {} ({} KB)", zip.display(), std::fs::metadata(&zip).unwrap().len() / 1000);
 }
+
+#[test]
+#[ignore]
+fn git_status_matches_porcelain() {
+    let dir = instance();
+    let status = crate::gitops::status(&dir).unwrap();
+    println!("branch {:?} upstream {:?} +{} -{} commits {}", status.branch, status.upstream, status.ahead, status.behind, status.has_commits);
+    for change in status.staged.iter().take(5) {
+        println!("staged {} {}", change.status, change.path);
+    }
+    for change in status.unstaged.iter().take(5) {
+        println!("unstaged {} {}", change.status, change.path);
+    }
+    let short = crate::git::run(&dir, &["status", "--short", "--untracked-files=all"]).unwrap();
+    let staged = short.lines().filter(|l| !l.starts_with(' ') && !l.starts_with('?')).count();
+    let unstaged = short.lines().filter(|l| l.as_bytes().get(1).is_some_and(|c| *c != b' ')).count();
+    assert_eq!((status.staged.len(), status.unstaged.len()), (staged, unstaged));
+    let diff = crate::gitops::diff(&dir, &status.unstaged.first().unwrap().path, false, false).unwrap();
+    println!("diff {} bytes, binary {}", diff.text.len(), diff.binary);
+    println!("commits: {:?}", crate::gitops::recent_commits(&dir, 3).iter().map(|c| &c.subject).collect::<Vec<_>>());
+}
+
+#[test]
+#[ignore]
+fn defender_probe() {
+    let settings = Settings::default();
+    let status = crate::defender::status(&[instance(), settings.install_dir]);
+    println!("active {} readable {} missing {:?}", status.active, status.exclusions_readable, status.missing);
+}

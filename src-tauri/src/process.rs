@@ -38,10 +38,31 @@ pub fn spawn_watched(mut command: Command, log: &Log, stdin: bool, hook: Option<
         .stdin(if stdin { Stdio::piped() } else { Stdio::null() })
         .kill_on_drop(true);
     let mut child = command.spawn()?;
+    bind_to_app(&child);
     pipe_lines(child.stdout.take(), log.clone(), "out", hook.clone());
     pipe_lines(child.stderr.take(), log.clone(), "err", hook);
     Ok(child)
 }
+
+#[cfg(windows)]
+fn bind_to_app(child: &Child) {
+    use std::sync::OnceLock;
+    use windows_sys::Win32::System::JobObjects::*;
+    static JOB: OnceLock<usize> = OnceLock::new();
+    let job = *JOB.get_or_init(|| unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info as *const _ as *const _, size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32);
+        job as usize
+    });
+    if let Some(handle) = child.raw_handle() {
+        unsafe { AssignProcessToJobObject(job as _, handle as _) };
+    }
+}
+
+#[cfg(not(windows))]
+fn bind_to_app(_child: &Child) {}
 
 fn pipe_lines<R: tokio::io::AsyncRead + Unpin + Send + 'static>(reader: Option<R>, log: Log, stream: &'static str, hook: Option<LineHook>) {
     let Some(reader) = reader else { return };

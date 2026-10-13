@@ -8,7 +8,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{oneshot, watch};
 
-use crate::export::copy_dir;
+use crate::export::{copy_dir, local_dev_jars};
 use crate::jobs::Log;
 use crate::launch;
 use crate::pack::Pack;
@@ -79,14 +79,19 @@ pub fn sync_server_dir(built: &Path, test_dir: &Path) -> Result<()> {
             if KEPT_ON_RESYNC.contains(&name.as_str()) {
                 continue;
             }
-            if entry.file_type()?.is_dir() {
-                std::fs::remove_dir_all(entry.path())?;
-            } else {
-                std::fs::remove_file(entry.path())?;
-            }
+            let removed = if entry.file_type()?.is_dir() { std::fs::remove_dir_all(entry.path()) } else { std::fs::remove_file(entry.path()) };
+            removed.with_context(|| format!("couldn't clear {name} in the test server folder. Is a server from an earlier run still open?"))?;
         }
     }
     copy_dir(built, test_dir)
+}
+
+pub fn add_dev_jars(pack: &Pack, test_dir: &Path) -> Result<Vec<String>> {
+    let jars = local_dev_jars(pack);
+    for jar in &jars {
+        std::fs::copy(pack.dir.join("mods").join(jar), test_dir.join("mods").join(jar))?;
+    }
+    Ok(jars)
 }
 
 fn configure(test_dir: &Path, port: u16) -> Result<()> {
@@ -133,14 +138,15 @@ pub async fn run_server(app: AppHandle, run: Arc<TestRun>, pack: &Pack, java: Pa
     result
 }
 
-pub async fn run_client(app: AppHandle, run: Arc<TestRun>, settings: &Settings, pack: &Pack, natives: PathBuf, log: Log) -> Result<String> {
+pub async fn run_client(app: AppHandle, run: Arc<TestRun>, settings: &Settings, pack: &Pack, natives: PathBuf, join: bool, log: Log) -> Result<String> {
     if run.client.lock().unwrap().is_some() {
         bail!("the client is already running");
     }
-    let address = format!("localhost:{}", pack.config.test.port);
+    let address = join.then(|| format!("localhost:{}", pack.config.test.port));
     std::fs::create_dir_all(&natives)?;
-    let launch = launch::client(settings, pack, &pack.config.test.username, Some(&address), &natives)?;
-    log.info(format!("Launching {} offline as {}, joining {address}", pack.lock.loader()?, pack.config.test.username));
+    let launch = launch::client(settings, pack, &pack.config.test.username, address.as_deref(), &natives)?;
+    let target = address.as_deref().map_or_else(|| "to the title screen".to_string(), |a| format!("joining {a}"));
+    log.info(format!("Launching {} offline as {}, {target}", pack.lock.loader()?, pack.config.test.username));
     let mut command = Command::new(&launch.java);
     command.current_dir(&settings.instance_dir).args(&launch.args);
     let child = spawn_watched(command, &log, false, None)?;

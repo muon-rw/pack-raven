@@ -5,6 +5,8 @@ export interface Settings {
   packs: string[]
   installDir: string
   java: string | null
+  defenderExcluded: string[]
+  defenderDismissed: boolean
 }
 
 export interface PackConfig {
@@ -13,6 +15,7 @@ export interface PackConfig {
   export: { exclude: string[] }
   server: { exclude: string[]; client_only: number[]; keep: number[]; memory: string; properties: Record<string, string> }
   test: { username: string; port: number; client_memory: string }
+  discord: { role_id: string; color: string; announce_on_approval: boolean }
 }
 
 export interface Overview {
@@ -21,6 +24,7 @@ export interface Overview {
   minecraft: string | null
   loader: string | null
   lockCount: number
+  addons: { mods: number; resourcePacks: number; shaderPacks: number; dataPacks: number; other: number }
   missing: string[]
   unlocked: string[]
   branch: string | null
@@ -75,6 +79,8 @@ export interface ReleaseStatus {
   status: string
   serverStatus: string
   serverPackLinked: boolean | null
+  announce: boolean
+  announcedAt: string | null
 }
 
 export type HooksState = 'missing' | 'outdated' | 'current'
@@ -112,7 +118,81 @@ export interface SetupOptions {
   commit: { message: string; author: string | null } | null
 }
 
+export interface FileChange {
+  path: string
+  origPath: string | null
+  status: string
+}
+
+export interface GitStatus {
+  branch: string | null
+  upstream: string | null
+  ahead: number
+  behind: number
+  hasCommits: boolean
+  hasRemote: boolean
+  staged: FileChange[]
+  unstaged: FileChange[]
+  conflicted: FileChange[]
+}
+
+export interface GitCommit {
+  hash: string
+  short: string
+  author: string
+  when: string
+  subject: string
+}
+
+export interface GitDiff {
+  text: string
+  binary: boolean
+  truncated: boolean
+}
+
+export interface DirEntry {
+  name: string
+  path: string
+  isDir: boolean
+  size: number
+  ignored: boolean
+}
+
+export interface FileContent {
+  text: string | null
+  size: number
+  unreadable: string | null
+  crlf: boolean
+  bom: boolean
+}
+
+export interface DefenderView {
+  active: boolean
+  exclusionsReadable: boolean
+  missing: string[]
+  prompt: boolean
+}
+
 export const api = {
+  getWebhook: () => invoke<string | null>('get_webhook'),
+  setWebhook: (url: string) => invoke<void>('set_webhook', { url }),
+  discordTest: () => invoke<void>('discord_test'),
+  announceRelease: (version: string) => invoke<void>('announce_release', { version }),
+  discohookLink: (version: string) => invoke<string>('discohook_link', { version }),
+  defenderStatus: () => invoke<DefenderView>('defender_status'),
+  defenderExclude: (paths: string[]) => invoke<void>('defender_exclude', { paths }),
+  defenderDismiss: (dismissed: boolean) => invoke<void>('defender_dismiss', { dismissed }),
+  listDir: (path: string) => invoke<DirEntry[]>('list_dir', { path }),
+  readFile: (path: string) => invoke<FileContent>('read_file', { path }),
+  writeFile: (path: string, text: string, crlf: boolean, bom: boolean) => invoke<void>('write_file', { path, text, crlf, bom }),
+  absolutePath: (path: string) => invoke<string>('absolute_path', { path }),
+  gitOverview: () => invoke<{ status: GitStatus; commits: GitCommit[] }>('git_overview'),
+  gitDiff: (path: string, staged: boolean, untracked: boolean) => invoke<GitDiff>('git_diff', { path, staged, untracked }),
+  gitStage: (paths: string[]) => invoke<void>('git_stage', { paths }),
+  gitUnstage: (paths: string[]) => invoke<void>('git_unstage', { paths }),
+  gitDiscard: (tracked: string[], untracked: string[]) => invoke<void>('git_discard', { tracked, untracked }),
+  gitCommit: (message: string) => invoke<void>('git_commit', { message }),
+  gitSync: (action: 'fetch' | 'pull' | 'push') => invoke<void>('git_sync', { action }),
   listPacks: () => invoke<PackList>('list_packs'),
   discoverInstances: (root?: string) => invoke<InstanceInfo[]>('discover_instances', { root: root ?? null }),
   inspectInstance: (dir: string) => invoke<InstanceInfo>('inspect_instance', { dir }),
@@ -135,7 +215,7 @@ export const api = {
   buildClientExport: () => invoke<void>('build_client_export'),
   buildServerPack: () => invoke<void>('build_server_pack'),
   startTest: (rebuild: boolean, connect: boolean) => invoke<void>('start_test', { rebuild, connect }),
-  startClient: () => invoke<void>('start_client'),
+  startClient: (join: boolean) => invoke<void>('start_client', { join }),
   serverCommand: (line: string) => invoke<void>('server_command', { line }),
   killProcess: (which: 'server' | 'client') => invoke<void>('kill_process', { which }),
   publish: (version: string, push: boolean) => invoke<void>('publish', { options: { version, push } }),

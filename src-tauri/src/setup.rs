@@ -214,7 +214,7 @@ pub async fn setup(dir: PathBuf, options: SetupOptions, log: Log) -> Result<Stri
     log.info("Installed the sync hooks in .githooks");
     let gitignore = dir.join(".gitignore");
     if gitignore.exists() {
-        let binary_block: Vec<&str> = GITIGNORE_TEMPLATE.lines().skip_while(|l| !l.starts_with("# Binaries")).filter(|l| !l.starts_with('#')).collect();
+        let binary_block: Vec<&str> = GITIGNORE_TEMPLATE.lines().skip_while(|l| !l.starts_with("# Binaries")).filter(|l| !l.starts_with('#')).chain(["__pycache__/"]).collect();
         if ensure_lines(&gitignore, &binary_block)? {
             log.info("Added the binary folders to the existing .gitignore");
         }

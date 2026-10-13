@@ -25,21 +25,27 @@
     grid-template-columns: 16px 1fr;
     gap: 10px;
     padding: 10px 14px;
-    border: 1px solid color-mix(in srgb, var(--tone) 45%, transparent);
+    border: 1px solid var(--border);
     border-radius: var(--radius-panel);
-    background: color-mix(in srgb, var(--tone) 9%, transparent);
+    background: var(--fill);
   }
 
   .warn {
-    --tone: var(--amber);
+    --fill: var(--warn-fill);
+    --border: var(--warn-border);
+    --tone: var(--warn-icon);
   }
 
   .error {
-    --tone: var(--rose);
+    --fill: var(--fail-fill);
+    --border: var(--fail-border);
+    --tone: var(--fail-icon);
   }
 
   .ok {
-    --tone: var(--teal);
+    --fill: var(--ok-fill);
+    --border: var(--ok-border);
+    --tone: var(--forest);
   }
 
   svg {

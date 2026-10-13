@@ -85,7 +85,7 @@
     if (!selected) return []
     const list: string[] = []
     if (!selected.hasGit) list.push('Create a git repository in the instance folder')
-    if (selected.hooks === 'missing') list.push('Install the sync hooks (.githooks). These auto-download mods each time you pull, and update the lockfile each time you commit')
+    if (selected.hooks === 'missing') list.push('Install the sync hooks (.githooks). These auto-download mods each time you pull, and update the mod list (mods.lock.json) each time you commit')
     if (selected.hooks === 'outdated') list.push('Update the sync hooks (.githooks) to this version of packraven')
     list.push(selected.hasGit ? 'Add mod jars and pack zips to .gitignore' : 'Write a .gitignore that leaves out logs, saves, caches and mod jars')
     list.push(selected.hasLock ? 'Rebuild mods.lock.json from the mods folder' : `Write mods.lock.json from the ${selected.addonCount} CurseForge files; files not on CurseForge get committed directly`)
@@ -101,7 +101,7 @@
 <div class="add">
   <div class="intro">
     <h2>{first ? 'Add your first pack' : 'Add a pack'}</h2>
-    <p class="muted">Pick a CurseForge instance to track in git. Mod jars stay out of the repository; a lockfile records them instead.</p>
+    <p class="muted">Pick a CurseForge instance to track in git. Mod jars stay out of the repository; a mod list (mods.lock.json) records them instead.</p>
   </div>
 
   <fieldset class="instances">
@@ -141,7 +141,7 @@
               <input id="untrack" type="checkbox" bind:checked={untrack} aria-describedby="untrack-files" />
               <div>
                 <label for="untrack">
-                  Remove {removable.length === 1 ? 'this file' : `these ${removable.length} files`} from git. From then on the lockfile downloads
+                  Remove {removable.length === 1 ? 'this file' : `these ${removable.length} files`} from git. From then on the mod list downloads
                   {removable.length === 1 ? 'it' : 'them'} from CurseForge instead. The files stay on disk, and past commits won't be edited.
                 </label>
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -257,22 +257,22 @@
     column-gap: 12px;
     align-items: center;
     padding: 12px 14px;
-    color: var(--bone);
+    color: var(--text);
     font-size: var(--step-0);
-    border-top: 1px solid var(--quill);
+    border-top: 1px solid var(--line);
     cursor: pointer;
   }
 
   .instance:last-of-type {
-    border-bottom: 1px solid var(--quill);
+    border-bottom: 1px solid var(--line);
   }
 
   .instance:hover:not(.disabled) {
-    background: var(--plume);
+    background: var(--surface);
   }
 
   .instance.chosen {
-    background: color-mix(in srgb, var(--teal) 12%, var(--plume));
+    background: color-mix(in srgb, var(--forest) 12%, var(--surface));
   }
 
   .instance.disabled {
@@ -282,7 +282,7 @@
 
   .instance input {
     grid-row: span 2;
-    accent-color: var(--teal);
+    accent-color: var(--forest);
   }
 
   .instance .title {
@@ -297,7 +297,7 @@
   .status {
     grid-row: 1 / span 2;
     grid-column: 3;
-    color: var(--ash);
+    color: var(--muted);
     font-size: var(--step--1);
   }
 
@@ -319,7 +319,7 @@
   }
 
   .lead {
-    color: var(--ash);
+    color: var(--muted);
   }
 
   .steps {
@@ -342,19 +342,19 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--teal);
+    background: var(--forest);
     transform: translateY(-2px);
   }
 
   .marker.quiet {
-    background: var(--ash);
+    background: var(--muted);
   }
 
   .files {
     margin: 4px 0 0;
     padding: 0;
     list-style: none;
-    color: var(--ash);
+    color: var(--muted);
     max-height: 140px;
     overflow: auto;
   }
@@ -369,12 +369,12 @@
   .steps > li > input {
     justify-self: center;
     margin: 0;
-    accent-color: var(--teal);
+    accent-color: var(--forest);
     transform: translateY(2px);
   }
 
   .steps label {
-    color: var(--bone);
+    color: var(--text);
     font-size: var(--step-0);
   }
 
@@ -396,7 +396,7 @@
   }
 
   .field label {
-    color: var(--bone);
+    color: var(--text);
     font-size: var(--step-0);
   }
 
@@ -406,13 +406,13 @@
   }
 
   .optional {
-    color: var(--ash);
+    color: var(--muted);
     font-size: var(--step--1);
   }
 
   .hint {
     margin: 0;
-    color: var(--ash);
+    color: var(--muted);
     font-size: var(--step--1);
   }
 

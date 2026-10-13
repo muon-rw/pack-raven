@@ -21,6 +21,10 @@ pub struct Release {
     pub file_id: u64,
     pub server_file_id: u64,
     pub published_at: String,
+    #[serde(default)]
+    pub announce: bool,
+    #[serde(default)]
+    pub announced_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -34,7 +38,7 @@ pub fn load_releases(path: &Path) -> Vec<Release> {
     std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
-fn save_releases(path: &Path, releases: &[Release]) -> Result<()> {
+pub fn save_releases(path: &Path, releases: &[Release]) -> Result<()> {
     std::fs::write(path, serde_json::to_string_pretty(releases)?)?;
     Ok(())
 }
@@ -57,9 +61,9 @@ pub fn preflight(pack: &Pack, version: &str) -> Vec<String> {
     }
     match sync::status(pack) {
         Ok(status) if !status.missing.is_empty() || !status.unlocked.is_empty() => {
-            problems.push("The mods folder doesn't match mods.lock.json. Commit or restore first.".into())
+            problems.push("Your mods folder has changes that aren't committed yet. Commit or pull first.".into())
         }
-        Err(error) => problems.push(format!("Couldn't check the lockfile: {error:#}")),
+        Err(error) => problems.push(format!("Couldn't compare the mods folder with the last commit: {error:#}")),
         _ => {}
     }
     match export::unallowed_override_jars(pack) {
@@ -79,10 +83,11 @@ pub struct PublishContext {
     pub data_dir: PathBuf,
     pub pack_data: PathBuf,
     pub cache_path: PathBuf,
+    pub announce: bool,
 }
 
 pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> Result<String> {
-    let PublishContext { pack, java, data_dir, pack_data, cache_path } = ctx;
+    let PublishContext { pack, java, data_dir, pack_data, cache_path, announce } = ctx;
     let version = options.version.trim().to_string();
     let problems = preflight(&pack, &version);
     if !problems.is_empty() {
@@ -138,7 +143,7 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
 
     let releases_path = pack_data.join("releases.json");
     let mut releases = load_releases(&releases_path);
-    releases.push(Release { version: version.clone(), project_id, file_id, server_file_id, published_at: chrono::Utc::now().to_rfc3339() });
+    releases.push(Release { version: version.clone(), project_id, file_id, server_file_id, published_at: chrono::Utc::now().to_rfc3339(), announce, announced_at: None });
     save_releases(&releases_path, &releases)?;
 
     let archive = pack.dir.join(CHANGELOG_ARCHIVE);

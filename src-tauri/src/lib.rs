@@ -1,8 +1,16 @@
+mod announcer;
 mod changelog;
 mod commands;
 mod curseforge;
+mod defender;
+mod discord;
+mod discord_commands;
 mod export;
+mod file_commands;
+mod files;
 mod git;
+mod git_commands;
+mod gitops;
 mod http;
 mod jobs;
 mod launch;
@@ -15,7 +23,9 @@ mod settings;
 mod setup;
 mod sides;
 mod sync;
+mod system_commands;
 mod testrun;
+mod watcher;
 #[cfg(test)]
 mod live_tests;
 
@@ -54,7 +64,10 @@ pub fn run() {
                 data_dir: app.path().app_data_dir()?,
                 jobs: jobs::Jobs::default(),
                 test: Arc::new(testrun::TestRun::default()),
+                watcher: Mutex::new(None),
             });
+            app.state::<AppState>().rewatch(app.handle());
+            announcer::start(app.handle().clone());
 
             let show = MenuItem::with_id(app, "show", "Show packraven", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -116,6 +129,25 @@ pub fn run() {
             pack_commands::switch_pack,
             pack_commands::remove_pack,
             pack_commands::update_hooks,
+            git_commands::git_overview,
+            git_commands::git_diff,
+            git_commands::git_stage,
+            git_commands::git_unstage,
+            git_commands::git_discard,
+            git_commands::git_commit,
+            git_commands::git_sync,
+            file_commands::list_dir,
+            file_commands::read_file,
+            file_commands::write_file,
+            file_commands::absolute_path,
+            system_commands::defender_status,
+            system_commands::defender_exclude,
+            system_commands::defender_dismiss,
+            discord_commands::get_webhook,
+            discord_commands::set_webhook,
+            discord_commands::discord_test,
+            discord_commands::announce_release,
+            discord_commands::discohook_link,
         ])
         .run(tauri::generate_context!())
         .expect("error while running packraven");

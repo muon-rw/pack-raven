@@ -4,11 +4,15 @@ use std::process::Command;
 use anyhow::{bail, Result};
 
 pub fn run(dir: &Path, args: &[&str]) -> Result<String> {
+    run_accepting(dir, args, &[0])
+}
+
+pub fn run_accepting(dir: &Path, args: &[&str], ok_codes: &[i32]) -> Result<String> {
     let mut command = Command::new("git");
-    command.current_dir(dir).args(args);
+    command.current_dir(dir).args(args).env("GIT_TERMINAL_PROMPT", "0");
     crate::process::hide_window_std(&mut command);
     let output = command.output()?;
-    if !output.status.success() {
+    if !output.status.code().is_some_and(|code| ok_codes.contains(&code)) {
         bail!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr).trim());
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())

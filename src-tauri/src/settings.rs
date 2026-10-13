@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -13,6 +14,9 @@ pub struct Settings {
     pub packs: Vec<PathBuf>,
     pub install_dir: PathBuf,
     pub java: Option<PathBuf>,
+    pub defender_excluded: Vec<PathBuf>,
+    pub defender_dismissed: bool,
+    pub discord_webhooks: BTreeMap<String, String>,
 }
 
 fn curseforge_root() -> PathBuf {
@@ -26,7 +30,7 @@ fn curseforge_root() -> PathBuf {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { instance_dir: PathBuf::new(), packs: Vec::new(), install_dir: curseforge_root().join("Install"), java: None }
+        Self { instance_dir: PathBuf::new(), packs: Vec::new(), install_dir: curseforge_root().join("Install"), java: None, defender_excluded: Vec::new(), defender_dismissed: false, discord_webhooks: BTreeMap::new() }
     }
 }
 
@@ -46,6 +50,19 @@ impl Settings {
         std::fs::write(path, serde_json::to_string_pretty(self)?).context("writing settings")
     }
 
+    pub fn webhook(&self, pack: &Path) -> Option<String> {
+        self.discord_webhooks.get(&webhook_key(pack)).filter(|w| !w.is_empty()).cloned()
+    }
+
+    pub fn set_webhook(&mut self, pack: &Path, url: &str) {
+        let url = url.trim();
+        if url.is_empty() {
+            self.discord_webhooks.remove(&webhook_key(pack));
+        } else {
+            self.discord_webhooks.insert(webhook_key(pack), url.to_string());
+        }
+    }
+
     pub fn instances_root(&self) -> PathBuf {
         self.install_dir.parent().map(|p| p.join("Instances")).unwrap_or_else(|| curseforge_root().join("Instances"))
     }
@@ -63,4 +80,8 @@ impl Settings {
             self.instance_dir = self.packs.first().cloned().unwrap_or_default();
         }
     }
+}
+
+fn webhook_key(pack: &Path) -> String {
+    pack.to_string_lossy().trim_end_matches(['\\', '/']).replace('\\', "/").to_lowercase()
 }

@@ -5,38 +5,56 @@
 
   let viewport: HTMLDivElement
   let pinned = $state(true)
-  let lastTop = 0
+  let dragging = false
+  let lastInput = 0
 
-  function nearBottom() {
-    return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 24
+  const nearBottom = () => viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 24
+  const userInput = () => (lastInput = performance.now())
+
+  function stick() {
+    if (pinned && viewport) viewport.scrollTop = viewport.scrollHeight
   }
 
   function onScroll() {
-    const top = viewport.scrollTop
-    if (top < lastTop - 1) pinned = nearBottom()
-    else if (nearBottom()) pinned = true
-    lastTop = top
+    if (nearBottom()) pinned = true
+    else if (dragging || performance.now() - lastInput < 300) pinned = false
   }
 
   function jumpToLatest() {
     pinned = true
-    viewport.scrollTop = viewport.scrollHeight
+    stick()
   }
 
   $effect(() => {
     void lines.length
     void lines[lines.length - 1]?.id
     if (!lines.length) pinned = true
-    if (pinned && viewport) {
-      viewport.scrollTop = viewport.scrollHeight
-      lastTop = viewport.scrollTop
-    }
+    stick()
+  })
+
+  $effect(() => {
+    const observer = new ResizeObserver(stick)
+    observer.observe(viewport)
+    return () => observer.disconnect()
   })
 </script>
 
+<svelte:window onpointerup={() => (dragging = false)} />
+
 <div class="frame">
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-  <div class="log" bind:this={viewport} onscroll={onScroll} role="log" aria-live="off" aria-label={label} tabindex="0">
+  <div
+    class="log"
+    bind:this={viewport}
+    onscroll={onScroll}
+    onwheel={userInput}
+    onkeydown={userInput}
+    onpointerdown={() => (dragging = true)}
+    role="log"
+    aria-live="off"
+    aria-label={label}
+    tabindex="0"
+  >
     {#each lines as line (line.id)}
       <div class="line {line.stream}">{line.text}</div>
     {:else}
@@ -62,32 +80,31 @@
     min-height: 160px;
     overflow: auto;
     padding: 10px 12px;
-    background: var(--ink);
-    border: 1px solid var(--quill);
+    background: var(--paper);
+    border: 1px solid var(--line);
     border-radius: var(--radius-panel);
     font-family: var(--font-log);
     font-size: var(--step--2);
     line-height: 1.55;
+    overflow-anchor: none;
   }
 
   .line {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    color: color-mix(in srgb, var(--bone) 85%, var(--ash));
-    content-visibility: auto;
-    contain-intrinsic-size: auto 1.55em;
+    color: color-mix(in srgb, var(--text) 85%, var(--muted));
   }
 
   .line.info {
-    color: var(--teal);
+    color: var(--forest);
   }
 
   .line.err {
-    color: var(--rose);
+    color: var(--fail);
   }
 
   .empty {
-    color: var(--ash);
+    color: var(--muted);
     font-family: var(--font-ui);
   }
 
@@ -97,6 +114,6 @@
     bottom: 12px;
     padding: 5px 12px;
     font-size: var(--step--1);
-    box-shadow: 0 6px 18px rgb(5 8 16 / 0.5);
+    box-shadow: 0 6px 18px var(--shadow);
   }
 </style>

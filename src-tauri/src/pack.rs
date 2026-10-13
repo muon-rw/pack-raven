@@ -19,6 +19,21 @@ pub struct PackConfig {
     pub export: ExportConfig,
     pub server: ServerConfig,
     pub test: TestConfig,
+    pub discord: DiscordConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct DiscordConfig {
+    pub role_id: String,
+    pub color: String,
+    pub announce_on_approval: bool,
+}
+
+impl Default for DiscordConfig {
+    fn default() -> Self {
+        Self { role_id: String::new(), color: "#4d6b2f".into(), announce_on_approval: true }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -64,6 +79,7 @@ impl Default for PackConfig {
             export: ExportConfig::default(),
             server: ServerConfig::default(),
             test: TestConfig::default(),
+            discord: DiscordConfig::default(),
         }
     }
 }

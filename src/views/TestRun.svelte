@@ -3,11 +3,13 @@
   import { api, errorText, type Overview } from '../lib/api'
   import { job, testState } from '../lib/jobs.svelte'
   import LogView from '../components/LogView.svelte'
+  import Tip from '../components/Tip.svelte'
 
   let { overview }: { overview: Overview | null } = $props()
 
   let rebuild = $state(false)
-  let connect = $state(true)
+  let join = $state(true)
+  let clientJoins = $state(false)
   let command = $state('')
   let error: string | null = $state(null)
 
@@ -35,15 +37,34 @@
     testState.players.length
       ? `${testState.players.join(', ')} joined the server.`
       : clientRunning
-        ? 'The client is launching and will join when it reaches the title screen.'
+        ? clientJoins
+          ? 'The client is launching and will join when it reaches the title screen.'
+          : 'The client is running.'
         : testState.serverReady
           ? 'The server is up.'
           : serverRunning
             ? 'The server is starting.'
             : preparing
               ? 'Preparing the test server.'
-              : 'Starts the server pack locally in offline mode, then launches this instance offline and joins it.',
+              : 'Start a test server or client locally in offline mode.',
   )
+
+  let serverStarting = $derived(preparing || (serverRunning && !testState.serverReady))
+  let whyNoStart = $derived(serverRunning ? 'The test server is already running' : preparing ? 'The test server is being prepared' : null)
+  let whyNoStop = $derived(serverRunning ? null : preparing ? "The test server is being prepared; it can be stopped once it's running" : "The test server isn't running")
+  let whyNoQuick = $derived(
+    serverRunning ? 'The test server is already running. Use Launch client to join it' : clientRunning ? 'The client is already running' : preparing ? 'The test server is being prepared' : null,
+  )
+  let whyNoLaunch = $derived(
+    clientRunning
+      ? 'The client is already running'
+      : join && !testState.serverReady
+        ? serverStarting
+          ? 'Waiting for the test server to finish starting, or untick auto-join'
+          : 'Start the test server first, or untick auto-join'
+        : null,
+  )
+  let whyNoSend = $derived(!serverRunning ? "The test server isn't running" : !command.trim() ? 'Type a command first' : null)
 </script>
 
 <div class="test">
@@ -53,11 +74,19 @@
       <p class="muted">{status}</p>
     </div>
     <div class="controls">
-      <label class="check"><input type="checkbox" bind:checked={rebuild} disabled={serverRunning} /> Rebuild server pack first</label>
-      <label class="check"><input type="checkbox" bind:checked={connect} disabled={serverRunning} /> Launch the client and join</label>
-      <button class="primary" class:busy={preparing} disabled={serverRunning || preparing} onclick={() => run(() => api.startTest(rebuild, connect))}>
-        {preparing ? 'Starting' : 'Start test'}
-      </button>
+      <label class="check" title={serverRunning ? 'Stop the test server to change this' : undefined}>
+        <input type="checkbox" bind:checked={rebuild} disabled={serverRunning} /> Rebuild server pack first
+      </label>
+      <Tip tip={whyNoQuick ?? 'Starts the server, then launches the client and joins it'}>
+        <button
+          class="primary"
+          class:busy={preparing}
+          disabled={!!whyNoQuick}
+          onclick={() => run(() => ((clientJoins = true), api.startTest(rebuild, true)))}
+        >
+          {preparing ? 'Starting' : 'Quick test'}
+        </button>
+      </Tip>
     </div>
   </div>
 
@@ -69,14 +98,21 @@
       <div class="pane-head">
         <h3>Server</h3>
         <div class="buttons">
-          <button disabled={!serverRunning} title="Saves the world and shuts the server down" onclick={() => run(() => api.serverCommand('stop'))}>Stop</button>
-          <button class="danger" disabled={!serverRunning} title="Ends the process at once without saving" onclick={() => run(() => api.killProcess('server'))}>Kill</button>
+          <Tip tip={whyNoStart}>
+            <button disabled={!!whyNoStart} onclick={() => run(() => api.startTest(rebuild, false))}>Start server</button>
+          </Tip>
+          <Tip tip={whyNoStop ?? 'Saves the world and shuts the server down'}>
+            <button disabled={!!whyNoStop} onclick={() => run(() => api.serverCommand('stop'))}>Stop</button>
+          </Tip>
+          <Tip tip={whyNoStop ?? 'Ends the process at once without saving'}>
+            <button class="danger" disabled={!!whyNoStop} onclick={() => run(() => api.killProcess('server'))}>Kill</button>
+          </Tip>
         </div>
       </div>
-      <LogView lines={serverLines} label="Server log" empty="Start a test to see the server log." />
+      <LogView lines={serverLines} label="Server log" empty="Start the server to see its log." />
       <form class="console" onsubmit={(e) => { e.preventDefault(); sendCommand() }}>
         <input bind:value={command} placeholder="op Dev" disabled={!serverRunning} aria-label="Server command" aria-describedby="console-hint" />
-        <button type="submit" disabled={!serverRunning || !command.trim()}>Send</button>
+        <Tip tip={whyNoSend}><button type="submit" disabled={!!whyNoSend}>Send</button></Tip>
       </form>
       <p class="hint muted" id="console-hint">{serverRunning ? 'Sends a command to the server console. Stop saves and shuts down; Kill ends the process without saving.' : 'Commands can be sent once the server is running.'}</p>
     </div>
@@ -85,13 +121,26 @@
       <div class="pane-head">
         <h3>Client</h3>
         <div class="buttons">
-          <button disabled={clientRunning || !testState.serverReady} onclick={() => run(() => api.startClient())}>Launch client</button>
-          <button class="danger" disabled={!clientRunning} title="Ends the client process at once" onclick={() => run(() => api.killProcess('client'))}>Kill</button>
+          <label class="check" title={clientRunning ? "Can't change this while the client is running" : undefined}>
+            <input type="checkbox" bind:checked={join} disabled={clientRunning} /> Auto-join test server
+          </label>
+          <Tip tip={whyNoLaunch}>
+            <button disabled={!!whyNoLaunch} onclick={() => run(() => ((clientJoins = join), api.startClient(join)))}>Launch client</button>
+          </Tip>
+          <Tip tip={clientRunning ? 'Ends the client process at once' : "The client isn't running"}>
+            <button class="danger" disabled={!clientRunning} onclick={() => run(() => api.killProcess('client'))}>Kill</button>
+          </Tip>
         </div>
       </div>
       <LogView lines={job('client').lines} label="Client log" empty="The client log appears here once it launches." />
       <p class="hint muted">
-        {clientRunning ? 'Running offline as the test username.' : testState.serverReady ? 'Launches this instance offline and joins the test server.' : 'The client can launch once the test server is up.'}
+        {clientRunning
+          ? 'Running offline as the test username.'
+          : !join
+            ? 'Launches this instance offline to the title screen.'
+            : testState.serverReady
+              ? 'Launches this instance offline and joins the test server.'
+              : 'Start the server first, or untick auto-join to launch to the title screen.'}
       </p>
     </div>
   </div>
@@ -154,6 +203,10 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+  }
+
+  .buttons button {
+    white-space: nowrap;
   }
 
   .hint {

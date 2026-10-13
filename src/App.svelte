@@ -9,10 +9,17 @@
   import Publish from './views/Publish.svelte'
   import SettingsView from './views/Settings.svelte'
   import AddPack from './views/AddPack.svelte'
+  import Git from './views/Git.svelte'
+  const loadFiles = () => import('./views/Files.svelte')
+  import { dirtyCount, startWatching } from './lib/workspace.svelte'
+  import DefenderNotice from './components/DefenderNotice.svelte'
+  import { ask } from '@tauri-apps/plugin-dialog'
   import PackSwitcher from './components/PackSwitcher.svelte'
   import RavenMark from './components/RavenMark.svelte'
+  import ThemeToggle from './components/ThemeToggle.svelte'
+  import { modSyncSummary } from './lib/modsync'
 
-  type View = 'prepare' | 'server' | 'test' | 'publish' | 'settings' | 'add'
+  type View = 'prepare' | 'server' | 'test' | 'publish' | 'settings' | 'add' | 'git' | 'files'
   type Tone = 'ok' | 'warn' | 'bad' | 'busy' | 'idle'
 
   let view: View = $state('prepare')
@@ -42,6 +49,7 @@
 
   onMount(() => {
     startListening()
+    startWatching()
     refresh()
     const timer = setInterval(refresh, 5000)
     return () => clearInterval(timer)
@@ -53,6 +61,16 @@
   })
 
   async function switchPack(dir: string) {
+    const unsaved = dirtyCount()
+    if (unsaved && dir !== packs?.active) {
+      const confirmed = await ask(`${unsaved === 1 ? 'A file has' : `${unsaved} files have`} unsaved changes. Switching packs closes ${unsaved === 1 ? 'it' : 'them'} without saving.`, {
+        title: 'Unsaved changes',
+        kind: 'warning',
+        okLabel: 'Switch anyway',
+        cancelLabel: 'Keep editing',
+      })
+      if (!confirmed) return
+    }
     try {
       await api.switchPack(dir)
       view = 'prepare'
@@ -81,13 +99,26 @@
     return phase === 'running' ? 'busy' : phase === 'failed' ? 'bad' : phase === 'done' ? 'ok' : 'idle'
   }
 
+  let addonsOpen = $state(false)
+  let addonRows = $derived(
+    overview
+      ? ([
+          ['Mods', overview.addons.mods],
+          ['Resource Packs', overview.addons.resourcePacks],
+          ['Shader Packs', overview.addons.shaderPacks],
+          ['Data Packs', overview.addons.dataPacks],
+          ['Other', overview.addons.other],
+        ] as const).filter(([label, count]) => count > 0 || label !== 'Other')
+      : [],
+  )
+
   let outOfSync = $derived(overview ? overview.missing.length + overview.unlocked.length : 0)
 
   let stages = $derived<{ id: View; title: string; detail: string; tone: Tone }[]>([
     {
       id: 'prepare',
       title: 'Prepare',
-      detail: !overview ? 'Instance not found' : outOfSync ? `${outOfSync} files out of sync` : 'Lockfile in sync',
+      detail: !overview ? 'Instance not found' : modSyncSummary(overview),
       tone: !overview ? 'bad' : outOfSync ? 'warn' : 'ok',
     },
     {
@@ -121,6 +152,8 @@
     const stage = packs?.active ? stages[Number(event.key) - 1] : undefined
     if (stage) view = stage.id
     else if (event.key === ',') view = 'settings'
+    else if (event.key.toLowerCase() === 'g' && packs?.active) view = 'git'
+    else if (event.key.toLowerCase() === 'e' && packs?.active) view = 'files'
     else return
     event.preventDefault()
   }
@@ -130,7 +163,7 @@
 
 <div class="shell">
   <aside class="rail">
-    <div class="brand"><RavenMark /><span>packraven</span></div>
+    <div class="brand"><RavenMark /><span>packraven</span><ThemeToggle /></div>
 
     <div class="identity">
       <PackSwitcher list={packs} name={overview?.name ?? 'No pack'} onswitch={switchPack} onadd={() => (view = 'add')} />
@@ -154,9 +187,21 @@
           <dt>Uncommitted</dt>
           <dd class:pending={overview.changed.length}>{overview.changed.length ? `${overview.changed.length} files` : 'None'}</dd>
         </div>
-        <div>
-          <dt>Locked mods</dt>
+        <div class="addons" class:open={addonsOpen}>
+          <dt>
+            <button class="expand" aria-expanded={addonsOpen} aria-controls="addon-breakdown" onclick={() => (addonsOpen = !addonsOpen)}>
+              Addons
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5 7.5 6 4 9.5" /></svg>
+            </button>
+          </dt>
           <dd>{overview.lockCount}</dd>
+          {#if addonsOpen}
+            <dl class="breakdown" id="addon-breakdown">
+              {#each addonRows as [label, count] (label)}
+                <div><dt>{label}</dt><dd>{count}</dd></div>
+              {/each}
+            </dl>
+          {/if}
         </div>
         <div class="optional">
           <dt>Test server</dt>
@@ -169,9 +214,20 @@
       </dl>
     {/if}
 
-    <button class="settings" class:current={view === 'settings'} onclick={() => (view = 'settings')} aria-current={view === 'settings' ? 'page' : undefined}>
-      Settings <kbd>Ctrl ,</kbd>
-    </button>
+    <div class="rail-nav">
+      {#if packs?.active}
+        <button class="settings" class:current={view === 'files'} onclick={() => (view = 'files')} aria-current={view === 'files' ? 'page' : undefined}>
+          Files <kbd>Ctrl E</kbd>
+        </button>
+        <button class="settings" class:current={view === 'git'} onclick={() => (view = 'git')} aria-current={view === 'git' ? 'page' : undefined}>
+          <span>Git{#if overview?.changed.length}<span class="pending count">{overview.changed.length}</span>{/if}</span>
+          <kbd>Ctrl G</kbd>
+        </button>
+      {/if}
+      <button class="settings" class:current={view === 'settings'} onclick={() => (view = 'settings')} aria-current={view === 'settings' ? 'page' : undefined}>
+        Settings <kbd>Ctrl ,</kbd>
+      </button>
+    </div>
   </aside>
 
   <main>
@@ -192,15 +248,18 @@
     {/if}
 
     <section class="view">
+      {#if view !== 'add'}<DefenderNotice />{/if}
       {#if overview && overview.hooks !== 'current' && view !== 'add' && !hooksDismissed}
         <div class="banner">
           <Notice tone="warn">
-            <p>{overview.hooks === 'missing' ? "This pack has no sync hooks, so mods won't download when you pull." : "This pack's sync hooks are older than this version of packraven."}</p>
-            <p class="hook-row">
-              <button onclick={updateHooks}>Update hooks</button>
-              <button class="quiet" onclick={() => (hooksDismissed = true)}>Not now</button>
-              {#if hookMessage}<span class:muted={!hookFailed} class:failed={hookFailed}>{hookMessage}</span>{/if}
-            </p>
+            <div class="hook-row">
+              <p>{overview.hooks === 'missing' ? "No sync hooks, so mods won't download when you pull." : 'Sync hooks are older than this version of packraven.'}</p>
+              <span class="hook-actions">
+                <button onclick={updateHooks}>Update hooks</button>
+                <button class="quiet" onclick={() => (hooksDismissed = true)}>Not now</button>
+              </span>
+            </div>
+            {#if hookMessage}<p class:muted={!hookFailed} class:failed={hookFailed}>{hookMessage}</p>{/if}
           </Notice>
         </div>
       {/if}
@@ -218,6 +277,12 @@
           <ServerPack />
         {:else if view === 'test'}
           <TestRun {overview} />
+        {:else if view === 'files'}
+          {#await loadFiles() then { default: Files }}
+            <Files pack={packs?.active ?? null} />
+          {/await}
+        {:else if view === 'git'}
+          <Git onchange={refresh} />
         {:else if view === 'publish'}
           <Publish {overview} onchange={refresh} onprepare={() => (view = 'prepare')} />
         {:else}
@@ -243,6 +308,7 @@
     min-height: 0;
     overflow-y: auto;
     padding: 20px 22px;
+    color: var(--rail-text);
     background: var(--rail);
     border-right: 1px solid var(--rail-edge);
     scrollbar-color: var(--rail-edge) transparent;
@@ -255,7 +321,7 @@
     font-weight: 800;
     font-size: var(--step--1);
     letter-spacing: 0.02em;
-    color: var(--rail-ash);
+    color: var(--rail-muted);
   }
 
   .identity {
@@ -268,12 +334,12 @@
     font-variant-numeric: tabular-nums;
     font-size: var(--step-2);
     line-height: 1.1;
-    color: var(--teal);
+    color: var(--rail-strong);
     overflow-wrap: anywhere;
   }
 
   .game {
-    color: var(--rail-ash);
+    color: var(--rail-muted);
     font-size: var(--step--1);
   }
 
@@ -294,7 +360,7 @@
   }
 
   .machine dt {
-    color: var(--rail-ash);
+    color: var(--rail-muted);
     font-size: var(--step--1);
   }
 
@@ -307,8 +373,94 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .machine .addons {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .machine .addons::before {
+    content: '';
+    position: absolute;
+    inset: 3px -8px;
+    z-index: -1;
+    border-radius: var(--radius-control);
+  }
+
+  .machine .addons:hover::before {
+    background: var(--rail-hi);
+  }
+
+  .expand {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 0;
+  }
+
+  .expand::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+  }
+
+  .expand:hover:not(:disabled) {
+    background: transparent;
+  }
+
+  .expand:focus-visible {
+    outline: none;
+  }
+
+  .addons:has(.expand:focus-visible) {
+    outline: 2px solid var(--rail-strong);
+    outline-offset: -2px;
+  }
+
+  .expand svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: transform 0.15s ease;
+  }
+
+  .open .expand svg {
+    transform: rotate(90deg);
+  }
+
+  .machine .breakdown {
+    flex-basis: 100%;
+    display: grid;
+    gap: 2px;
+    margin: 4px 0 0;
+    padding-left: 18px;
+  }
+
+  .machine .breakdown div {
+    padding: 0;
+    border: 0;
+  }
+
   .pending {
-    color: var(--amber);
+    color: var(--rail-warn);
+  }
+
+  .count {
+    margin-left: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .rail-nav {
+    display: grid;
+    gap: 6px;
+    margin-top: auto;
   }
 
   .settings {
@@ -316,6 +468,7 @@
     justify-content: space-between;
     align-items: center;
     margin-top: auto;
+    color: inherit;
     background: transparent;
     border-color: var(--rail-edge);
   }
@@ -326,12 +479,12 @@
   }
 
   .settings.current {
-    border-color: var(--violet);
+    border-color: var(--rail-strong);
   }
 
   .settings kbd {
     border-color: var(--rail-edge);
-    color: var(--rail-ash);
+    color: var(--rail-muted);
   }
 
   main {
@@ -348,7 +501,7 @@
     margin: 0;
     padding: 0 0 0 calc(var(--view-inset) - 12px);
     list-style: none;
-    border-bottom: 1px solid var(--quill);
+    border-bottom: 1px solid var(--line);
   }
 
   .route li {
@@ -362,12 +515,12 @@
     left: calc(12px + var(--node) + 6px);
     right: -6px;
     height: 2px;
-    background: var(--quill-hi);
+    background: var(--line-strong);
     pointer-events: none;
   }
 
   .route li.ok:not(:last-child)::after {
-    background: var(--teal);
+    background: var(--sage);
   }
 
   .route button {
@@ -385,7 +538,7 @@
   }
 
   .route button:hover {
-    background: color-mix(in srgb, var(--quill) 45%, transparent);
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
   }
 
   .route button:focus-visible {
@@ -398,69 +551,93 @@
     margin-bottom: 8px;
     border-radius: 50%;
     border: 2px solid var(--edge);
-    background: var(--ink);
+    background: var(--paper);
   }
 
   .ok .node {
-    background: var(--teal);
-    border-color: var(--teal);
+    background: var(--sage);
+    border-color: var(--sage);
   }
 
   .warn .node {
-    border-color: var(--amber);
-    background: color-mix(in srgb, var(--amber) 30%, var(--ink));
+    border-color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 25%, var(--paper));
   }
 
   .bad .node {
-    background: var(--rose);
-    border-color: var(--rose);
+    background: var(--fail);
+    border-color: var(--fail);
   }
 
   .busy .node {
-    border-color: var(--violet);
+    border-color: var(--busy);
+    background: var(--highlight);
     animation: pulse 1.2s ease-in-out infinite;
   }
 
   @keyframes pulse {
     50% {
-      background: var(--violet);
+      background: var(--busy);
     }
   }
 
+  .route .current {
+    background: var(--here);
+    box-shadow: inset 0 -3px 0 var(--forest);
+  }
+
+  .route .current:hover {
+    background: var(--here);
+  }
+
   .current .node {
-    box-shadow: 0 0 0 3px var(--ink), 0 0 0 5px var(--bone);
+    box-shadow: 0 0 0 3px var(--here), 0 0 0 5px var(--text);
   }
 
   .title {
-    color: var(--ash);
+    color: var(--muted);
   }
 
   .current .title {
-    color: var(--bone);
+    color: var(--text);
     font-weight: 800;
   }
 
   .detail {
     font-weight: 400;
     font-size: var(--step--1);
-    color: var(--ash);
+    color: var(--muted);
   }
 
   .banner {
-    margin-bottom: 20px;
+    margin-bottom: 18px;
   }
 
   .hook-row {
     display: flex;
     flex-wrap: wrap;
+    justify-content: space-between;
     align-items: center;
-    gap: 6px 10px;
+    gap: 6px 16px;
+  }
+
+  .hook-actions {
+    display: flex;
+    gap: 4px;
+  }
+
+  .hook-actions button {
+    padding-block: 4px;
+  }
+
+  .rail :global(:focus-visible) {
+    outline-color: var(--rail-text);
   }
 
   .quiet {
     background: transparent;
     border-color: transparent;
-    color: var(--ash);
+    color: var(--muted);
   }
 
   main {

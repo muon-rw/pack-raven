@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-export type JobName = 'client-export' | 'server-pack' | 'test' | 'server' | 'client' | 'publish' | 'setup'
+export type JobName = 'client-export' | 'server-pack' | 'test' | 'server' | 'client' | 'publish' | 'setup' | 'git'
 export type JobPhase = 'idle' | 'running' | 'done' | 'failed'
 
 export interface LogLine {
