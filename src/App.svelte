@@ -540,7 +540,7 @@
   .item.current,
   .item.current:hover:not(:disabled) {
     font-weight: 700;
-    background: var(--rail-edge);
+    background: var(--rail-current);
   }
 
   .item:focus-visible {
@@ -577,7 +577,7 @@
   }
 
   .ok .dot {
-    background: var(--sage);
+    background: var(--rail-ok);
   }
 
   .warn .dot {

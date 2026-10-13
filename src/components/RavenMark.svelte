@@ -21,7 +21,7 @@
   }
 
   .wing {
-    fill: var(--ochre);
+    fill: var(--mark-wing);
   }
 
   .eye {
