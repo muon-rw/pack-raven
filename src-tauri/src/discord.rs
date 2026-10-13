@@ -17,7 +17,28 @@ pub struct Announcement {
     pub version: String,
     pub changelog: String,
     pub file_url: String,
+    pub project: Project,
     pub game: String,
+}
+
+pub struct Project {
+    pub name: Option<String>,
+    pub url: String,
+    pub logo: Option<String>,
+    pub author: Option<curseforge::CfAuthor>,
+}
+
+impl Announcement {
+    fn fill(&self, template: &str) -> String {
+        template
+            .replace("{project_name}", self.project.name.as_deref().unwrap_or(&self.name))
+            .replace("{name}", &self.name)
+            .replace("{version}", &self.version)
+            .replace("{file_url}", &self.file_url)
+            .replace("{project_url}", &self.project.url)
+            .trim()
+            .to_string()
+    }
 }
 
 pub fn validate_webhook(url: &str) -> Result<()> {
@@ -41,11 +62,12 @@ fn discord_markdown(changelog: &str) -> String {
         .join("\n")
 }
 
-fn shorten(text: &str, file_url: &str) -> String {
-    if text.len() <= DESCRIPTION_LIMIT {
+fn shorten(text: &str, file_url: &str, limit: usize) -> String {
+    if text.len() <= limit {
         return text.to_string();
     }
-    let cut = text[..text.floor_char_boundary(DESCRIPTION_LIMIT - 120)].rfind('\n').unwrap_or(DESCRIPTION_LIMIT - 120);
+    let budget = limit.saturating_sub(120);
+    let cut = text[..text.floor_char_boundary(budget)].rfind('\n').unwrap_or(text.floor_char_boundary(budget));
     format!("{}\n\n[Read the full changelog on CurseForge]({file_url})", text[..cut].trim_end())
 }
 
@@ -56,19 +78,37 @@ fn color(hex: &str) -> u32 {
 pub fn message(announcement: &Announcement, config: &DiscordConfig) -> Value {
     let role = config.role_id.trim();
     let changelog = discord_markdown(announcement.changelog.trim());
-    let description = if changelog.is_empty() { "A new version is out.".to_string() } else { shorten(&changelog, &announcement.file_url) };
+    let header = announcement.fill(&config.header);
+    let footer = announcement.fill(&config.footer);
+    let body = if changelog.is_empty() {
+        "A new version is out.".to_string()
+    } else {
+        shorten(&changelog, &announcement.file_url, DESCRIPTION_LIMIT.saturating_sub(header.len() + footer.len() + 4))
+    };
+    let description = [header, body, footer].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join("\n\n");
+    let title = match announcement.fill(&config.title) {
+        title if title.is_empty() => format!("{} {}", announcement.name, announcement.version),
+        title => title,
+    };
+    let mut embed = json!({
+        "title": title,
+        "url": announcement.file_url,
+        "description": description,
+        "color": color(&config.color),
+        "footer": { "text": announcement.game },
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    });
+    if let Some(logo) = &announcement.project.logo {
+        embed["thumbnail"] = json!({ "url": logo });
+    }
+    if let Some(author) = announcement.project.author.as_ref().filter(|_| config.show_author) {
+        embed["author"] = json!({ "name": author.name, "url": author.url, "icon_url": author.avatar_url });
+    }
     json!({
         "username": announcement.name,
         "content": if role.is_empty() { String::new() } else { format!("<@&{role}>") },
         "allowed_mentions": { "parse": [], "roles": if role.is_empty() { vec![] } else { vec![role.to_string()] } },
-        "embeds": [{
-            "title": format!("{} {}", announcement.name, announcement.version),
-            "url": announcement.file_url,
-            "description": description,
-            "color": color(&config.color),
-            "footer": { "text": announcement.game },
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        }],
+        "embeds": [embed],
     })
 }
 
@@ -93,27 +133,44 @@ pub async fn discohook_link(message: &Value) -> Result<String> {
     response.get("url").and_then(Value::as_str).map(String::from).context("Discohook didn't return a link")
 }
 
-pub async fn file_url(project_id: u64, file_id: u64) -> String {
-    let website = curseforge::mods(&[project_id]).await.ok().and_then(|mods| mods.get(&project_id).and_then(|m| m.links.website_url.clone()));
-    match website {
-        Some(url) => format!("{}/files/{file_id}", url.trim_end_matches('/')),
-        None => format!("https://www.curseforge.com/projects/{project_id}"),
-    }
-}
-
 pub async fn is_approved(release: &Release) -> bool {
     matches!(curseforge::file(release.project_id, release.file_id).await, Ok(Some(file)) if APPROVED_STATUSES.contains(&file.file_status))
 }
 
 pub async fn announcement(pack: &Pack, release: &Release) -> Announcement {
     let changelog = std::fs::read_to_string(pack.dir.join(CHANGELOG_ARCHIVE).join(format!("{}.md", release.version))).unwrap_or_default();
+    let project = project(release.project_id, &pack.config.author).await;
     Announcement {
         name: pack.name(),
         version: release.version.clone(),
         changelog,
-        file_url: file_url(release.project_id, release.file_id).await,
-        game: format!("Minecraft {}, {}", pack.lock.minecraft.as_deref().unwrap_or("?"), pack.lock.loader.as_deref().unwrap_or("?")),
+        file_url: format!("{}/files/{}", project.url, release.file_id),
+        project,
+        game: game(pack),
     }
+}
+
+pub async fn project(project_id: u64, preferred_author: &str) -> Project {
+    if project_id == 0 {
+        return Project { name: None, url: "https://www.curseforge.com".into(), logo: None, author: None };
+    }
+    let found = curseforge::mods(&[project_id]).await.ok().and_then(|mut mods| mods.remove(&project_id));
+    let authors = found.as_ref().map(|m| m.authors.clone()).unwrap_or_default();
+    let author = authors.iter().find(|a| a.name.eq_ignore_ascii_case(preferred_author.trim())).or(authors.first()).cloned();
+    Project {
+        author,
+        url: found
+            .as_ref()
+            .and_then(|m| m.links.website_url.as_deref())
+            .map(|url| url.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| format!("https://www.curseforge.com/projects/{project_id}")),
+        logo: found.as_ref().and_then(|m| m.logo.as_ref()).map(|logo| logo.thumbnail_url.clone()),
+        name: found.map(|m| m.name),
+    }
+}
+
+pub fn game(pack: &Pack) -> String {
+    format!("Minecraft {}, {}", pack.lock.minecraft.as_deref().unwrap_or("?"), pack.lock.loader.as_deref().unwrap_or("?"))
 }
 
 pub async fn announce(pack_dir: &Path, releases_path: &Path, version: &str, webhook: &str) -> Result<()> {
@@ -134,9 +191,38 @@ mod tests {
     fn headings_become_bold_and_long_text_links_out() {
         assert_eq!(discord_markdown("## Mod changes\n### Added\n- Foo"), "**Mod changes**\n**Added**\n- Foo");
         let long = "- line\n".repeat(1000);
-        let short = shorten(&long, "https://example.com/files/1");
+        let short = shorten(&long, "https://example.com/files/1", DESCRIPTION_LIMIT);
         assert!(short.len() <= DESCRIPTION_LIMIT);
         assert!(short.ends_with("(https://example.com/files/1)"));
+    }
+
+    #[test]
+    fn header_and_footer_fill_placeholders() {
+        let announcement = Announcement {
+            name: "Pack".into(),
+            version: "1.0".into(),
+            changelog: "- Foo".into(),
+            file_url: "https://cf/files/7".into(),
+            project: Project {
+                name: Some("Pack CF".into()),
+                url: "https://cf".into(),
+                logo: Some("https://logo".into()),
+                author: Some(curseforge::CfAuthor { name: "MuonR".into(), url: "https://cf/members/muonr".into(), avatar_url: Some("https://avatar".into()) }),
+            },
+            game: String::new(),
+        };
+        let config = DiscordConfig {
+            header: "{name} {version}".into(),
+            footer: "[Install]({file_url})".into(),
+            title: "{project_name} - v{version}".into(),
+            ..Default::default()
+        };
+        let embed = &message(&announcement, &config)["embeds"][0];
+        assert_eq!(embed["title"], "Pack CF - v1.0");
+        assert_eq!(embed["thumbnail"]["url"], "https://logo");
+        assert_eq!(embed["author"]["icon_url"], "https://avatar");
+        let description = embed["description"].as_str().unwrap().to_string();
+        assert_eq!(description, "Pack 1.0\n\n- Foo\n\n[Install](https://cf/files/7)");
     }
 
     #[test]

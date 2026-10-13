@@ -28,11 +28,15 @@ pub struct DiscordConfig {
     pub role_id: String,
     pub color: String,
     pub announce_on_approval: bool,
+    pub title: String,
+    pub show_author: bool,
+    pub header: String,
+    pub footer: String,
 }
 
 impl Default for DiscordConfig {
     fn default() -> Self {
-        Self { role_id: String::new(), color: "#4d6b2f".into(), announce_on_approval: true }
+        Self { role_id: String::new(), color: "#4d6b2f".into(), announce_on_approval: true, title: "{project_name} - v{version}".into(), show_author: true, header: String::new(), footer: String::new() }
     }
 }
 

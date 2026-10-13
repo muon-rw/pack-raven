@@ -102,7 +102,8 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
 
     let mut cache = MetadataCache::load(&cache_path);
     let sides = sides::classify(&pack, &mut cache).await?;
-    let diff = changelog::mod_diff(&pack, &mut cache).await?;
+    let baseline_path = pack_data.join(changelog::BASELINE_FILE);
+    let diff = changelog::mod_diff(&pack, &mut cache, &baseline_path).await?;
     cache.save(&cache_path)?;
     export::server_pack(&pack, &sides, &version, &out_dir, &java, &data_dir, &log).await?;
     let server_zip = export::zip_server_pack(&pack, &version, &out_dir, &log).await?;
@@ -150,6 +151,7 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
     std::fs::create_dir_all(&archive)?;
     std::fs::write(archive.join(format!("{version}.md")), &notes)?;
     changelog::write_notes(&pack, "")?;
+    let _ = std::fs::remove_file(&baseline_path);
     let archived = format!("{CHANGELOG_ARCHIVE}/{version}.md");
     let mut paths = vec!["config/bcc-common.toml", CHANGELOG, archived.as_str()];
     if pack.dir.join(CONFIG_FILE).exists() {

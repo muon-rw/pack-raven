@@ -110,6 +110,8 @@ pub fn run() {
             commands::get_notes,
             commands::save_notes,
             commands::changelog_preview,
+            commands::set_compare_baseline,
+            commands::clear_compare_baseline,
             commands::server_sides,
             commands::set_side_override,
             commands::publish_preflight,
@@ -148,6 +150,7 @@ pub fn run() {
             discord_commands::discord_test,
             discord_commands::announce_release,
             discord_commands::discohook_link,
+            discord_commands::discohook_preview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running packraven");

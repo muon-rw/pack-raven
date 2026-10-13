@@ -1,8 +1,10 @@
 use serde_json::json;
 use tauri::State;
 
+use crate::changelog;
 use crate::commands::AppState;
 use crate::discord;
+use crate::sides::MetadataCache;
 use crate::pack::Pack;
 use crate::publish;
 
@@ -60,4 +62,21 @@ pub async fn discohook_link(state: State<'_, AppState>, version: String) -> CmdR
         .ok_or_else(|| format!("No release {version} was published from this machine."))?;
     let message = discord::message(&discord::announcement(&pack, &release).await, &pack.config.discord);
     discord::discohook_link(&message).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn discohook_preview(state: State<'_, AppState>, version: String) -> CmdResult<String> {
+    let pack = Pack::open(&state.settings().instance_dir).map_err(err)?;
+    let mut cache = MetadataCache::load(&state.cache_path());
+    let diff = changelog::mod_diff(&pack, &mut cache, &state.pack_data().join(changelog::BASELINE_FILE)).await.map_err(err)?;
+    let project = discord::project(pack.config.curseforge.project_id, &pack.config.author).await;
+    let announcement = discord::Announcement {
+        name: pack.name(),
+        version,
+        changelog: changelog::render(&changelog::read_notes(&pack), &diff),
+        file_url: project.url.clone(),
+        project,
+        game: discord::game(&pack),
+    };
+    discord::discohook_link(&discord::message(&announcement, &pack.config.discord)).await.map_err(err)
 }

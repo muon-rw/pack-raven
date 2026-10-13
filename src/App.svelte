@@ -1,6 +1,7 @@
 <script lang="ts">
   import Notice from './components/Notice.svelte'
   import { onMount } from 'svelte'
+  import { listen } from '@tauri-apps/api/event'
   import { api, errorText, type Overview, type PackList } from './lib/api'
   import { job, jobs, startListening, testState } from './lib/jobs.svelte'
   import Prepare from './views/Prepare.svelte'
@@ -52,7 +53,13 @@
     startWatching()
     refresh()
     const timer = setInterval(refresh, 5000)
-    return () => clearInterval(timer)
+    const unlisten = listen<{ kind: string }>('test-event', ({ payload }) => {
+      if (payload.kind.endsWith('-started') || payload.kind.endsWith('-stopped')) refresh()
+    })
+    return () => {
+      clearInterval(timer)
+      unlisten.then((stop) => stop())
+    }
   })
 
   $effect(() => {
@@ -132,12 +139,13 @@
       title: 'Test',
       detail: testState.players.length
         ? `${testState.players.join(', ')} joined`
-        : testState.serverReady
-          ? 'Server up'
-          : overview?.serverRunning
-            ? 'Server starting'
-            : 'Not running',
-      tone: testState.players.length || testState.serverReady ? 'ok' : overview?.serverRunning ? 'busy' : 'idle',
+        : [
+            testState.serverReady ? 'Server up' : overview?.serverRunning ? 'Server starting' : null,
+            overview?.clientRunning ? 'Client running' : null,
+          ]
+            .filter(Boolean)
+            .join(', ') || 'Not running',
+      tone: overview?.serverRunning && !testState.serverReady ? 'busy' : testState.serverReady || overview?.clientRunning ? 'ok' : 'idle',
     },
     {
       id: 'publish',
@@ -183,11 +191,11 @@
             {#if overview.behind}<span class="pending">{overview.behind} to pull</span>{/if}
           </dd>
         </div>
-        <div>
-          <dt>Uncommitted</dt>
+        <div class="clickable">
+          <dt><button class="expand" title="Open Git (Ctrl G)" onclick={() => (view = 'git')}>Uncommitted</button></dt>
           <dd class:pending={overview.changed.length}>{overview.changed.length ? `${overview.changed.length} files` : 'None'}</dd>
         </div>
-        <div class="addons" class:open={addonsOpen}>
+        <div class="clickable" class:open={addonsOpen}>
           <dt>
             <button class="expand" aria-expanded={addonsOpen} aria-controls="addon-breakdown" onclick={() => (addonsOpen = !addonsOpen)}>
               Addons
@@ -284,7 +292,7 @@
         {:else if view === 'git'}
           <Git onchange={refresh} />
         {:else if view === 'publish'}
-          <Publish {overview} onchange={refresh} onprepare={() => (view = 'prepare')} />
+          <Publish {overview} onchange={refresh} onprepare={() => (view = 'prepare')} onsettings={() => (view = 'settings')} />
         {:else}
           <SettingsView onchange={refresh} />
         {/if}
@@ -373,12 +381,12 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .machine .addons {
+  .machine .clickable {
     position: relative;
     isolation: isolate;
   }
 
-  .machine .addons::before {
+  .machine .clickable::before {
     content: '';
     position: absolute;
     inset: 3px -8px;
@@ -386,7 +394,7 @@
     border-radius: var(--radius-control);
   }
 
-  .machine .addons:hover::before {
+  .machine .clickable:hover::before {
     background: var(--rail-hi);
   }
 
@@ -415,7 +423,7 @@
     outline: none;
   }
 
-  .addons:has(.expand:focus-visible) {
+  .clickable:has(.expand:focus-visible) {
     outline: 2px solid var(--rail-strong);
     outline-offset: -2px;
   }

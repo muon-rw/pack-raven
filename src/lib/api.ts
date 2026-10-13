@@ -15,7 +15,7 @@ export interface PackConfig {
   export: { exclude: string[] }
   server: { exclude: string[]; client_only: number[]; keep: number[]; memory: string; properties: Record<string, string> }
   test: { username: string; port: number; client_memory: string }
-  discord: { role_id: string; color: string; announce_on_approval: boolean }
+  discord: { role_id: string; color: string; announce_on_approval: boolean; title: string; show_author: boolean; header: string; footer: string }
 }
 
 export interface Overview {
@@ -52,6 +52,7 @@ export interface ModChange {
 
 export interface ModDiff {
   since: string | null
+  baseline: boolean
   added: ModChange[]
   updated: ModChange[]
   removed: ModChange[]
@@ -179,6 +180,7 @@ export const api = {
   discordTest: () => invoke<void>('discord_test'),
   announceRelease: (version: string) => invoke<void>('announce_release', { version }),
   discohookLink: (version: string) => invoke<string>('discohook_link', { version }),
+  discohookPreview: (version: string) => invoke<string>('discohook_preview', { version }),
   defenderStatus: () => invoke<DefenderView>('defender_status'),
   defenderExclude: (paths: string[]) => invoke<void>('defender_exclude', { paths }),
   defenderDismiss: (dismissed: boolean) => invoke<void>('defender_dismiss', { dismissed }),
@@ -209,6 +211,8 @@ export const api = {
   getNotes: () => invoke<string>('get_notes'),
   saveNotes: (text: string) => invoke<void>('save_notes', { text }),
   changelogPreview: () => invoke<{ diff: ModDiff; markdown: string }>('changelog_preview'),
+  setCompareBaseline: (zip: string) => invoke<void>('set_compare_baseline', { zip }),
+  clearCompareBaseline: () => invoke<void>('clear_compare_baseline'),
   serverSides: () => invoke<ModSide[]>('server_sides'),
   setSideOverride: (projectId: number, mode: Override) => invoke<void>('set_side_override', { projectId, mode }),
   publishPreflight: (version: string) => invoke<string[]>('publish_preflight', { version }),

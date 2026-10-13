@@ -230,6 +230,24 @@
           <label>Role to ping <input bind:value={config.discord.role_id} placeholder="Role ID" title="Right-click the role with Developer Mode on, then Copy Role ID. Leave empty for no ping." /></label>
           <label>Embed color <input type="color" bind:value={config.discord.color} /></label>
         </div>
+        <label class="block">
+          Title
+          <input bind:value={config.discord.title} placeholder={'{project_name} - v{version}'} aria-describedby="discord-placeholders" />
+        </label>
+        <label class="block">
+          Text above the changelog
+          <textarea rows="3" bind:value={config.discord.header} aria-describedby="discord-placeholders"></textarea>
+        </label>
+        <label class="block">
+          Text below the changelog
+          <textarea rows="4" bind:value={config.discord.footer} placeholder={'[Install]({file_url})\n**Back up your world before updating**'} aria-describedby="discord-placeholders"></textarea>
+        </label>
+        <p class="hint" id="discord-placeholders">
+          Discord markdown, used in every announcement. <code>{'{file_url}'}</code> links to the released file, <code>{'{project_url}'}</code> to the project page. <code>{'{project_name}'}</code> is the CurseForge project's name, <code>{'{name}'}</code> the instance name, and <code>{'{version}'}</code> the version. The project logo is used as the thumbnail.
+        </p>
+        <label class="check">
+          <input type="checkbox" bind:checked={config.discord.show_author} /> Show the project author, with their CurseForge avatar and a link to their profile
+        </label>
         <label class="check">
           <input type="checkbox" bind:checked={config.discord.announce_on_approval} /> Announce each release once CurseForge approves it
         </label>
@@ -393,6 +411,16 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 14px 18px;
+  }
+
+  .block {
+    display: grid;
+    gap: 6px;
+  }
+
+  .block textarea {
+    font-family: var(--font-log);
+    font-size: var(--step--1);
   }
 
   .tokens {

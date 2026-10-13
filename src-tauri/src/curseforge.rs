@@ -20,6 +20,24 @@ pub struct CfMod {
     pub slug: String,
     #[serde(default)]
     pub links: CfLinks,
+    #[serde(default)]
+    pub logo: Option<CfLogo>,
+    #[serde(default)]
+    pub authors: Vec<CfAuthor>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CfAuthor {
+    pub name: String,
+    pub url: String,
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CfLogo {
+    pub thumbnail_url: String,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]

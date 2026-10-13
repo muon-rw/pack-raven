@@ -9,7 +9,12 @@
   import { renderMarkdown } from '../lib/markdown'
   import LogView from '../components/LogView.svelte'
 
-  let { overview, onchange, onprepare }: { overview: Overview | null; onchange: () => void; onprepare: () => void } = $props()
+  let {
+    overview,
+    onchange,
+    onprepare,
+    onsettings,
+  }: { overview: Overview | null; onchange: () => void; onprepare: () => void; onsettings: () => void } = $props()
 
   let push = $state(true)
   let problems: string[] = $state([])
@@ -42,6 +47,21 @@
       discordError = null
     } catch (e) {
       discordError = `Couldn't open Discohook: ${errorText(e)}`
+    }
+  }
+
+  let previewing = $state(false)
+  let previewError = $state<string | null>(null)
+
+  async function previewInDiscohook() {
+    previewing = true
+    try {
+      openUrl(await api.discohookPreview(version || 'next'))
+      previewError = null
+    } catch (e) {
+      previewError = `Couldn't open Discohook: ${errorText(e)}`
+    } finally {
+      previewing = false
     }
   }
 
@@ -240,6 +260,24 @@
           </div>
         </dl>
         <label class="check"><input type="checkbox" bind:checked={push} /> Push the release commit and tag</label>
+      </section>
+
+      <section aria-labelledby="discord-title">
+        <h3 id="discord-title">Discord</h3>
+        <p class="muted">
+          {#if !hasWebhook}
+            No webhook set, so this release won't be announced.
+          {:else if config?.discord.announce_on_approval}
+            Posts to Discord once CurseForge approves {version || 'the release'}{config.discord.role_id.trim() ? ', pinging the role' : ''}.
+          {:else}
+            Automatic announcements are off. Use Announce now under Published releases once it's approved.
+          {/if}
+        </p>
+        <div class="row-start">
+          <button class:busy={previewing} disabled={previewing} onclick={previewInDiscohook}>{previewing ? 'Opening' : 'Preview in Discohook'}</button>
+          <button class="quiet" onclick={onsettings}>{hasWebhook ? 'Discord settings' : 'Set up in Settings'}</button>
+        </div>
+        {#if previewError}<p class="failed">{previewError}</p>{/if}
       </section>
 
       <section aria-labelledby="checks-title" aria-busy={checking}>
@@ -565,4 +603,17 @@
     border-top: 1px solid var(--line);
   }
 
+
+  .row-start {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .quiet {
+    background: transparent;
+    border-color: transparent;
+    color: var(--forest);
+  }
 </style>

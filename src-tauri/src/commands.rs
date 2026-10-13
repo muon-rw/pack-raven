@@ -57,7 +57,7 @@ impl AppState {
         pack_data_dir(&self.data_dir, &self.settings().instance_dir)
     }
 
-    fn cache_path(&self) -> PathBuf {
+    pub(crate) fn cache_path(&self) -> PathBuf {
         self.data_dir.join("metadata-cache.json")
     }
 
@@ -211,10 +211,21 @@ pub struct ChangelogPreview {
 pub async fn changelog_preview(state: State<'_, AppState>) -> CmdResult<ChangelogPreview> {
     let pack = state.pack().map_err(err)?;
     let mut cache = MetadataCache::load(&state.cache_path());
-    let diff = changelog::mod_diff(&pack, &mut cache).await.map_err(err)?;
+    let diff = changelog::mod_diff(&pack, &mut cache, &state.pack_data().join(changelog::BASELINE_FILE)).await.map_err(err)?;
     cache.save(&state.cache_path()).map_err(err)?;
     let markdown = changelog::render(&changelog::read_notes(&pack), &diff);
     Ok(ChangelogPreview { diff, markdown })
+}
+
+#[tauri::command]
+pub fn set_compare_baseline(state: State<'_, AppState>, zip: String) -> CmdResult<()> {
+    let baseline = changelog::baseline_from_zip(std::path::Path::new(&zip)).map_err(err)?;
+    changelog::save_baseline(&state.pack_data().join(changelog::BASELINE_FILE), &baseline).map_err(err)
+}
+
+#[tauri::command]
+pub fn clear_compare_baseline(state: State<'_, AppState>) -> CmdResult<()> {
+    changelog::clear_baseline(&state.pack_data().join(changelog::BASELINE_FILE)).map_err(err)
 }
 
 #[tauri::command]

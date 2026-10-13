@@ -2,6 +2,7 @@
   import { modSyncSummary } from '../lib/modsync'
   import Notice from '../components/Notice.svelte'
   import { onMount } from 'svelte'
+  import { open } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type ModDiff, type Overview } from '../lib/api'
 
   let { overview, onchange }: { overview: Overview | null; onchange: () => void } = $props()
@@ -37,6 +38,22 @@
     } finally {
       loadingDiff = false
     }
+  }
+
+  async function compareWithZip() {
+    const zip = await open({ title: 'Choose an older CurseForge export', filters: [{ name: 'CurseForge modpack', extensions: ['zip'] }] })
+    if (typeof zip !== 'string') return
+    try {
+      await api.setCompareBaseline(zip)
+      await loadDiff()
+    } catch (error) {
+      diffError = errorText(error)
+    }
+  }
+
+  async function stopComparing() {
+    await api.clearCompareBaseline().catch((error) => (diffError = errorText(error)))
+    await loadDiff()
   }
 
   async function saveVersion() {
@@ -147,11 +164,17 @@
         <h3>Mod changes{diff?.since ? ` since ${diff.since}` : ''}</h3>
         <button onclick={loadDiff} disabled={loadingDiff}>{loadingDiff ? 'Checking' : 'Refresh'}</button>
       </div>
-      <p class="muted">Added to the end of the release notes when you publish.</p>
+      <p class="muted">
+        Added to the end of the release notes when you publish.
+        {#if diff?.baseline}<button class="link" onclick={stopComparing}>Stop comparing with {diff.since}</button>{/if}
+      </p>
       {#if diffError}
         <Notice tone="error"><p>{diffError}</p></Notice>
       {:else if diff && !diff.since}
-        <p class="muted">No release tag yet, so there is nothing to compare against. The first release lists no mod changes.</p>
+        <p class="muted">
+          No previous release tags; nothing to compare against. If you'd like, you can
+          <button class="link" onclick={compareWithZip}>compare changes against an old version</button>.
+        </p>
       {:else if diff && !changeCount}
         <p class="muted">No mods changed since {diff.since}.</p>
       {:else if diff}
@@ -277,5 +300,21 @@
     flex-wrap: wrap;
     gap: 2px 10px;
     padding: 2px 0;
+  }
+
+  .link {
+    display: inline;
+    padding: 0;
+    font: inherit;
+    color: var(--forest);
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+    background: transparent;
+    border: 0;
+  }
+
+  .link:hover:not(:disabled) {
+    color: var(--forest-hi);
+    background: transparent;
   }
 </style>

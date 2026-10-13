@@ -54,7 +54,7 @@ const config = {
   export: { exclude: [] },
   server: { exclude: [], client_only: [], keep: [], memory: '6G', properties: {} },
   test: { username: 'Dev', port: 25565, client_memory: '8G' },
-  discord: { role_id: '112233445566778899', color: '#4d6b2f', announce_on_approval: true },
+  discord: { role_id: '112233445566778899', color: '#4d6b2f', announce_on_approval: true, title: '{project_name} - v{version}', show_author: true, header: '', footer: '[Install]({file_url})' },
 }
 
 const releases = [
@@ -104,6 +104,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   discover_instances: () => [pack],
   server_sides: () => [],
   discohook_link: () => 'https://discohook.app/?share=example',
+  discohook_preview: () => 'https://discohook.app/?share=example',
   'plugin:autostart|is_enabled': () => false,
   'plugin:event|listen': () => Math.floor(Math.random() * 1e9),
   'plugin:event|unlisten': () => null,
