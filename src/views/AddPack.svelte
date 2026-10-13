@@ -199,7 +199,7 @@
           <div class="field">
             <label for="project">CurseForge project ID <span class="optional">(optional)</span></label>
             <input id="project" inputmode="numeric" placeholder="8675309" bind:value={projectId} aria-describedby="project-hint" />
-            <p class="hint" id="project-hint">Usually a series of numbers, e.g. 8675309. Used when publishing; you can add it later in Settings.</p>
+            <p class="hint" id="project-hint">Usually a series of numbers, e.g. 8675309. Used when publishing; you can add it later in Pack settings.</p>
           </div>
         </div>
       </fieldset>

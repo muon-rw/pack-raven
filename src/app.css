@@ -39,6 +39,8 @@
   --rail-muted: #bcc4ad;
   --rail-strong: #e3c46f;
   --rail-warn: #f0b867;
+  --rail-fail: #ec8a7a;
+  --rail-pack: #3a4932;
 
   --font-ui: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif;
   --font-log: 'JetBrains Mono', ui-monospace, monospace;
@@ -103,6 +105,7 @@
   --rail: #20291b;
   --rail-hi: #2b3524;
   --rail-edge: #333f2b;
+  --rail-pack: #252f20;
 
   color-scheme: dark;
 }
@@ -279,6 +282,15 @@ label > select {
 
 .muted {
   color: var(--muted);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .file {

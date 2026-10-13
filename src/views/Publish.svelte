@@ -1,10 +1,9 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
   import { onMount } from 'svelte'
-  import { listen } from '@tauri-apps/api/event'
   import { ask } from '@tauri-apps/plugin-dialog'
   import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
-  import { api, errorText, type Overview, type PackConfig, type ReleaseStatus } from '../lib/api'
+  import { api, errorText, type Overview, type PackConfig } from '../lib/api'
   import { job } from '../lib/jobs.svelte'
   import { renderMarkdown } from '../lib/markdown'
   import LogView from '../components/LogView.svelte'
@@ -12,9 +11,10 @@
   let {
     overview,
     onchange,
-    onprepare,
+    onchanges,
     onsettings,
-  }: { overview: Overview | null; onchange: () => void; onprepare: () => void; onsettings: () => void } = $props()
+    onreleases,
+  }: { overview: Overview | null; onchange: () => void; onchanges: () => void; onsettings: () => void; onreleases: () => void } = $props()
 
   let push = $state(true)
   let problems: string[] = $state([])
@@ -22,36 +22,20 @@
   let config = $state<PackConfig | null>(null)
   let changelog: string | null = $state(null)
   let changelogError: string | null = $state(null)
-  let releases: ReleaseStatus[] = $state([])
-  let releasesError: string | null = $state(null)
   let hasWebhook = $state(false)
-  let announcing = $state<string | null>(null)
-  let discordError = $state<string | null>(null)
-
-  async function announceNow(version: string) {
-    announcing = version
-    try {
-      await api.announceRelease(version)
-      discordError = null
-      await loadReleases()
-    } catch (e) {
-      discordError = errorText(e)
-    } finally {
-      announcing = null
-    }
-  }
-
-  async function editInDiscohook(version: string) {
-    try {
-      openUrl(await api.discohookLink(version))
-      discordError = null
-    } catch (e) {
-      discordError = `Couldn't open Discohook: ${errorText(e)}`
-    }
-  }
-
   let previewing = $state(false)
   let previewError = $state<string | null>(null)
+  let error: string | null = $state(null)
+  let published: { version: string; pushed: boolean } | null = $state(null)
+
+  onMount(() => {
+    loadChangelog()
+    api.getPackConfig().then(
+      (c) => (config = c),
+      () => (config = null),
+    )
+    api.getWebhook().then((w) => (hasWebhook = !!w), () => (hasWebhook = false))
+  })
 
   async function previewInDiscohook() {
     previewing = true
@@ -65,43 +49,12 @@
     }
   }
 
-  function discordState(release: ReleaseStatus) {
-    if (release.announcedAt) return `Announced ${new Date(release.announcedAt).toLocaleDateString()}`
-    if (release.announce) return 'Posts when CurseForge approves it'
-    return 'Not announced'
-  }
-  let error: string | null = $state(null)
-  let published: { version: string; pushed: boolean } | null = $state(null)
-
-  onMount(() => {
-    loadChangelog()
-    loadReleases()
-    api.getPackConfig().then(
-      (c) => (config = c),
-      () => (config = null),
-    )
-    api.getWebhook().then((w) => (hasWebhook = !!w), () => (hasWebhook = false))
-    const unlisten = listen('release-announced', () => loadReleases())
-    return () => {
-      unlisten.then((stop) => stop())
-    }
-  })
-
   async function loadChangelog() {
     try {
       changelog = (await api.changelogPreview()).markdown
       changelogError = null
     } catch (e) {
       changelogError = `Couldn't build the changelog preview: ${errorText(e)}`
-    }
-  }
-
-  async function loadReleases() {
-    try {
-      releases = await api.releases()
-      releasesError = null
-    } catch (e) {
-      releasesError = `Couldn't load releases from CurseForge: ${errorText(e)}`
     }
   }
 
@@ -127,10 +80,7 @@
   })
 
   $effect(() => {
-    if (job('publish').phase === 'done') {
-      loadReleases()
-      loadChangelog()
-    }
+    if (job('publish').phase === 'done') loadChangelog()
   })
 
   let warnings = $derived(
@@ -160,17 +110,17 @@
     }
   }
 
-  async function exportOnly() {
+  async function build(action: () => Promise<void>, what: string) {
     try {
       error = null
-      await api.buildClientExport()
+      await action()
     } catch (e) {
-      error = errorText(e)
+      error = `Couldn't start the ${what}: ${errorText(e)}`
     }
   }
 
-  function statusTone(status: string) {
-    return /approved|released/i.test(status) ? 'ok' : /reject|delete|fail/i.test(status) ? 'fail' : 'pending'
+  function reveal(path: string) {
+    revealItemInDir(path).catch((e) => (error = `Couldn't open the folder: ${errorText(e)}`))
   }
 
   function openLink(event: MouseEvent) {
@@ -182,9 +132,10 @@
 
   let publishJob = $derived(job('publish'))
   let publishing = $derived(publishJob.phase === 'running')
-  let exportJob = $derived(job('client-export'))
-  let logLines = $derived(publishJob.lines.concat(exportJob.lines))
-  let showLog = $derived(publishing || exportJob.phase === 'running' || logLines.length > 0)
+  let serverJob = $derived(job('server-pack'))
+  let clientJob = $derived(job('client-export'))
+  let logLines = $derived(publishJob.lines.concat(serverJob.lines, clientJob.lines))
+  let showLog = $derived(publishing || serverJob.phase === 'running' || clientJob.phase === 'running' || logLines.length > 0)
   let projectUrl = $derived(overview?.projectId ? `https://www.curseforge.com/projects/${overview.projectId}` : null)
   let releaseType = $derived(
     config ? ({ release: 'Release', beta: 'Beta', alpha: 'Alpha' } as Record<string, string>)[config.curseforge.release_type] ?? config.curseforge.release_type : null,
@@ -195,9 +146,17 @@
   <header class="head">
     <div>
       <h2>Release <span class="version-tag">{version || 'unversioned'}</span></h2>
-      <p class="muted">Review exactly what goes to CurseForge. The version and notes come from Prepare.</p>
+      <p class="muted">
+        Review exactly what goes to CurseForge. The version and notes come from
+        <button class="link" onclick={onchanges}>Changes</button>.
+      </p>
     </div>
-    <button onclick={onprepare}>{version ? 'Edit in Prepare' : 'Set a version in Prepare'}</button>
+    <div class="go">
+      <button class="primary" class:busy={publishing} disabled={publishing || checking || problems.length > 0} aria-describedby="publish-checks" onclick={publish}>
+        {publishing ? 'Publishing' : `Publish ${version || 'release'}`}
+      </button>
+      <label class="check"><input type="checkbox" bind:checked={push} /> Push the release commit and tag</label>
+    </div>
   </header>
 
   {#if publishJob.phase === 'done' && published}
@@ -205,10 +164,15 @@
       <p>
         <strong>{overview?.name} {published.version} is on CurseForge.</strong> The release commit is tagged v{published.version}{published.pushed ? ' and pushed' : ', not pushed yet'}.
       </p>
-      <p class="muted">Its notes were archived to <span class="file">changelogs/{published.version}.md</span>, and changelog.md is empty for the next release. {publishJob.message}</p>
+      <p class="muted">
+        Its notes were archived to <span class="file">changelogs/{published.version}.md</span>, and changelog.md is empty for the next release. {publishJob.message}
+        <button class="link" onclick={onreleases}>Follow its review in Releases</button>.
+      </p>
     </Notice>
   {/if}
-  {#if publishJob.phase === 'failed'}<Notice tone="error"><p>{publishJob.message}</p></Notice>{/if}
+  {#each [publishJob, serverJob, clientJob] as failed, index (index)}
+    {#if failed.phase === 'failed'}<Notice tone="error"><p>{failed.message}</p></Notice>{/if}
+  {/each}
   {#if error}<Notice tone="error"><p>{error}</p></Notice>{/if}
 
   <div class="columns">
@@ -224,7 +188,7 @@
       {:else if !changelog.trim()}
         <div class="changelog empty">
           <p>No release notes and no mod changes yet, so the CurseForge changelog would be empty.</p>
-          <p><button onclick={onprepare}>Write notes in Prepare</button></p>
+          <p><button onclick={onchanges}>Write notes in Changes</button></p>
         </div>
       {:else}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -233,53 +197,6 @@
     </section>
 
     <aside class="side">
-      <section aria-labelledby="ships-title">
-        <h3 id="ships-title">What ships</h3>
-        <dl class="ships">
-          <div>
-            <dt>Client pack</dt>
-            <dd><span class="file">{overview?.name} {version}.zip</span></dd>
-          </div>
-          <div>
-            <dt>Server pack</dt>
-            <dd>Attached to the client file</dd>
-          </div>
-          <div>
-            <dt>Release type</dt>
-            <dd>{releaseType ?? 'Unknown'}{config?.curseforge.manual_release ? ', held until you release it' : ''}</dd>
-          </div>
-          <div>
-            <dt>Project</dt>
-            <dd>
-              {#if projectUrl}<a href={projectUrl} onclick={(e) => { e.preventDefault(); openUrl(projectUrl!) }}>{overview?.projectId}</a>{:else}Not set{/if}
-            </dd>
-          </div>
-          <div>
-            <dt>Git</dt>
-            <dd>Commit and tag <span class="file">v{version || '?'}</span></dd>
-          </div>
-        </dl>
-        <label class="check"><input type="checkbox" bind:checked={push} /> Push the release commit and tag</label>
-      </section>
-
-      <section aria-labelledby="discord-title">
-        <h3 id="discord-title">Discord</h3>
-        <p class="muted">
-          {#if !hasWebhook}
-            No webhook set, so this release won't be announced.
-          {:else if config?.discord.announce_on_approval}
-            Posts to Discord once CurseForge approves {version || 'the release'}{config.discord.role_id.trim() ? ', pinging the role' : ''}.
-          {:else}
-            Automatic announcements are off. Use Announce now under Published releases once it's approved.
-          {/if}
-        </p>
-        <div class="row-start">
-          <button class:busy={previewing} disabled={previewing} onclick={previewInDiscohook}>{previewing ? 'Opening' : 'Preview in Discohook'}</button>
-          <button class="quiet" onclick={onsettings}>{hasWebhook ? 'Discord settings' : 'Set up in Settings'}</button>
-        </div>
-        {#if previewError}<p class="failed">{previewError}</p>{/if}
-      </section>
-
       <section aria-labelledby="checks-title" aria-busy={checking}>
         <h3 id="checks-title">Checks</h3>
         <ul class="checks" id="publish-checks">
@@ -304,93 +221,86 @@
         </ul>
       </section>
 
-      <div class="go">
-        <button class="primary" class:busy={publishing} disabled={publishing || checking || problems.length > 0} aria-describedby="publish-checks" onclick={publish}>
-          {publishing ? 'Publishing' : `Publish ${version || 'release'}`}
-        </button>
-        <p class="muted">After upload, changelog.md is archived to <span class="file">changelogs/{version || 'version'}.md</span> and cleared.</p>
-      </div>
+      <section aria-labelledby="ships-title">
+        <h3 id="ships-title">Publish Settings</h3>
+        <dl class="ships">
+          <div>
+            <dt>Client pack</dt>
+            <dd><span class="file">{overview?.name} {version}.zip</span></dd>
+          </div>
+          <div>
+            <dt>Server pack</dt>
+            <dd>Attached to the client file</dd>
+          </div>
+          <div>
+            <dt>Release type</dt>
+            <dd>{releaseType ?? 'Unknown'}{config?.curseforge.manual_release ? ', held until you release it' : ''}</dd>
+          </div>
+          <div>
+            <dt>Project</dt>
+            <dd>
+              {#if projectUrl}<a href={projectUrl} onclick={(e) => { e.preventDefault(); openUrl(projectUrl!) }}>{overview?.projectId}</a>{:else}Not set{/if}
+            </dd>
+          </div>
+          <div>
+            <dt>Git</dt>
+            <dd>Commit and tag <span class="file">v{version || '?'}</span>{push ? ', then push' : ''}</dd>
+          </div>
+          <div>
+            <dt>Notes</dt>
+            <dd>Archived to <span class="file">changelogs/{version || 'version'}.md</span></dd>
+          </div>
+        </dl>
+      </section>
+
+      <section aria-labelledby="discord-title">
+        <h3 id="discord-title">Discord</h3>
+        <p class="muted">
+          {#if !hasWebhook}
+            No webhook set, so this release won't be announced.
+          {:else if config?.discord.announce_on_approval}
+            Posts to Discord once CurseForge approves {version || 'the release'}{config.discord.role_id.trim() ? ', pinging the role' : ''}.
+          {:else}
+            Automatic announcements are off. Announce it from Releases once it's approved.
+          {/if}
+          <button class="link" onclick={onsettings}>{hasWebhook ? 'Change Discord settings' : 'Set up a webhook'}</button>
+        </p>
+        <div class="row-start">
+          <button class:busy={previewing} disabled={previewing} onclick={previewInDiscohook}>{previewing ? 'Opening' : 'Preview in Discohook'}</button>
+        </div>
+        {#if previewError}<p class="failed">{previewError}</p>{/if}
+      </section>
+
+      <section aria-labelledby="build-title">
+        <h3 id="build-title">Build without publishing</h3>
+        <p class="muted">Makes the same zips Publish uploads, without uploading, committing or tagging.</p>
+        <div class="row-start">
+          <button class:busy={serverJob.phase === 'running'} disabled={serverJob.phase === 'running'} onclick={() => build(api.buildServerPack, 'server pack build')}>
+            {serverJob.phase === 'running' ? 'Building' : 'Server pack'}
+          </button>
+          <button class:busy={clientJob.phase === 'running'} disabled={clientJob.phase === 'running'} onclick={() => build(api.buildClientExport, 'client zip')}>
+            {clientJob.phase === 'running' ? 'Building' : 'Client zip'}
+          </button>
+        </div>
+        {#if (serverJob.phase === 'done' && serverJob.message) || (clientJob.phase === 'done' && clientJob.message)}
+          <p class="reveal">
+            {#if serverJob.phase === 'done' && serverJob.message}<button class="link" onclick={() => reveal(serverJob.message!)}>Show server pack</button>{/if}
+            {#if clientJob.phase === 'done' && clientJob.message}<button class="link" onclick={() => reveal(clientJob.message!)}>Show client zip</button>{/if}
+          </p>
+        {/if}
+      </section>
     </aside>
   </div>
 
   {#if showLog}
     <div class="log-block">
-      <h3>Publish log</h3>
-      <LogView lines={logLines} label="Publish log" />
+      <h3>Build log</h3>
+      <LogView lines={logLines} label="Build and publish log" />
     </div>
   {/if}
-
-  <section class="history" aria-labelledby="history-title">
-    <div class="row">
-      <h3 id="history-title">Published releases</h3>
-      <div class="row">
-        <button onclick={exportOnly} class:busy={exportJob.phase === 'running'} disabled={exportJob.phase === 'running'}>Build client zip only</button>
-        {#if exportJob.phase === 'done' && exportJob.message}
-          <button onclick={() => revealItemInDir(exportJob.message!).catch((e) => (error = `Couldn't open the folder: ${errorText(e)}`))}>Show client zip</button>
-        {/if}
-        <button onclick={loadReleases}>Refresh</button>
-      </div>
-    </div>
-    {#if exportJob.phase === 'failed'}<Notice tone="error"><p>{exportJob.message}</p></Notice>{/if}
-    {#if releasesError}<p class="failed">{releasesError}</p>{/if}
-    {#if discordError}<p class="failed">{discordError}</p>{/if}
-    {#if releases.length}
-      <table>
-        <thead>
-          <tr><th>Version</th><th>Published</th><th>Pack file</th><th>Server pack</th><th>Discord</th></tr>
-        </thead>
-        <tbody>
-          {#each [...releases].reverse() as release (release.fileId)}
-            <tr>
-              <td class="file">{release.version}</td>
-              <td>{new Date(release.publishedAt).toLocaleDateString()}</td>
-              <td><span class="chip {statusTone(release.status)}">{release.status}</span></td>
-              <td>
-                <span class="chip {statusTone(release.serverStatus)}">{release.serverStatus}</span>
-                {#if release.serverPackLinked === false}<span class="chip pending">Not linked as the server pack</span>{/if}
-              </td>
-              <td class="discord">
-                <span class:muted={!release.announcedAt}>{discordState(release)}</span>
-                <span class="discord-actions">
-                  {#if hasWebhook}
-                    <button class="link" class:busy={announcing === release.version} disabled={announcing !== null} onclick={() => announceNow(release.version)}>
-                      {release.announcedAt ? 'Announce again' : 'Announce now'}
-                    </button>
-                  {/if}
-                  <button class="link" onclick={() => editInDiscohook(release.version)}>Edit in Discohook</button>
-                </span>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {:else if !releasesError}
-      <p class="muted">Releases you publish from packraven show up here with their CurseForge review status.</p>
-    {/if}
-  </section>
 </div>
 
 <style>
-  .discord {
-    display: grid;
-    gap: 2px;
-  }
-
-  .discord-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px;
-  }
-
-  .discord .link {
-    padding: 1px 4px;
-    font-weight: 400;
-    font-size: var(--step--1);
-    color: var(--forest);
-    background: transparent;
-    border-color: transparent;
-  }
-
   .publish {
     display: grid;
     gap: 22px;
@@ -414,6 +324,38 @@
     color: var(--forest);
   }
 
+  .go {
+    display: grid;
+    justify-items: end;
+    gap: 8px;
+  }
+
+  .go .primary {
+    padding: 10px 22px;
+    font-size: var(--step-1);
+  }
+
+  .go .check {
+    font-size: var(--step--1);
+    color: var(--muted);
+  }
+
+  .link {
+    display: inline;
+    padding: 0;
+    font: inherit;
+    color: var(--forest);
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+    background: transparent;
+    border: 0;
+  }
+
+  .link:hover:not(:disabled) {
+    color: var(--forest-hi);
+    background: transparent;
+  }
+
   .columns {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 320px;
@@ -429,7 +371,6 @@
 
   .review,
   .side section,
-  .history,
   .log-block {
     display: grid;
     gap: 12px;
@@ -438,7 +379,7 @@
 
   .side {
     display: grid;
-    gap: 26px;
+    gap: 28px;
     align-content: start;
   }
 
@@ -561,59 +502,18 @@
     stroke: var(--forest);
   }
 
-  .go {
-    display: grid;
-    gap: 10px;
-  }
-
-  .go .primary {
-    padding-block: 11px;
-    font-size: var(--step-1);
-  }
-
-  .go p {
-    font-size: var(--step--1);
-  }
-
   .log-block {
     grid-template-rows: auto minmax(220px, 1fr);
   }
-
-  .history {
-    padding-top: 22px;
-    border-top: 1px solid var(--line);
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-variant-numeric: tabular-nums;
-  }
-
-  th {
-    text-align: left;
-    font-size: var(--step--1);
-    font-weight: 400;
-    color: var(--muted);
-    padding: 6px 12px 6px 0;
-  }
-
-  td {
-    padding: 8px 12px 8px 0;
-    border-top: 1px solid var(--line);
-  }
-
 
   .row-start {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-top: 8px;
   }
 
-  .quiet {
-    background: transparent;
-    border-color: transparent;
-    color: var(--forest);
+  .reveal {
+    display: flex;
+    gap: 16px;
   }
 </style>

@@ -105,10 +105,10 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="prepare">
+<div class="changes">
   <header class="head">
     <div>
-      <h2>Prepare <span class="version-tag">{overview?.version ?? 'unversioned'}</span></h2>
+      <h2>Changes</h2>
       <p class="muted">{readiness}</p>
     </div>
     <form class="version" onsubmit={(e) => { e.preventDefault(); saveVersion() }}>
@@ -197,7 +197,7 @@
 </div>
 
 <style>
-  .prepare {
+  .changes {
     display: grid;
     gap: 18px;
   }
@@ -213,12 +213,6 @@
     margin-top: 4px;
   }
 
-  .version-tag {
-    font-family: var(--font-log);
-    font-weight: 400;
-    font-variant-numeric: tabular-nums;
-    color: var(--forest);
-  }
 
   .columns {
     display: grid;

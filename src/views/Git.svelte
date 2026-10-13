@@ -288,7 +288,7 @@
       {:else if diff?.binary}
         <p class="muted pad">This is a binary file, so there's no text diff to show.</p>
       {:else if diff && !diff.text.trim()}
-        <p class="muted pad">No content changes. Git flagged this file over line endings or file metadata only; staging it clears the flag.</p>
+        <p class="muted pad">No content changes. Git flagged this file over line endings or file metadata only; you can stage it to clear the flag.</p>
       {:else if diff}
         {#if diff.truncated}<div class="pad"><Notice tone="warn"><p>This diff is very large, so only the first part is shown.</p></Notice></div>{/if}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->

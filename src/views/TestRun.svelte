@@ -1,17 +1,24 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
   import { api, errorText, type Overview } from '../lib/api'
-  import { job, testState } from '../lib/jobs.svelte'
+  import { job, serverMods, testState } from '../lib/jobs.svelte'
   import LogView from '../components/LogView.svelte'
   import Tip from '../components/Tip.svelte'
 
-  let { overview }: { overview: Overview | null } = $props()
+  let { overview, onservermods }: { overview: Overview | null; onservermods: () => void } = $props()
 
-  let rebuild = $state(false)
+  let rebuild = $state(serverMods.changedSinceBuild)
   let join = $state(true)
   let clientJoins = $state(false)
   let command = $state('')
   let error: string | null = $state(null)
+
+  function startTest(connect: boolean) {
+    return run(async () => {
+      await api.startTest(rebuild, connect)
+      if (rebuild) serverMods.changedSinceBuild = false
+    })
+  }
 
   async function run(action: () => Promise<void>) {
     try {
@@ -82,7 +89,7 @@
           class="primary"
           class:busy={preparing}
           disabled={!!whyNoQuick}
-          onclick={() => run(() => ((clientJoins = true), api.startTest(rebuild, true)))}
+          onclick={() => ((clientJoins = true), startTest(true))}
         >
           {preparing ? 'Starting' : 'Quick test'}
         </button>
@@ -90,6 +97,18 @@
     </div>
   </div>
 
+  {#if serverMods.changedSinceBuild}
+    <Notice tone="warn">
+      <p>
+        You changed server mod overrides since the server pack was last built here.
+        {serverRunning
+          ? 'Stop the test server, then start it again with Rebuild server pack first ticked to use them.'
+          : rebuild
+            ? 'Rebuild server pack first is ticked, so the next start uses them.'
+            : 'Tick Rebuild server pack first so the next start uses them.'}
+      </p>
+    </Notice>
+  {/if}
   {#if error}<Notice tone="error"><p>{error}</p></Notice>{/if}
   {#if job('test').phase === 'failed'}<Notice tone="error"><p>{job('test').message}</p></Notice>{/if}
 
@@ -99,7 +118,7 @@
         <h3>Server</h3>
         <div class="buttons">
           <Tip tip={whyNoStart}>
-            <button disabled={!!whyNoStart} onclick={() => run(() => api.startTest(rebuild, false))}>Start server</button>
+            <button disabled={!!whyNoStart} onclick={() => startTest(false)}>Start server</button>
           </Tip>
           <Tip tip={whyNoStop ?? 'Saves the world and shuts the server down'}>
             <button disabled={!!whyNoStop} onclick={() => run(() => api.serverCommand('stop'))}>Stop</button>
@@ -114,7 +133,10 @@
         <input bind:value={command} placeholder="op Dev" disabled={!serverRunning} aria-label="Server command" aria-describedby="console-hint" />
         <Tip tip={whyNoSend}><button type="submit" disabled={!!whyNoSend}>Send</button></Tip>
       </form>
-      <p class="hint muted" id="console-hint">{serverRunning ? 'Sends a command to the server console. Stop saves and shuts down; Kill ends the process without saving.' : 'Commands can be sent once the server is running.'}</p>
+      <p class="hint muted" id="console-hint">
+        {serverRunning ? 'Sends a command to the server console. Stop saves and shuts down; Kill ends the process without saving.' : 'Commands can be sent once the server is running.'}
+        Server crashing on a mod? <button class="link" onclick={onservermods}>Change server mods</button>.
+      </p>
     </div>
 
     <div class="pane">
@@ -132,7 +154,7 @@
           </Tip>
         </div>
       </div>
-      <LogView lines={job('client').lines} label="Client log" empty="The client log appears here once it launches." />
+      <LogView lines={job('client').lines} label="Client log" empty="The client log will appear here after you launch it." />
       <p class="hint muted">
         {clientRunning
           ? 'Running offline as the test username.'
@@ -211,6 +233,22 @@
 
   .hint {
     font-size: var(--step--1);
+  }
+
+  .link {
+    display: inline;
+    padding: 0;
+    font: inherit;
+    color: var(--forest);
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+    background: transparent;
+    border: 0;
+  }
+
+  .link:hover:not(:disabled) {
+    color: var(--forest-hi);
+    background: transparent;
   }
 
   .console input {

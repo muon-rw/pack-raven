@@ -1,10 +1,9 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
   import { onMount } from 'svelte'
-  import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
+  import { openUrl } from '@tauri-apps/plugin-opener'
   import { api, errorText, type ModSide, type Override } from '../lib/api'
-  import { job } from '../lib/jobs.svelte'
-  import LogView from '../components/LogView.svelte'
+  import { serverMods } from '../lib/jobs.svelte'
 
   type Filter = 'excluded' | 'all' | 'overridden'
 
@@ -30,20 +29,12 @@
   async function setOverride(mod: ModSide, select: HTMLSelectElement) {
     try {
       await api.setSideOverride(mod.projectId, select.value as Override)
+      serverMods.changedSinceBuild = true
     } catch (error) {
       select.value = mod.override
       loadError = `Couldn't change the override for ${mod.name}: ${errorText(error)}`
     }
     await load()
-  }
-
-  async function build() {
-    try {
-      loadError = null
-      await api.buildServerPack()
-    } catch (error) {
-      loadError = `Couldn't start the build: ${errorText(error)}`
-    }
   }
 
   let excludedCount = $derived(mods.filter((m) => m.side === 'client').length)
@@ -54,20 +45,16 @@
       return !search || m.name.toLowerCase().includes(search.toLowerCase())
     }),
   )
-  let building = $derived(job('server-pack').phase === 'running')
-  let result = $derived(job('server-pack'))
 </script>
 
 <div class="server">
-  <div class="head">
-    <div>
-      <h2>Server pack</h2>
-      <p class="muted">
-        {mods.length} mods, {excludedCount} excluded as client-only. Exclusions are populated by CF/Modrinth tags; override them here.
-      </p>
-    </div>
-    <button class="primary" class:busy={building} onclick={build} disabled={building}>{building ? 'Building' : 'Build server pack'}</button>
-  </div>
+  <header class="head">
+    <h2>Server mods</h2>
+    <p class="muted">
+      {mods.length} mods, {excludedCount} left off the server as client-only based on CurseForge and Modrinth tags.
+      Override them here. Choices are used by Test and Publish to build server packs.
+    </p>
+  </header>
 
   {#if loadError}
     <Notice tone="error">
@@ -126,15 +113,6 @@
     </table>
   </div>
 
-  <div class="output">
-    <div class="tools">
-      <h3>Build log</h3>
-      {#if result.phase === 'done' && result.message}
-        <button onclick={() => revealItemInDir(result.message!).catch((e) => (loadError = `Couldn't open the folder: ${errorText(e)}`))}>Show server pack</button>
-      {/if}
-    </div>
-    <LogView lines={result.lines} label="Server pack build log" empty="Build the server pack to see its log." />
-  </div>
 </div>
 
 <style>
@@ -143,17 +121,17 @@
     gap: 18px;
   }
 
-  .head,
+  .head {
+    display: grid;
+    gap: 4px;
+  }
+
   .tools {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-  }
-
-  .head p {
-    margin-top: 4px;
   }
 
   .filters {
@@ -207,7 +185,7 @@
   }
 
   .table {
-    max-height: 46vh;
+    max-height: calc(100vh - 260px);
     overflow: auto;
     border: 1px solid var(--line);
     border-radius: var(--radius-panel);
@@ -239,12 +217,4 @@
     color: var(--text);
   }
 
-
-
-  .output {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-height: 260px;
-  }
 </style>
