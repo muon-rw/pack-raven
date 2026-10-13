@@ -35,6 +35,9 @@ impl AppState {
 
     pub(crate) fn rewatch(&self, app: &AppHandle) {
         let dir = self.settings().instance_dir;
+        if crate::setup::has_hooks(&dir) {
+            let _ = crate::setup::link_hooks(&dir);
+        }
         let watcher = (!dir.as_os_str().is_empty()).then(|| crate::watcher::watch(app.clone(), dir).ok()).flatten();
         *self.watcher.lock().unwrap() = watcher;
     }
@@ -109,8 +112,6 @@ pub struct Overview {
     dev_jars: Vec<String>,
     unpublishable_jars: Vec<String>,
     project_id: u64,
-    has_core_key: bool,
-    has_upload_token: bool,
     running_jobs: Vec<String>,
     server_running: bool,
     client_running: bool,
@@ -164,8 +165,6 @@ pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
         dev_jars: export::local_dev_jars(&pack),
         unpublishable_jars: export::unallowed_override_jars(&pack).unwrap_or_default(),
         project_id: pack.config.curseforge.project_id,
-        has_core_key: curseforge::core_key().is_some(),
-        has_upload_token: curseforge::upload_token().is_some(),
         running_jobs: state.jobs.running(),
         server_running: state.test.server.lock().unwrap().is_some(),
         client_running: state.test.client.lock().unwrap().is_some(),

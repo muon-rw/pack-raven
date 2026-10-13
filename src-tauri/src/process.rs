@@ -24,6 +24,18 @@ pub fn hide_window(command: &mut Command) {
     let _ = command;
 }
 
+pub fn encode_powershell(script: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>())
+}
+
+pub fn powershell(script: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("powershell");
+    command.args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encode_powershell(script)]);
+    hide_window_std(&mut command);
+    command
+}
+
 pub type LineHook = Arc<dyn Fn(&str) + Send + Sync>;
 
 pub fn spawn_logged(command: Command, log: &Log, stdin: bool) -> Result<Child> {

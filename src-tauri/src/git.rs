@@ -1,16 +1,60 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 
 use anyhow::{bail, Result};
+
+static PROGRAM: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Returns the git executable, which may sit outside PATH right after packraven installs it.
+pub fn program() -> PathBuf {
+    let mut cached = PROGRAM.lock().unwrap();
+    if let Some(found) = cached.as_ref() {
+        return found.clone();
+    }
+    match candidates().into_iter().find(|candidate| version_of(candidate).is_some()) {
+        Some(found) => cached.insert(found).clone(),
+        None => PathBuf::from("git"),
+    }
+}
+
+pub fn version() -> Option<String> {
+    version_of(&program())
+}
+
+fn version_of(program: &Path) -> Option<String> {
+    let mut command = Command::new(program);
+    command.arg("--version");
+    crate::process::hide_window_std(&mut command);
+    let output = command.output().ok().filter(|o| o.status.success())?;
+    Some(String::from_utf8_lossy(&output.stdout).trim().trim_start_matches("git version ").to_string())
+}
+
+fn candidates() -> Vec<PathBuf> {
+    let mut found = vec![PathBuf::from("git")];
+    if cfg!(windows) {
+        for (var, suffix) in [("ProgramW6432", "Git"), ("ProgramFiles", "Git"), ("LOCALAPPDATA", "Programs/Git")] {
+            if let Some(base) = std::env::var_os(var) {
+                found.push(PathBuf::from(base).join(suffix).join("cmd").join("git.exe"));
+            }
+        }
+    }
+    found
+}
+
+pub fn command() -> Command {
+    let mut command = Command::new(program());
+    crate::process::hide_window_std(&mut command);
+    command
+}
 
 pub fn run(dir: &Path, args: &[&str]) -> Result<String> {
     run_accepting(dir, args, &[0])
 }
 
 pub fn run_accepting(dir: &Path, args: &[&str], ok_codes: &[i32]) -> Result<String> {
-    let mut command = Command::new("git");
+    let mut command = command();
     command.current_dir(dir).args(args).env("GIT_TERMINAL_PROMPT", "0");
-    crate::process::hide_window_std(&mut command);
     let output = command.output()?;
     if !output.status.code().is_some_and(|code| ok_codes.contains(&code)) {
         bail!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr).trim());

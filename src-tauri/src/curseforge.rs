@@ -5,12 +5,12 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::credentials::{self, Credential};
 use crate::http::CLIENT;
 
 const CORE_API: &str = "https://api.curseforge.com/v1";
 const UPLOAD_API: &str = "https://minecraft.curseforge.com/api";
-pub const CORE_KEY_ENV: &str = "CF_DOWNLOAD_TOKEN";
-pub const UPLOAD_TOKEN_ENVS: [&str; 2] = ["CURSEFORGE_TOKEN", "CF_TOKEN"];
+const MINECRAFT_GAME_ID: u64 = 432;
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -63,22 +63,25 @@ pub struct CfFile {
     pub server_pack_file_id: Option<u64>,
 }
 
+const NO_CORE_KEY: &str = "no CurseForge API key is set; add one in App settings";
+const NO_UPLOAD_TOKEN: &str = "no CurseForge upload token is set; add one in App settings";
+
 pub fn core_key() -> Option<String> {
-    std::env::var(CORE_KEY_ENV).ok().filter(|k| !k.is_empty())
+    credentials::get(Credential::Download)
 }
 
 pub fn upload_token() -> Option<String> {
-    UPLOAD_TOKEN_ENVS.iter().find_map(|name| std::env::var(name).ok().filter(|k| !k.is_empty()))
+    credentials::get(Credential::Upload)
 }
 
 async fn core_post(path: &str, body: Value) -> Result<Value> {
-    let key = core_key().with_context(|| format!("{CORE_KEY_ENV} is not set"))?;
+    let key = core_key().context(NO_CORE_KEY)?;
     let response = CLIENT.post(format!("{CORE_API}{path}")).header("x-api-key", key).json(&body).send().await?;
     Ok(response.error_for_status()?.json::<Value>().await?["data"].take())
 }
 
 async fn core_get(path: &str) -> Result<Value> {
-    let key = core_key().with_context(|| format!("{CORE_KEY_ENV} is not set"))?;
+    let key = core_key().context(NO_CORE_KEY)?;
     let response = CLIENT.get(format!("{CORE_API}{path}")).header("x-api-key", key).send().await?;
     Ok(response.error_for_status()?.json::<Value>().await?["data"].take())
 }
@@ -103,6 +106,26 @@ pub async fn files(ids: &[u64]) -> Result<HashMap<u64, CfFile>> {
         }
     }
     Ok(result)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FingerprintFile {
+    pub id: u64,
+    pub file_name: String,
+    pub file_fingerprint: u32,
+    pub download_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct FingerprintMatch {
+    pub id: u64,
+    pub file: FingerprintFile,
+}
+
+pub async fn fingerprint_matches(fingerprints: &[u32]) -> Result<Vec<FingerprintMatch>> {
+    let mut data = core_post(&format!("/fingerprints/{MINECRAFT_GAME_ID}"), json!({ "fingerprints": fingerprints })).await?;
+    Ok(serde_json::from_value(data["exactMatches"].take())?)
 }
 
 pub async fn file(project_id: u64, file_id: u64) -> Result<Option<CfFile>> {
@@ -149,7 +172,7 @@ struct GameVersionType {
 }
 
 pub async fn game_version_ids(minecraft: &str, loader: &str) -> Result<Vec<u64>> {
-    let token = upload_token().context("no CurseForge upload token is set (CURSEFORGE_TOKEN)")?;
+    let token = upload_token().context(NO_UPLOAD_TOKEN)?;
     let types: Vec<GameVersionType> = CLIENT
         .get(format!("{UPLOAD_API}/game/version-types"))
         .header("X-Api-Token", &token)
@@ -176,7 +199,7 @@ pub async fn game_version_ids(minecraft: &str, loader: &str) -> Result<Vec<u64>>
 }
 
 pub async fn upload(project_id: u64, path: &Path, metadata: Value) -> Result<u64> {
-    let token = upload_token().context("no CurseForge upload token is set (CURSEFORGE_TOKEN)")?;
+    let token = upload_token().context(NO_UPLOAD_TOKEN)?;
     let file_name = path.file_name().context("upload path has no file name")?.to_string_lossy().into_owned();
     let bytes = tokio::fs::read(path).await?;
     let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name).mime_str("application/zip")?;

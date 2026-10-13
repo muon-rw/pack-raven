@@ -35,8 +35,6 @@ export interface Overview {
   devJars: string[]
   unpublishableJars: string[]
   projectId: number
-  hasCoreKey: boolean
-  hasUploadToken: boolean
   runningJobs: string[]
   serverRunning: boolean
   clientRunning: boolean
@@ -174,7 +172,28 @@ export interface DefenderView {
   prompt: boolean
 }
 
+export type Credential = 'download' | 'upload'
+export type CredentialSource = { kind: 'none' } | { kind: 'stored' } | { kind: 'env'; name: string }
+
+export interface CredentialStatus {
+  source: CredentialSource
+  present: boolean
+}
+
+export interface CredentialsView {
+  download: CredentialStatus
+  upload: CredentialStatus
+  keychain: string
+}
+
 export const api = {
+  gitVersion: () => invoke<string | null>('git_version'),
+  installGit: () => invoke<string>('install_git'),
+  credentialsStatus: () => invoke<CredentialsView>('credentials_status'),
+  credentialStore: (credential: Credential, secret: string) => invoke<void>('credential_store', { credential, secret }),
+  credentialUseEnv: (credential: Credential, name: string) => invoke<void>('credential_use_env', { credential, name }),
+  credentialClear: (credential: Credential) => invoke<void>('credential_clear', { credential }),
+  envVarNames: () => invoke<string[]>('env_var_names'),
   getWebhook: () => invoke<string | null>('get_webhook'),
   setWebhook: (url: string) => invoke<void>('set_webhook', { url }),
   discordTest: () => invoke<void>('discord_test'),

@@ -165,7 +165,7 @@ pub fn recent_commits(dir: &Path, count: usize) -> Vec<Commit> {
 
 async fn git_logged(dir: &Path, args: &[&str], log: &Log) -> Result<()> {
     log.info(format!("git {}", args.join(" ")));
-    let mut command = Command::new("git");
+    let mut command = Command::new(crate::git::program());
     command.current_dir(dir).args(args).env("GIT_TERMINAL_PROMPT", "0");
     crate::process::run_logged(command, log).await
 }

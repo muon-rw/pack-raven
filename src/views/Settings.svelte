@@ -1,15 +1,18 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
+  import CredentialField from '../components/CredentialField.svelte'
   import { onMount } from 'svelte'
   import { open } from '@tauri-apps/plugin-dialog'
   import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
-  import { api, errorText, type DefenderView, type Settings } from '../lib/api'
+  import { openUrl } from '@tauri-apps/plugin-opener'
+  import { api, errorText, type CredentialsView, type DefenderView, type Settings } from '../lib/api'
 
   let { onchange }: { onchange: () => void } = $props()
 
   let settings: Settings | null = $state(null)
   let autostart = $state(false)
-  let tokens = $state<{ core: boolean; upload: boolean } | null>(null)
+  let credentials = $state<CredentialsView | null>(null)
+  let envNames = $state<string[]>([])
   let message: string | null = $state(null)
   let messageFailed = $state(false)
   let settingsError: string | null = $state(null)
@@ -23,10 +26,14 @@
       settingsError = errorText(error)
       return
     }
-    // The backend only reports token presence in a pack's overview, so with no pack open we can't show it.
-    const overview = await api.overview().catch(() => null)
-    tokens = overview && { core: overview.hasCoreKey, upload: overview.hasUploadToken }
+    await loadCredentials()
   }
+
+  async function loadCredentials() {
+    ;[credentials, envNames] = await Promise.all([api.credentialsStatus(), api.envVarNames()]).catch(() => [null, []])
+  }
+
+  const UPLOAD_TOKEN_PAGE = 'https://legacy.curseforge.com/account/api-tokens'
 
   onMount(async () => {
     await load()
@@ -133,17 +140,6 @@
         <input value={settings.java ?? ''} oninput={(e) => (settings!.java = e.currentTarget.value)} aria-describedby="java-hint" />
       </label>
       <p class="muted hint" id="java-hint">Leave empty to use the Java from the CurseForge profile.</p>
-      {#if tokens}
-      <ul class="tokens">
-        <li class:missing={!tokens.core}>CurseForge API key (CF_DOWNLOAD_TOKEN): {tokens.core ? 'found' : 'not set'}</li>
-        <li class:missing={!tokens.upload}>CurseForge upload token (CURSEFORGE_TOKEN): {tokens.upload ? 'found' : 'not set'}</li>
-      </ul>
-      {#if !tokens.core || !tokens.upload}
-        <p class="muted hint">
-          packraven reads both from environment variables. Create an API key in the CurseForge for Studios console and an upload token in your CurseForge account's API tokens page, set them as user environment variables, then restart packraven.
-        </p>
-      {/if}
-      {/if}
     </section>
 
     <div class="actions">
@@ -151,6 +147,25 @@
       <span class:muted={!messageFailed} class:failed={messageFailed} role="status">{message ?? ''}</span>
     </div>
   </form>
+
+  {#if credentials}
+    <section class="removal">
+      <h3>CurseForge access</h3>
+      <p class="muted">Changes here take effect right away, including in the git hooks.</p>
+      <CredentialField credential="download" label="CurseForge API key (a.k.a. Launcher Token)" status={credentials.download} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
+        {#snippet help()}
+          <p class="muted hint">packraven uses this to look up and download mods. For now, you'll need to provide your own.</p>
+        {/snippet}
+      </CredentialField>
+      <CredentialField credential="upload" label="CurseForge upload token" status={credentials.upload} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
+        {#snippet help()}
+          <p class="muted hint">
+            You only need this to publish. <a href={UPLOAD_TOKEN_PAGE} onclick={(e) => { e.preventDefault(); openUrl(UPLOAD_TOKEN_PAGE) }}>Generate a token on CurseForge</a>, then paste it here.
+          </p>
+        {/snippet}
+      </CredentialField>
+    </section>
+  {/if}
 
   {#if defender?.active}
     <section class="removal">
@@ -260,16 +275,6 @@
 
   .path label {
     flex: 1;
-  }
-
-  .tokens {
-    margin: 0;
-    padding-left: 18px;
-    color: var(--muted);
-  }
-
-  .tokens .missing {
-    color: var(--warn);
   }
 
   .actions {

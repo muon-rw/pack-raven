@@ -16,6 +16,7 @@
   const loadFiles = () => import('./views/Files.svelte')
   import { dirtyCount, startWatching } from './lib/workspace.svelte'
   import DefenderNotice from './components/DefenderNotice.svelte'
+  import GitNotice from './components/GitNotice.svelte'
   import { ask } from '@tauri-apps/plugin-dialog'
   import PackSwitcher from './components/PackSwitcher.svelte'
   import RavenMark from './components/RavenMark.svelte'
@@ -274,6 +275,7 @@
 
   <main>
     <section class="view">
+      <GitNotice oninstalled={refresh} />
       {#if view !== 'add'}<DefenderNotice />{/if}
       {#if overview && overview.hooks !== 'current' && view !== 'add' && !hooksDismissed}
         <div class="banner">

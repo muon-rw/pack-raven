@@ -26,7 +26,6 @@ usercache.json
 usernamecache.json
 
 # Per-machine mod state
-__pycache__/
 .mixin.out
 .bobby/
 .fabric/
@@ -51,7 +50,7 @@ config/xenon-fingerprint.json
 kubejs/*/jsconfig.json
 kubejs/config/probe-settings.json
 
-# .githooks/modsync.py syncs these binaries from CurseForge via mods.lock.json
+# Binaries: the packraven hooks sync these from CurseForge via mods.lock.json
 mods/*.jar
 mods/*.disabled
 resourcepacks/*.zip

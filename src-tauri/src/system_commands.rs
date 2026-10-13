@@ -4,6 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::commands::AppState;
+use crate::credentials::{self, Credential, CredentialStatus};
 use crate::defender;
 use crate::setup::same_dir;
 
@@ -55,4 +56,47 @@ pub async fn defender_exclude(state: State<'_, AppState>, paths: Vec<PathBuf>) -
 #[tauri::command]
 pub fn defender_dismiss(state: State<'_, AppState>, dismissed: bool) -> CmdResult<()> {
     state.update_settings(|s| s.defender_dismissed = dismissed).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn git_version() -> Option<String> {
+    crate::git::version()
+}
+
+#[tauri::command]
+pub async fn install_git() -> CmdResult<String> {
+    crate::git_install::install().await.map_err(|e| format!("{e:#}"))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialsView {
+    download: CredentialStatus,
+    upload: CredentialStatus,
+    keychain: &'static str,
+}
+
+#[tauri::command]
+pub fn credentials_status() -> CredentialsView {
+    CredentialsView { download: credentials::status(Credential::Download), upload: credentials::status(Credential::Upload), keychain: credentials::keychain_name() }
+}
+
+#[tauri::command]
+pub fn credential_store(credential: Credential, secret: String) -> CmdResult<()> {
+    credentials::store(credential, &secret).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn credential_use_env(credential: Credential, name: String) -> CmdResult<()> {
+    credentials::use_env(credential, &name).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn credential_clear(credential: Credential) -> CmdResult<()> {
+    credentials::clear(credential).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn env_var_names() -> Vec<String> {
+    credentials::env_names()
 }

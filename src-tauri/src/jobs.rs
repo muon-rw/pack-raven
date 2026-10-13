@@ -7,8 +7,16 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 #[derive(Clone)]
+enum Sink {
+    App(AppHandle),
+    #[cfg(test)]
+    Console,
+    Terminal,
+}
+
+#[derive(Clone)]
 pub struct Log {
-    app: Option<AppHandle>,
+    sink: Sink,
     job: String,
 }
 
@@ -28,12 +36,16 @@ pub struct JobState {
 
 impl Log {
     pub fn new(app: &AppHandle, job: &str) -> Self {
-        Self { app: Some(app.clone()), job: job.to_string() }
+        Self { sink: Sink::App(app.clone()), job: job.to_string() }
     }
 
     #[cfg(test)]
     pub fn console(job: &str) -> Self {
-        Self { app: None, job: job.to_string() }
+        Self { sink: Sink::Console, job: job.to_string() }
+    }
+
+    pub fn terminal() -> Self {
+        Self { sink: Sink::Terminal, job: String::new() }
     }
 
     pub fn info(&self, text: impl AsRef<str>) {
@@ -41,16 +53,19 @@ impl Log {
     }
 
     pub fn stream(&self, stream: &str, text: &str) {
-        match &self.app {
-            Some(app) => {
+        match &self.sink {
+            Sink::App(app) => {
                 let _ = app.emit("job-log", LogLine { job: &self.job, stream, text });
             }
-            None => println!("[{}/{stream}] {text}", self.job),
+            #[cfg(test)]
+            Sink::Console => println!("[{}/{stream}] {text}", self.job),
+            Sink::Terminal if stream == "err" => eprintln!("{text}"),
+            Sink::Terminal => println!("{text}"),
         }
     }
 
     pub fn state(&self, state: &'static str, message: Option<String>) {
-        if let Some(app) = &self.app {
+        if let Sink::App(app) = &self.sink {
             let _ = app.emit("job-state", JobState { job: self.job.clone(), state, message });
         }
     }

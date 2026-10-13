@@ -1,6 +1,7 @@
 mod announcer;
 mod changelog;
 mod commands;
+mod credentials;
 mod curseforge;
 mod defender;
 mod discord;
@@ -10,11 +11,13 @@ mod file_commands;
 mod files;
 mod git;
 mod git_commands;
+mod git_install;
 mod gitops;
 mod http;
 mod jobs;
 mod launch;
 mod modrinth;
+mod modsync;
 mod pack;
 mod pack_commands;
 mod process;
@@ -46,6 +49,43 @@ fn show_main_window(app: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+/// Runs a command from the pack's git hooks and returns its exit code, or `None` to start the app.
+pub fn run_hook_command() -> Option<i32> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    if !matches!(args.first(), Some(&(setup::MODSYNC_COMMAND | setup::IRIS_CLEAN_COMMAND))) {
+        return None;
+    }
+    let dir = std::env::current_dir().unwrap_or_default();
+    let log = jobs::Log::terminal();
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let result = runtime.block_on(async {
+        match args[..] {
+            [setup::IRIS_CLEAN_COMMAND] => iris_clean_stdio(),
+            [_, "lock"] => modsync::lock(&dir, &log).await,
+            [_, "adopt"] => modsync::adopt(&dir, &log).await,
+            [_, "restore"] => modsync::restore(&dir, &log).await,
+            [_, "status"] => modsync::status(&dir, &log),
+            _ => Err(anyhow::anyhow!("usage: packraven {} lock|adopt|restore|status", setup::MODSYNC_COMMAND)),
+        }
+    });
+    match result {
+        Ok(()) => Some(0),
+        Err(e) => {
+            eprintln!("modsync: {e:#}");
+            Some(1)
+        }
+    }
+}
+
+fn iris_clean_stdio() -> anyhow::Result<()> {
+    use std::io::{Read, Write};
+    let mut input = Vec::new();
+    std::io::stdin().read_to_end(&mut input)?;
+    std::io::stdout().write_all(modsync::iris_clean(&String::from_utf8_lossy(&input)).as_bytes())?;
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -145,6 +185,13 @@ pub fn run() {
             system_commands::defender_status,
             system_commands::defender_exclude,
             system_commands::defender_dismiss,
+            system_commands::git_version,
+            system_commands::install_git,
+            system_commands::credentials_status,
+            system_commands::credential_store,
+            system_commands::credential_use_env,
+            system_commands::credential_clear,
+            system_commands::env_var_names,
             discord_commands::get_webhook,
             discord_commands::set_webhook,
             discord_commands::discord_test,

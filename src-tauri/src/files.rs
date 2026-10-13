@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
@@ -41,9 +41,8 @@ fn ignored(root: &Path, paths: &[String]) -> HashSet<String> {
     if paths.is_empty() {
         return HashSet::new();
     }
-    let mut command = Command::new("git");
+    let mut command = crate::git::command();
     command.current_dir(root).args(["check-ignore", "-z", "--stdin"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
-    crate::process::hide_window_std(&mut command);
     let Ok(mut child) = command.spawn() else { return HashSet::new() };
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(paths.join("\0").as_bytes());

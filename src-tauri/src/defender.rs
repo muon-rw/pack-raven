@@ -1,9 +1,8 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
-
 use anyhow::{bail, Result};
-use base64::Engine;
 use serde::{Deserialize, Serialize};
+
+use crate::process::{encode_powershell, powershell};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,14 +16,6 @@ pub struct DefenderStatus {
 struct Probe {
     realtime: Option<bool>,
     exclusions: Option<Vec<Option<String>>>,
-}
-
-fn powershell(script: &str) -> Command {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>());
-    let mut command = Command::new("powershell");
-    command.args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded]);
-    crate::process::hide_window_std(&mut command);
-    command
 }
 
 fn normalize(path: &str) -> String {
@@ -54,13 +45,13 @@ pub fn status(paths: &[PathBuf]) -> DefenderStatus {
     DefenderStatus { active: true, exclusions_readable: readable, missing }
 }
 
-fn quote(path: &Path) -> String {
+pub(crate) fn quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "''"))
 }
 
 pub fn exclude(paths: &[PathBuf]) -> Result<()> {
     let add = format!("Add-MpPreference -ExclusionPath {}", paths.iter().map(|p| quote(p)).collect::<Vec<_>>().join(","));
-    let inner = base64::engine::general_purpose::STANDARD.encode(add.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>());
+    let inner = encode_powershell(&add);
     let elevate = format!(
         "$p = Start-Process powershell -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','{inner}'; exit $p.ExitCode"
     );

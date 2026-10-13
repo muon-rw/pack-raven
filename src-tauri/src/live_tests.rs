@@ -182,3 +182,11 @@ fn defender_probe() {
     let status = crate::defender::status(&[instance(), settings.install_dir]);
     println!("active {} readable {} missing {:?}", status.active, status.exclusions_readable, status.missing);
 }
+
+#[tokio::test]
+#[ignore]
+async fn git_installer_download_matches_checksum() {
+    let installer = crate::git_install::download_installer().await.unwrap();
+    println!("{} ({} bytes)", installer.display(), std::fs::metadata(&installer).unwrap().len());
+    std::fs::remove_file(installer).unwrap();
+}

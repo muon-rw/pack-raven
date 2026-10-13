@@ -1,24 +1,26 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::process::Command;
 
 use crate::git;
 use crate::jobs::Log;
+use crate::modsync;
 use crate::pack::{PackConfig, CONFIG_FILE, LOCKFILE};
 
-const HOOKS: [(&str, &str); 7] = [
-    ("modsync.py", include_str!("../resources/githooks/modsync.py")),
-    ("iris_clean.py", include_str!("../resources/githooks/iris_clean.py")),
+pub const MODSYNC_COMMAND: &str = "modsync";
+pub const IRIS_CLEAN_COMMAND: &str = "iris-clean";
+const PACKRAVEN_PATH_KEY: &str = "packraven.path";
+const HOOKS: [(&str, &str); 5] = [
     ("run.sh", include_str!("../resources/githooks/run.sh")),
     ("pre-commit", include_str!("../resources/githooks/pre-commit")),
     ("post-merge", include_str!("../resources/githooks/post-merge")),
     ("post-checkout", include_str!("../resources/githooks/post-checkout")),
     ("post-rewrite", include_str!("../resources/githooks/post-rewrite")),
 ];
+const REMOVED_HOOKS: [&str; 2] = ["modsync.py", "iris_clean.py"];
 const GITIGNORE_TEMPLATE: &str = include_str!("../resources/pack.gitignore");
 const GITATTRIBUTES: [&str; 3] = [".githooks/* text eol=lf", "mods.lock.json text eol=lf", "config/iris.properties filter=iris"];
 const BINARY_PATTERNS: [&str; 6] = ["mods/*.jar", "mods/*.disabled", "resourcepacks/*.zip", "shaderpacks/*.zip", "datapacks/*.zip", "config/spark"];
@@ -90,6 +92,7 @@ fn hooks_state(dir: &Path) -> HooksState {
             Err(_) => all_current = false,
         }
     }
+    all_current &= !REMOVED_HOOKS.iter().any(|name| hooks.join(name).exists());
     match (any, all_current) {
         (false, _) => HooksState::Missing,
         (true, false) => HooksState::Outdated,
@@ -163,18 +166,6 @@ pub fn discover(root: &Path, added: &[PathBuf]) -> Vec<InstanceInfo> {
     found
 }
 
-fn python() -> Result<String> {
-    for candidate in ["python3", "python"] {
-        let mut probe = std::process::Command::new(candidate);
-        probe.arg("-c").arg("");
-        crate::process::hide_window_std(&mut probe);
-        if probe.output().is_ok_and(|o| o.status.success()) {
-            return Ok(candidate.to_string());
-        }
-    }
-    bail!("The git hooks need Python 3; install it and try again")
-}
-
 fn ensure_lines(path: &Path, lines: &[&str]) -> Result<bool> {
     let existing = std::fs::read_to_string(path).unwrap_or_default();
     let present: Vec<&str> = existing.lines().map(str::trim).collect();
@@ -200,11 +191,29 @@ pub fn install_hooks(dir: &Path) -> Result<()> {
     for (name, content) in HOOKS {
         std::fs::write(hooks.join(name), content.replace("\r\n", "\n"))?;
     }
+    for name in REMOVED_HOOKS {
+        let _ = std::fs::remove_file(hooks.join(name));
+    }
+    link_hooks(dir)
+}
+
+/// Points this clone's hooks and Iris filter at the running packraven, whose path differs per machine and install.
+pub fn link_hooks(dir: &Path) -> Result<()> {
+    let exe = std::env::current_exe()?.to_string_lossy().replace('\\', "/");
+    let iris_filter = format!("\"{exe}\" {IRIS_CLEAN_COMMAND}");
+    for (key, value) in [(PACKRAVEN_PATH_KEY, exe.as_str()), ("filter.iris.clean", iris_filter.as_str())] {
+        if git::run(dir, &["config", "--get", key]).ok().as_deref().map(str::trim) != Some(value) {
+            git::run(dir, &["config", key, value])?;
+        }
+    }
     Ok(())
 }
 
+pub fn has_hooks(dir: &Path) -> bool {
+    dir.join(".git").exists() && dir.join(".githooks").join("run.sh").exists()
+}
+
 pub async fn setup(dir: PathBuf, options: SetupOptions, log: Log) -> Result<String> {
-    let python = python()?;
     if !dir.join(".git").exists() {
         git::run(&dir, &["init", "-b", "main"])?;
         log.info("Created a git repository");
@@ -214,7 +223,7 @@ pub async fn setup(dir: PathBuf, options: SetupOptions, log: Log) -> Result<Stri
     log.info("Installed the sync hooks in .githooks");
     let gitignore = dir.join(".gitignore");
     if gitignore.exists() {
-        let binary_block: Vec<&str> = GITIGNORE_TEMPLATE.lines().skip_while(|l| !l.starts_with("# Binaries")).filter(|l| !l.starts_with('#')).chain(["__pycache__/"]).collect();
+        let binary_block: Vec<&str> = GITIGNORE_TEMPLATE.lines().skip_while(|l| !l.starts_with("# Binaries")).filter(|l| !l.starts_with('#')).collect();
         if ensure_lines(&gitignore, &binary_block)? {
             log.info("Added the binary folders to the existing .gitignore");
         }
@@ -245,10 +254,7 @@ pub async fn setup(dir: PathBuf, options: SetupOptions, log: Log) -> Result<Stri
     }
 
     git::run(&dir, &["config", "core.hooksPath", ".githooks"])?;
-    git::run(&dir, &["config", "filter.iris.clean", &format!("{python} .githooks/iris_clean.py")])?;
-    let mut adopt = Command::new(&python);
-    adopt.current_dir(&dir).arg(".githooks/modsync.py").arg("adopt");
-    crate::process::run_logged(adopt, &log).await.context("building mods.lock.json failed")?;
+    modsync::adopt(&dir, &log).await.context("building mods.lock.json failed")?;
 
     if let Some(remote) = options.remote.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
         if git::run(&dir, &["remote", "get-url", "origin"]).is_ok() {

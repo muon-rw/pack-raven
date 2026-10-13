@@ -1,9 +1,8 @@
 #!/bin/sh
-# Runs modsync.py with the first working Python; the Windows python3 Store alias fails the probe.
-for py in python3 python; do
-  if "$py" -c "" >/dev/null 2>&1; then
-    exec "$py" "$(git rev-parse --show-toplevel)/.githooks/modsync.py" "$@"
-  fi
-done
-echo "modsync: couldn't find Python, so mods are not synced" >&2
-exit 1
+# packraven records its own path in each clone's git config, since it differs per machine.
+packraven=$(git config --get packraven.path)
+if [ -z "$packraven" ] || [ ! -f "$packraven" ]; then
+  echo "modsync: this clone isn't linked to packraven, so mods are not synced; open the pack in packraven first" >&2
+  exit 1
+fi
+exec "$packraven" modsync "$@"

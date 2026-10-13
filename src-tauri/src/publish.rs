@@ -49,10 +49,10 @@ pub fn preflight(pack: &Pack, version: &str) -> Vec<String> {
         problems.push("Set the CurseForge project ID in Settings.".into());
     }
     if curseforge::upload_token().is_none() {
-        problems.push("Set CURSEFORGE_TOKEN to a CurseForge upload token.".into());
+        problems.push("Add a CurseForge upload token in App settings.".into());
     }
     if curseforge::core_key().is_none() {
-        problems.push(format!("Set {} to a CurseForge API key.", curseforge::CORE_KEY_ENV));
+        problems.push("Add a CurseForge API key in App settings.".into());
     }
     if version.trim().is_empty() {
         problems.push("Enter a version.".into());
