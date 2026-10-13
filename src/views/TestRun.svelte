@@ -57,10 +57,10 @@
   )
 
   let serverStarting = $derived(preparing || (serverRunning && !testState.serverReady))
-  let whyNoStart = $derived(serverRunning ? 'The test server is already running' : preparing ? 'The test server is being prepared' : null)
-  let whyNoStop = $derived(serverRunning ? null : preparing ? "The test server is being prepared; it can be stopped once it's running" : "The test server isn't running")
+  let whyNoStart = $derived(serverRunning ? 'The test server is already running' : preparing ? 'packraven is preparing the test server' : null)
+  let whyNoStop = $derived(serverRunning ? null : preparing ? "packraven is preparing the test server; you can stop it once it's running" : "The test server isn't running")
   let whyNoQuick = $derived(
-    serverRunning ? 'The test server is already running. Use Launch client to join it' : clientRunning ? 'The client is already running' : preparing ? 'The test server is being prepared' : null,
+    serverRunning ? 'The test server is already running. Use Launch client to join it' : clientRunning ? 'The client is already running' : preparing ? 'packraven is preparing the test server' : null,
   )
   let whyNoLaunch = $derived(
     clientRunning
@@ -84,7 +84,7 @@
       <label class="check" title={serverRunning ? 'Stop the test server to change this' : undefined}>
         <input type="checkbox" bind:checked={rebuild} disabled={serverRunning} /> Rebuild server pack first
       </label>
-      <Tip tip={whyNoQuick ?? 'Starts the server, then launches the client and joins it'}>
+      <Tip tip={whyNoQuick ?? 'Start the server, then launch the client and join it'}>
         <button
           class="primary"
           class:busy={preparing}
@@ -100,7 +100,7 @@
   {#if serverMods.changedSinceBuild}
     <Notice tone="warn">
       <p>
-        You changed server mod overrides since the server pack was last built here.
+        You changed server mod overrides since packraven last built the server pack.
         {serverRunning
           ? 'Stop the test server, then start it again with Rebuild server pack first ticked to use them.'
           : rebuild
@@ -120,10 +120,10 @@
           <Tip tip={whyNoStart}>
             <button disabled={!!whyNoStart} onclick={() => startTest(false)}>Start server</button>
           </Tip>
-          <Tip tip={whyNoStop ?? 'Saves the world and shuts the server down'}>
+          <Tip tip={whyNoStop ?? 'Save the world and shut the server down'}>
             <button disabled={!!whyNoStop} onclick={() => run(() => api.serverCommand('stop'))}>Stop</button>
           </Tip>
-          <Tip tip={whyNoStop ?? 'Ends the process at once without saving'}>
+          <Tip tip={whyNoStop ?? 'End the process at once without saving'}>
             <button class="danger" disabled={!!whyNoStop} onclick={() => run(() => api.killProcess('server'))}>Kill</button>
           </Tip>
         </div>
@@ -134,7 +134,7 @@
         <Tip tip={whyNoSend}><button type="submit" disabled={!!whyNoSend}>Send</button></Tip>
       </form>
       <p class="hint muted" id="console-hint">
-        {serverRunning ? 'Sends a command to the server console. Stop saves and shuts down; Kill ends the process without saving.' : 'Commands can be sent once the server is running.'}
+        {serverRunning ? 'Send commands to the server console. Use Stop to save and shut down, or Kill to end the process without saving.' : 'You can send commands once the server is running.'}
         Server crashing on a mod? <button class="link" onclick={onservermods}>Change server mods</button>.
       </p>
     </div>
@@ -149,7 +149,7 @@
           <Tip tip={whyNoLaunch}>
             <button disabled={!!whyNoLaunch} onclick={() => run(() => ((clientJoins = join), api.startClient(join)))}>Launch client</button>
           </Tip>
-          <Tip tip={clientRunning ? 'Ends the client process at once' : "The client isn't running"}>
+          <Tip tip={clientRunning ? 'End the client process at once' : "The client isn't running"}>
             <button class="danger" disabled={!clientRunning} onclick={() => run(() => api.killProcess('client'))}>Kill</button>
           </Tip>
         </div>
@@ -159,9 +159,9 @@
         {clientRunning
           ? 'Running offline as the test username.'
           : !join
-            ? 'Launches this instance offline to the title screen.'
+            ? 'Launch this instance offline to the title screen.'
             : testState.serverReady
-              ? 'Launches this instance offline and joins the test server.'
+              ? 'Launch this instance offline and join the test server.'
               : 'Start the server first, or untick auto-join to launch to the title screen.'}
       </p>
     </div>

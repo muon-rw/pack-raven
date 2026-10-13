@@ -84,10 +84,10 @@ pub fn read(root: &Path, relative: &str) -> Result<FileContent> {
     }
     let bytes = std::fs::read(&path)?;
     if bytes.iter().take(8000).any(|b| *b == 0) {
-        return Ok(unreadable("This is a binary file, so it can't be edited as text."));
+        return Ok(unreadable("This is a binary file, so you can't edit it as text."));
     }
     let Ok(text) = String::from_utf8(bytes) else {
-        return Ok(unreadable("This file isn't UTF-8 text, so it can't be edited here."));
+        return Ok(unreadable("This file isn't UTF-8 text, so you can't edit it here."));
     };
     let bom = text.starts_with('\u{feff}');
     let body = text.trim_start_matches('\u{feff}');

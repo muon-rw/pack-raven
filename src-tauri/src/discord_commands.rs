@@ -40,7 +40,7 @@ pub async fn discord_test(state: State<'_, AppState>) -> CmdResult<()> {
     let pack = Pack::open(&settings.instance_dir).map_err(err)?;
     let message = json!({
         "username": pack.name(),
-        "content": format!("packraven is connected. Release announcements for {} will be posted here.", pack.name()),
+        "content": format!("packraven is connected. We'll post release announcements for {} here.", pack.name()),
         "allowed_mentions": { "parse": [] },
     });
     discord::send(&webhook, &message).await.map(|_| ()).map_err(err)
@@ -59,7 +59,7 @@ pub async fn discohook_link(state: State<'_, AppState>, version: String) -> CmdR
     let release = publish::load_releases(&state.pack_data().join("releases.json"))
         .into_iter()
         .find(|r| r.version == version)
-        .ok_or_else(|| format!("No release {version} was published from this machine."))?;
+        .ok_or_else(|| format!("You haven't published release {version} from this machine."))?;
     let message = discord::message(&discord::announcement(&pack, &release).await, &pack.config.discord);
     discord::discohook_link(&message).await.map_err(err)
 }

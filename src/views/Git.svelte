@@ -182,7 +182,7 @@
           {#if !status?.hasRemote}
             No remote set, so there's nowhere to push yet.
           {:else if !status.upstream}
-            Not pushed yet. Push creates the branch on the remote.
+            Not pushed yet. Push to create the branch on the remote.
           {:else if status.ahead || status.behind}
             {[status.ahead && `${status.ahead} to push`, status.behind && `${status.behind} to pull`].filter(Boolean).join(', ')}
           {:else}
@@ -208,7 +208,7 @@
         onkeydown={(e) => (e.ctrlKey || e.metaKey) && e.key === 'Enter' && (e.preventDefault(), commit())}
       ></textarea>
       <div class="commit-row">
-        <span id="commit-hint" class="muted small">{commitHint ?? 'Ctrl+Enter commits.'}</span>
+        <span id="commit-hint" class="muted small">{commitHint ?? 'Press Ctrl+Enter to commit.'}</span>
         <button type="submit" class="primary" class:busy={busy && lastAction === 'commit'} disabled={!canCommit}>
           {busy && lastAction === 'commit' ? 'Committing' : `Commit ${status?.staged.length ?? 0} ${status?.staged.length === 1 ? 'file' : 'files'}`}
         </button>
@@ -290,7 +290,7 @@
       {:else if diff && !diff.text.trim()}
         <p class="muted pad">No content changes. Git flagged this file over line endings or file metadata only; you can stage it to clear the flag.</p>
       {:else if diff}
-        {#if diff.truncated}<div class="pad"><Notice tone="warn"><p>This diff is very large, so only the first part is shown.</p></Notice></div>{/if}
+        {#if diff.truncated}<div class="pad"><Notice tone="warn"><p>This diff is very large, so packraven shows only the first part.</p></Notice></div>{/if}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <div class="diff-body" role="region" aria-label="Changes in {selected.path}" tabindex="0">
           {#each diffLines as line, i (i)}

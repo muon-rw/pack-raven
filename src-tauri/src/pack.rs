@@ -154,18 +154,18 @@ impl Lockfile {
     }
 
     pub fn minecraft(&self) -> Result<&str> {
-        self.minecraft.as_deref().context("mods.lock.json has no minecraft version; commit once to regenerate it")
+        self.minecraft.as_deref().context("mods.lock.json has no minecraft version; commit once so the git hooks regenerate it")
     }
 
     pub fn loader(&self) -> Result<&str> {
-        self.loader.as_deref().context("mods.lock.json has no loader; commit once to regenerate it")
+        self.loader.as_deref().context("mods.lock.json has no loader; commit once so the git hooks regenerate it")
     }
 
     pub fn neoforge_version(&self) -> Result<&str> {
         let loader = self.loader()?;
         match loader.strip_prefix("neoforge-") {
             Some(version) => Ok(version),
-            None => bail!("only NeoForge packs are supported, found {loader}"),
+            None => bail!("packraven only supports NeoForge packs, found {loader}"),
         }
     }
 }

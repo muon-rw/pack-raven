@@ -172,7 +172,7 @@ fn python() -> Result<String> {
             return Ok(candidate.to_string());
         }
     }
-    bail!("Python 3 is required for the git hooks; install it and try again")
+    bail!("The git hooks need Python 3; install it and try again")
 }
 
 fn ensure_lines(path: &Path, lines: &[&str]) -> Result<bool> {
@@ -281,6 +281,6 @@ pub async fn setup(dir: PathBuf, options: SetupOptions, log: Log) -> Result<Stri
             log.info(format!("Committed \"{message}\""));
             Ok("Ready".into())
         }
-        None => Ok("Ready; the changes are staged for your next commit".into()),
+        None => Ok("Ready; packraven staged the changes for your next commit".into()),
     }
 }

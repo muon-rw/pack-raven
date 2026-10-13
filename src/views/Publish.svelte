@@ -86,7 +86,7 @@
   let warnings = $derived(
     [
       overview?.changed.length
-        ? `${overview.changed.length} uncommitted ${overview.changed.length === 1 ? 'file' : 'files'}. The packs are built from disk, so these changes ship but stay out of the release commit.`
+        ? `${overview.changed.length} uncommitted ${overview.changed.length === 1 ? 'file' : 'files'}. packraven builds the packs from disk, so these changes ship but stay out of the release commit.`
         : null,
       overview?.behind && push
         ? `This branch is ${overview.behind} ${overview.behind === 1 ? 'commit' : 'commits'} behind its remote, so the push would fail after the upload. Pull first.`
@@ -147,7 +147,7 @@
     <div>
       <h2>Release <span class="version-tag">{version || 'unversioned'}</span></h2>
       <p class="muted">
-        Review exactly what goes to CurseForge. The version and notes come from
+        Review what you'll send to CurseForge. The version and notes come from
         <button class="link" onclick={onchanges}>Changes</button>.
       </p>
     </div>
@@ -162,10 +162,10 @@
   {#if publishJob.phase === 'done' && published}
     <Notice tone="ok">
       <p>
-        <strong>{overview?.name} {published.version} is on CurseForge.</strong> The release commit is tagged v{published.version}{published.pushed ? ' and pushed' : ', not pushed yet'}.
+        <strong>{overview?.name} {published.version} is on CurseForge.</strong> packraven tagged the release commit v{published.version}{published.pushed ? ' and pushed it' : " but hasn't pushed it yet"}.
       </p>
       <p class="muted">
-        Its notes were archived to <span class="file">changelogs/{published.version}.md</span>, and changelog.md is empty for the next release. {publishJob.message}
+        packraven archived its notes to <span class="file">changelogs/{published.version}.md</span> and cleared changelog.md for the next release. {publishJob.message}
         <button class="link" onclick={onreleases}>Follow its review in Releases</button>.
       </p>
     </Notice>
@@ -257,11 +257,11 @@
         <h3 id="discord-title">Discord</h3>
         <p class="muted">
           {#if !hasWebhook}
-            No webhook set, so this release won't be announced.
+            No webhook set, so packraven won't announce this release.
           {:else if config?.discord.announce_on_approval}
-            Posts to Discord once CurseForge approves {version || 'the release'}{config.discord.role_id.trim() ? ', pinging the role' : ''}.
+            Post to Discord once CurseForge approves {version || 'the release'}{config.discord.role_id.trim() ? ', pinging the role' : ''}.
           {:else}
-            Automatic announcements are off. Announce it from Releases once it's approved.
+            Automatic announcements are off. Announce it from Releases once CurseForge approves it.
           {/if}
           <button class="link" onclick={onsettings}>{hasWebhook ? 'Change Discord settings' : 'Set up a webhook'}</button>
         </p>
@@ -273,7 +273,7 @@
 
       <section aria-labelledby="build-title">
         <h3 id="build-title">Build without publishing</h3>
-        <p class="muted">Makes the same zips Publish uploads, without uploading, committing or tagging.</p>
+        <p class="muted">Create publish-ready zips only, without uploading, committing or tagging.</p>
         <div class="row-start">
           <button class:busy={serverJob.phase === 'running'} disabled={serverJob.phase === 'running'} onclick={() => build(api.buildServerPack, 'server pack build')}>
             {serverJob.phase === 'running' ? 'Building' : 'Server pack'}

@@ -73,7 +73,7 @@
   async function switchPack(dir: string) {
     const unsaved = dirtyCount()
     if (unsaved && dir !== packs?.active) {
-      const confirmed = await ask(`${unsaved === 1 ? 'A file has' : `${unsaved} files have`} unsaved changes. Switching packs closes ${unsaved === 1 ? 'it' : 'them'} without saving.`, {
+      const confirmed = await ask(`${unsaved === 1 ? 'A file has' : `${unsaved} files have`} unsaved changes. If you switch packs, packraven closes ${unsaved === 1 ? 'it' : 'them'} without saving.`, {
         title: 'Unsaved changes',
         kind: 'warning',
         okLabel: 'Switch anyway',
@@ -154,7 +154,7 @@
           id: 'mods',
           title: 'Server mods',
           key: '3',
-          status: serverMods.changedSinceBuild ? 'Changed since the server pack was built' : undefined,
+          status: serverMods.changedSinceBuild ? 'Changed since you last built the server pack' : undefined,
           tone: serverMods.changedSinceBuild ? 'warn' : 'idle',
         },
         { id: 'files', title: 'Files', key: 'E' },
@@ -202,7 +202,7 @@
       <div class="identity">
         <PackSwitcher list={packs} name={overview?.name ?? (packs?.active ? 'Pack unavailable' : 'No pack')} onswitch={switchPack} onadd={() => (view = 'add')} />
         {#if overview}
-          <div class="version" title="Pack version, stored in the Better Compatibility Checker config">{overview.version ?? 'No version'}</div>
+          <div class="version" title="Pack version, from the Better Compatibility Checker config">{overview.version ?? 'No version'}</div>
           <div class="game">Minecraft {overview.minecraft} with {overview.loader}</div>
         {/if}
       </div>
@@ -279,7 +279,7 @@
         <div class="banner">
           <Notice tone="warn">
             <div class="hook-row">
-              <p>{overview.hooks === 'missing' ? "No sync hooks, so mods won't download when you pull." : 'Sync hooks are older than this version of packraven.'}</p>
+              <p>{overview.hooks === 'missing' ? "This pack has no sync hooks, so pulling won't download mods." : 'Sync hooks are older than this version of packraven.'}</p>
               <span class="hook-actions">
                 <button onclick={updateHooks}>Update hooks</button>
                 <button class="quiet" onclick={() => (hooksDismissed = true)}>Not now</button>

@@ -80,7 +80,7 @@
 <div class="settings">
   <header>
     <h2>Pack settings</h2>
-    <p class="muted">For {name} only. Stored in <span class="file">packraven.toml</span> in the pack repo, except the webhook.</p>
+    <p class="muted">For {name} only. packraven stores these in <span class="file">packraven.toml</span> in the pack repo, except the webhook.</p>
   </header>
 
   {#if configError}
@@ -126,7 +126,7 @@
             <input id="webhook" type="password" autocomplete="off" bind:value={webhook} placeholder="https://discord.com/api/webhooks/..." aria-describedby="webhook-hint" />
             <button type="button" class:busy={testing} disabled={testing || !webhook.trim()} onclick={testWebhook}>{testing ? 'Sending' : 'Send test message'}</button>
           </div>
-          <p class="hint" id="webhook-hint">From the channel's Settings, Integrations, Webhooks. Saved only on this machine, never in the pack repo.</p>
+          <p class="hint" id="webhook-hint">Copy it from the channel's Settings, Integrations, Webhooks. packraven saves it only on this machine, never in the pack repo.</p>
           {#if discordMessage}<p class:muted={!discordFailed} class:failed={discordFailed} role="status">{discordMessage}</p>{/if}
         </div>
         <div class="grid">
@@ -146,7 +146,7 @@
           <textarea rows="4" bind:value={config.discord.footer} placeholder={'[Install]({file_url})\n**Back up your world before updating**'} aria-describedby="discord-placeholders"></textarea>
         </label>
         <p class="hint" id="discord-placeholders">
-          Discord markdown, used in every announcement. <code>{'{file_url}'}</code> links to the released file, <code>{'{project_url}'}</code> to the project page. <code>{'{project_name}'}</code> is the CurseForge project's name, <code>{'{name}'}</code> the instance name, and <code>{'{version}'}</code> the version. The project logo is used as the thumbnail.
+          These use Discord markdown and appear in every announcement. <code>{'{file_url}'}</code> links to the released file, <code>{'{project_url}'}</code> to the project page. <code>{'{project_name}'}</code> is the CurseForge project's name, <code>{'{name}'}</code> the instance name, and <code>{'{version}'}</code> the version. packraven uses the project logo as the thumbnail.
         </p>
         <label class="check">
           <input type="checkbox" bind:checked={config.discord.show_author} /> Show the project author, with their CurseForge avatar and a link to their profile
@@ -166,7 +166,7 @@
 
   <section class="removal">
     <h3>Remove pack</h3>
-    <p class="muted">Stops showing <span class="file">{dir}</span> in packraven. Nothing on disk is deleted.</p>
+    <p class="muted">Stop showing <span class="file">{dir}</span> in packraven, without deleting anything on disk.</p>
     <div><button type="button" class="danger" onclick={removePack}>Remove pack</button></div>
     {#if removeError}<p class="failed" role="alert">{removeError}</p>{/if}
   </section>

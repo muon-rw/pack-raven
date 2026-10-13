@@ -176,7 +176,7 @@ pub fn game(pack: &Pack) -> String {
 pub async fn announce(pack_dir: &Path, releases_path: &Path, version: &str, webhook: &str) -> Result<()> {
     let pack = Pack::open(pack_dir)?;
     let mut releases = publish::load_releases(releases_path);
-    let release = releases.iter_mut().find(|r| r.version == version).with_context(|| format!("no release {version} was published from this machine"))?;
+    let release = releases.iter_mut().find(|r| r.version == version).with_context(|| format!("you haven't published release {version} from this machine"))?;
     let message = message(&announcement(&pack, release).await, &pack.config.discord);
     send(webhook, &message).await?;
     release.announced_at = Some(chrono::Utc::now().to_rfc3339());

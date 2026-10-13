@@ -181,7 +181,7 @@ pub async fn commit(dir: &Path, message: &str, log: &Log) -> Result<String> {
 
 pub async fn pull(dir: &Path, log: &Log) -> Result<String> {
     git_logged(dir, &["pull", "--ff-only"], log).await.map_err(|e| {
-        e.context("Pull stopped because the branches have diverged or there are conflicting local changes. Commit or discard your changes, then pull again.")
+        e.context("git stopped the pull because the branches have diverged or you have conflicting local changes. Commit or discard your changes, then pull again.")
     })?;
     Ok("Pulled".into())
 }

@@ -85,10 +85,10 @@
     if (!selected) return []
     const list: string[] = []
     if (!selected.hasGit) list.push('Create a git repository in the instance folder')
-    if (selected.hooks === 'missing') list.push('Install the sync hooks (.githooks). These auto-download mods each time you pull, and update the mod list (mods.lock.json) each time you commit')
+    if (selected.hooks === 'missing') list.push('Install the sync hooks (.githooks). Git runs these to download mods each time you pull, and to update the mod list (mods.lock.json) each time you commit')
     if (selected.hooks === 'outdated') list.push('Update the sync hooks (.githooks) to this version of packraven')
     list.push(selected.hasGit ? 'Add mod jars and pack zips to .gitignore' : 'Write a .gitignore that leaves out logs, saves, caches and mod jars')
-    list.push(selected.hasLock ? 'Rebuild mods.lock.json from the mods folder' : `Write mods.lock.json from the ${selected.addonCount} CurseForge files; files not on CurseForge get committed directly`)
+    list.push(selected.hasLock ? 'Rebuild mods.lock.json from the mods folder' : `Write mods.lock.json from the ${selected.addonCount} CurseForge files, and track files not on CurseForge in git directly`)
     if (selected.hasGit) list.push("Stage these changes in git (you'll make the commits yourself)")
     return list
   })
@@ -101,7 +101,7 @@
 <div class="add">
   <div class="intro">
     <h2>{first ? 'Add your first pack' : 'Add a pack'}</h2>
-    <p class="muted">Pick a CurseForge instance to track in git. Mod jars stay out of the repository; a mod list (mods.lock.json) records them instead.</p>
+    <p class="muted">Pick a CurseForge instance to track in git. packraven keeps mod jars out of the repository and records them in a mod list (mods.lock.json) instead.</p>
   </div>
 
   <fieldset class="instances">
@@ -117,7 +117,7 @@
           <span class="status">{status(instance)}</span>
         </label>
       {:else}
-        <p class="muted">No CurseForge instances found in the Instances folder. Choose a folder instead.</p>
+        <p class="muted">packraven found no CurseForge instances in the Instances folder. Choose a folder instead.</p>
       {/each}
     {/if}
     {#if pickError}
@@ -141,8 +141,8 @@
               <input id="untrack" type="checkbox" bind:checked={untrack} aria-describedby="untrack-files" />
               <div>
                 <label for="untrack">
-                  Remove {removable.length === 1 ? 'this file' : `these ${removable.length} files`} from git. From then on the mod list downloads
-                  {removable.length === 1 ? 'it' : 'them'} from CurseForge instead. The files stay on disk, and past commits won't be edited.
+                  Remove {removable.length === 1 ? 'this file' : `these ${removable.length} files`} from git. From then on, the sync hooks download
+                  {removable.length === 1 ? 'it' : 'them'} from CurseForge instead. The files stay on disk, and packraven won't edit past commits.
                 </label>
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                 <ul class="files" id="untrack-files" tabindex="0" aria-label="Files to remove from git">{#each removable as file (file.path)}<li class="file">{fileName(file.path)}</li>{/each}</ul>
@@ -153,7 +153,7 @@
             <li>
               <input id="first-commit" type="checkbox" bind:checked={commitFirst} />
               <div class="commit">
-                <label for="first-commit">Make the first commit with everything in the instance. Otherwise the files are only staged.</label>
+                <label for="first-commit">Make the first commit with everything in the instance. Otherwise packraven only stages the files.</label>
                 {#if commitFirst}
                   <div class="commit-fields">
                     <div class="field">
@@ -189,17 +189,17 @@
           <div class="field wide">
             <label for="remote">Git remote <span class="optional">(optional)</span></label>
             <input id="remote" bind:value={remote} placeholder="https://github.com/you/pack.git" aria-describedby="remote-hint" />
-            <p class="hint" id="remote-hint">Where Push sends your commits. You'll push manually yourself.</p>
+            <p class="hint" id="remote-hint">Where you push your commits. packraven only pushes when you ask it to.</p>
           </div>
           <div class="field">
             <label for="author">Author <span class="optional">(optional)</span></label>
             <input id="author" bind:value={author} aria-describedby="author-hint" />
-            <p class="hint" id="author-hint">Shown as the pack author in the CurseForge export.</p>
+            <p class="hint" id="author-hint">packraven writes this as the pack author in the CurseForge export.</p>
           </div>
           <div class="field">
             <label for="project">CurseForge project ID <span class="optional">(optional)</span></label>
             <input id="project" inputmode="numeric" placeholder="8675309" bind:value={projectId} aria-describedby="project-hint" />
-            <p class="hint" id="project-hint">Usually a series of numbers, e.g. 8675309. Used when publishing; you can add it later in Pack settings.</p>
+            <p class="hint" id="project-hint">Usually a series of numbers, e.g. 8675309. packraven needs it to publish; you can add it later in Pack settings.</p>
           </div>
         </div>
       </fieldset>

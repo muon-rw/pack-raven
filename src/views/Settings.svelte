@@ -108,7 +108,7 @@
   <div class="switch-row">
     <div>
       <div id="autostart-label">Start in the tray when I sign in</div>
-      <p class="muted">Keeps packraven running so builds and test servers are a click away.</p>
+      <p class="muted">Keep packraven running so builds and test servers are a click away.</p>
       {#if autostartError}<p class="failed" role="alert">{autostartError}</p>{/if}
     </div>
     <button
@@ -140,7 +140,7 @@
       </ul>
       {#if !tokens.core || !tokens.upload}
         <p class="muted hint">
-          Both are read from environment variables. Create an API key in the CurseForge for Studios console and an upload token in your CurseForge account's API tokens page, set them as user environment variables, then restart packraven.
+          packraven reads both from environment variables. Create an API key in the CurseForge for Studios console and an upload token in your CurseForge account's API tokens page, set them as user environment variables, then restart packraven.
         </p>
       {/if}
       {/if}
@@ -157,14 +157,14 @@
       <h3>Windows Security</h3>
       {#if defender.missing.length}
         <p class="muted">
-          Windows Defender can slow things down. Excluding {defender.missing.length === 1 ? 'this folder makes it' : 'these folders makes them'} faster, but Defender will stop scanning files in {defender.missing.length === 1 ? 'it' : 'them'}.
-          {defender.exclusionsReadable ? '' : "Windows only shows exclusions to administrators, so folders you excluded outside packraven may still be listed."}
+          Windows Defender can slow things down. Exclude {defender.missing.length === 1 ? 'this folder' : 'these folders'} to speed things up, but Defender will stop scanning files in {defender.missing.length === 1 ? 'it' : 'them'}.
+          {defender.exclusionsReadable ? '' : "Windows only shows exclusions to administrators, so packraven may still list folders you excluded elsewhere."}
         </p>
         <ul class="folders">{#each defender.missing as path (path)}<li class="file">{path}</li>{/each}</ul>
         <div><button type="button" class:busy={defenderBusy} disabled={defenderBusy} onclick={excludeFolders}>{defenderBusy ? 'Waiting for Windows' : 'Exclude folders'}</button></div>
         <p class="muted">You'll get a pop-up from Windows.</p>
       {:else}
-        <p class="muted">The pack, CurseForge and packraven folders are excluded from Defender scans.</p>
+        <p class="muted">Defender skips the pack, CurseForge and packraven folders.</p>
       {/if}
       {#if defenderMessage}<p class="muted">{defenderMessage}</p>{/if}
       <label class="check">

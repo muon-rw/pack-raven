@@ -51,7 +51,7 @@ config/xenon-fingerprint.json
 kubejs/*/jsconfig.json
 kubejs/config/probe-settings.json
 
-# Binaries are synced from CurseForge via mods.lock.json (.githooks/modsync.py)
+# .githooks/modsync.py syncs these binaries from CurseForge via mods.lock.json
 mods/*.jar
 mods/*.disabled
 resourcepacks/*.zip

@@ -57,7 +57,7 @@ pub fn preflight(pack: &Pack, version: &str) -> Vec<String> {
     if version.trim().is_empty() {
         problems.push("Enter a version.".into());
     } else if git::run(&pack.dir, &["rev-parse", "-q", "--verify", &format!("refs/tags/v{version}")]).is_ok() {
-        problems.push(format!("Version {version} was already released (tag v{version} exists)."));
+        problems.push(format!("You already released {version} (tag v{version} exists)."));
     }
     match sync::status(pack) {
         Ok(status) if !status.missing.is_empty() || !status.unlocked.is_empty() => {
@@ -139,7 +139,7 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
         }),
     )
     .await
-    .context("the client pack uploaded, but the server pack upload failed; upload it as an additional file on CurseForge")?;
+    .context("packraven uploaded the client pack, but the server pack upload failed; upload the server pack as an additional file on CurseForge")?;
     log.info(format!("Uploaded the server pack as file {server_file_id}"));
 
     let releases_path = pack_data.join("releases.json");

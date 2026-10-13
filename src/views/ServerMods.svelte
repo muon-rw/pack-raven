@@ -51,8 +51,8 @@
   <header class="head">
     <h2>Server mods</h2>
     <p class="muted">
-      {mods.length} mods, {excludedCount} left off the server as client-only based on CurseForge and Modrinth tags.
-      Override them here. Choices are used by Test and Publish to build server packs.
+      {mods.length} mods. packraven leaves {excludedCount} off the server as client-only, based on their CurseForge and Modrinth tags.
+      Override that here; packraven uses your choices to build server packs for Test and Publish.
     </p>
   </header>
 

@@ -8,7 +8,7 @@
   setup    enable the hooks for this clone, then restore
 
 Set CF_DOWNLOAD_TOKEN to a CurseForge API key to resolve files that neither the
-lockfile nor minecraftinstance.json know about. Local *-dev.jar builds are ignored.
+lockfile nor minecraftinstance.json know about. modsync ignores local *-dev.jar builds.
 """
 import hashlib
 import json
@@ -221,11 +221,11 @@ def build_lock():
 def cmd_lock():
     lock, unknown = build_lock()
     if unknown:
-        print("modsync: these files are not on CurseForge, so they must be committed directly (git add -f <path>) or removed:", file=sys.stderr)
+        print("modsync: these files are not on CurseForge, so you must commit them directly (git add -f <path>) or remove them:", file=sys.stderr)
         for path in sorted(unknown):
             print(f"  {path}", file=sys.stderr)
         if not os.environ.get("CF_DOWNLOAD_TOKEN"):
-            print("modsync: CF_DOWNLOAD_TOKEN is not set, so CurseForge fingerprint lookup was skipped.", file=sys.stderr)
+            print("modsync: CF_DOWNLOAD_TOKEN is not set, so modsync skipped the CurseForge fingerprint lookup.", file=sys.stderr)
         return 1
     write_lock(lock)
     git("add", LOCKFILE)
@@ -322,7 +322,7 @@ def cmd_restore():
     expire_cache()
     hashes.save()
     if failed:
-        print(f"modsync: {len(failed)} file(s) failed; run `python .githooks/modsync.py restore` to retry", file=sys.stderr)
+        print(f"modsync: {len(failed)} file(s) failed to download; run `python .githooks/modsync.py restore` to retry", file=sys.stderr)
         return 1
     return 0
 

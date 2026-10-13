@@ -35,7 +35,7 @@
 {#if status?.prompt && !hidden}
   <div class="banner">
     <Notice tone="warn">
-      <p>Windows Defender can slow things down. Excluding these folders makes them faster, but Defender will stop scanning files in them.</p>
+      <p>Windows Defender can slow things down. Exclude these folders to speed them up, but note that Defender will stop scanning files in them.</p>
       <ul>{#each status.missing as path (path)}<li class="file">{path}</li>{/each}</ul>
       {#if error}<p class="failed">{error}</p>{/if}
       <div class="actions">

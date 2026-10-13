@@ -5,5 +5,5 @@ for py in python3 python; do
     exec "$py" "$(git rev-parse --show-toplevel)/.githooks/modsync.py" "$@"
   fi
 done
-echo "modsync: no Python found, mods were not synced" >&2
+echo "modsync: couldn't find Python, so mods are not synced" >&2
 exit 1

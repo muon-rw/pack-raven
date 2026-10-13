@@ -1,5 +1,5 @@
 // Browser-only stand-in for the Tauri backend, so the UI can run in a plain browser during development.
-// Data comes from src/dev/fixtures.json (gitignored; generate it from a real instance) when present.
+// We load data from src/dev/fixtures.json when present (gitignored; you generate it from a real instance).
 
 type Fixtures = {
   instance: string

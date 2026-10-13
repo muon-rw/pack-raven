@@ -68,7 +68,7 @@ pub fn exclude(paths: &[PathBuf]) -> Result<()> {
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr);
         if detail.contains("canceled by the user") {
-            bail!("The Windows permission prompt was declined, so no exclusions were added.");
+            bail!("You declined the Windows permission prompt, so packraven didn't add any exclusions.");
         }
         bail!("Adding the exclusions failed: {}", detail.trim());
     }

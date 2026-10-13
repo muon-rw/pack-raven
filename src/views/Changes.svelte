@@ -90,7 +90,7 @@
   let changeCount = $derived(diff ? diff.added.length + diff.updated.length + diff.removed.length : 0)
   let outOfSync = $derived(overview ? overview.missing.length + overview.unlocked.length : 0)
   let archivedNote = $derived(
-    overview?.lastTag ? `Notes for ${overview.lastTag} were archived to changelogs/${overview.lastTag.replace(/^v/, '')}.md when it was published.` : null,
+    overview?.lastTag ? `packraven archived the notes for ${overview.lastTag} to changelogs/${overview.lastTag.replace(/^v/, '')}.md when you published it.` : null,
   )
   let readiness = $derived(
     [
@@ -132,7 +132,7 @@
           <ul tabindex="0" aria-label="Files not committed yet">{#each overview.unlocked as path (path)}<li class="file">{path}</li>{/each}</ul>
         {/if}
         {#if overview.missing.length}
-          <p class="muted">Missing or changed, will download on pull:</p>
+          <p class="muted">Missing or changed (packraven downloads these when you pull):</p>
           <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
           <ul tabindex="0" aria-label="Files missing or changed on disk">{#each overview.missing as path (path)}<li class="file">{path}</li>{/each}</ul>
         {/if}
@@ -165,14 +165,14 @@
         <button onclick={loadDiff} disabled={loadingDiff}>{loadingDiff ? 'Checking' : 'Refresh'}</button>
       </div>
       <p class="muted">
-        Added to the end of the release notes when you publish.
+        packraven appends these to the release notes when you publish.
         {#if diff?.baseline}<button class="link" onclick={stopComparing}>Stop comparing with {diff.since}</button>{/if}
       </p>
       {#if diffError}
         <Notice tone="error"><p>{diffError}</p></Notice>
       {:else if diff && !diff.since}
         <p class="muted">
-          No previous release tags; nothing to compare against. If you'd like, you can
+          No previous release tags; nothing to compare against. You can
           <button class="link" onclick={compareWithZip}>compare changes against an old version</button>.
         </p>
       {:else if diff && !changeCount}

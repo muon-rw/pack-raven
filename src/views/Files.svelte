@@ -97,7 +97,7 @@
 
   async function reloadTab(tab: Tab) {
     if (tab.dirty) {
-      const confirmed = await ask(`Reload ${name(tab.path)} from disk? Your unsaved changes will be lost.`, {
+      const confirmed = await ask(`Reload ${name(tab.path)} from disk? You'll lose your unsaved changes.`, {
         title: 'Reload file',
         kind: 'warning',
         okLabel: 'Reload',
@@ -208,7 +208,7 @@
         </Notice>
       </div>
     {:else if current?.conflict === 'deleted'}
-      <div class="pad"><Notice tone="warn"><p>{name(current.path)} was deleted from disk. Saving will create it again.</p></Notice></div>
+      <div class="pad"><Notice tone="warn"><p>{name(current.path)} no longer exists on disk. Save to create it again.</p></Notice></div>
     {/if}
     {#if workspace.error}<div class="pad"><Notice tone="error"><p>{workspace.error}</p></Notice></div>{/if}
     {#if openError}<div class="pad"><Notice tone="error"><p>{openError}</p></Notice></div>{/if}
@@ -220,7 +220,7 @@
     {:else if !current}
       <div class="placeholder">
         <p>Open a file from the tree to edit it.</p>
-        <p class="muted small">Ctrl+S saves, Ctrl+F searches, Ctrl+W closes the tab.</p>
+        <p class="muted small">Press Ctrl+S to save, Ctrl+F to search, or Ctrl+W to close the tab.</p>
       </div>
     {/if}
   </section>

@@ -137,7 +137,7 @@
   {#if error}<p class="failed small">{error}</p>{/if}
   {#each rows as row (row.entry.path)}
     {@const status = row.entry.isDir ? null : badge(row.entry.path)}
-    <!-- svelte-ignore a11y_click_events_have_key_events (keys are handled on the tree container) -->
+    <!-- svelte-ignore a11y_click_events_have_key_events (the tree container handles keys) -->
     <div
       role="treeitem"
       aria-level={row.depth + 1}

@@ -63,7 +63,7 @@
 
   function discordState(release: ReleaseStatus) {
     if (release.announcedAt) return `Announced ${new Date(release.announcedAt).toLocaleDateString()}`
-    if (release.announce) return 'Waiting to post automatically once approved by CurseForge'
+    if (release.announce) return 'packraven posts this once CurseForge approves it'
     return 'Not announced'
   }
 
@@ -78,7 +78,7 @@
       <h2>Releases</h2>
       <p class="muted">
         Versions published from packraven, with their CurseForge review status and Discord announcements.
-        {#if !hasWebhook}No Discord webhook is set, so nothing is announced.{/if}
+        {#if !hasWebhook}No Discord webhook is set, so packraven won't announce anything.{/if}
       </p>
     </div>
     <div class="actions">
