@@ -8,6 +8,7 @@
   import { untrack } from 'svelte'
   import { api, errorText } from '../lib/api'
   import { mediaUrl } from '../lib/viewers'
+  import { shortcut } from '../lib/platform'
 
   let { path, archived }: { path: string; archived: boolean } = $props()
 
@@ -25,7 +26,8 @@
   let natural = $state<{ width: number; height: number } | null>(null)
   let mcmeta = $state<Record<string, unknown> | null>(null)
   let chosenZoom = $state<number | 'fit' | null>(null)
-  let playing = $state(true)
+  // We start animated textures paused under reduced motion; you can still press Play.
+  let playing = $state(!matchMedia('(prefers-reduced-motion: reduce)').matches)
   let showSheet = $state(false)
   let frame = $state(0)
   let stageWidth = $state(0)
@@ -49,7 +51,7 @@
         release = loaded.release
         url = loaded.url
       },
-      (e) => (error = errorText(e)),
+      (e) => !cancelled && (error = errorText(e)),
     )
     // Minecraft animates a texture when a .mcmeta file with an "animation" section sits next to it.
     api.readFile(`${current}.mcmeta`).then(
@@ -191,9 +193,9 @@
         {/if}
         <span class="divider" aria-hidden="true"></span>
       {/if}
-      <button class="ghost" aria-label="Zoom out" title="Zoom out (Ctrl+scroll)" onclick={() => step(-1)}>−</button>
+      <button class="ghost" aria-label="Zoom out" title="Zoom out ({shortcut('Ctrl+scroll')})" onclick={() => step(-1)}>−</button>
       <span class="zoom">{Math.round(zoom * 100)}%</span>
-      <button class="ghost" aria-label="Zoom in" title="Zoom in (Ctrl+scroll)" onclick={() => step(1)}>+</button>
+      <button class="ghost" aria-label="Zoom in" title="Zoom in ({shortcut('Ctrl+scroll')})" onclick={() => step(1)}>+</button>
       <button class="ghost" aria-pressed={zoom === fitZoom} onclick={() => choose('fit')}>Fit</button>
       <button class="ghost" aria-pressed={zoom === 1} onclick={() => choose(1)}>1:1</button>
     </span>
@@ -206,13 +208,13 @@
         <img
           bind:this={image}
           src={url}
-          alt=""
+          alt={path.slice(path.lastIndexOf('/') + 1)}
           class:hidden={animating}
           onload={() => (natural = { width: image!.naturalWidth || 300, height: image!.naturalHeight || 150 })}
           onerror={() => (error = "This image couldn't be shown. It may be damaged or in a format the webview can't read.")}
         />
         {#if animating && animation}
-          <canvas bind:this={canvas} width={animation.width} height={animation.height}></canvas>
+          <canvas bind:this={canvas} width={animation.width} height={animation.height}>{path.slice(path.lastIndexOf('/') + 1)}, animated</canvas>
         {/if}
       </div>
     {:else}
@@ -248,15 +250,6 @@
 
   .ghost {
     min-width: 28px;
-    padding: 2px 8px;
-    font-weight: 400;
-    font-size: var(--step--1);
-    background: transparent;
-    border-color: transparent;
-  }
-
-  .ghost:hover:not(:disabled) {
-    background: var(--control);
   }
 
   .ghost[aria-pressed='true'] {

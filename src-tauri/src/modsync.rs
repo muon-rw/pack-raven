@@ -295,14 +295,15 @@ pub async fn lock(dir: &Path, log: &Log) -> Result<()> {
     repo.write_lock(&mut lock)
 }
 
-pub async fn adopt(dir: &Path, log: &Log) -> Result<()> {
+pub async fn adopt(dir: &Path, log: &Log) -> Result<Vec<String>> {
     let repo = Repo::open(dir)?;
     let (mut lock, unknown) = build_lock(&repo).await?;
     for path in &unknown {
         git::run(&repo.root, &["add", "-f", "--", path])?;
         log.info(format!("modsync: not on CurseForge, committing directly: {path}"));
     }
-    repo.write_lock(&mut lock)
+    repo.write_lock(&mut lock)?;
+    Ok(unknown)
 }
 
 struct SyncPlan {

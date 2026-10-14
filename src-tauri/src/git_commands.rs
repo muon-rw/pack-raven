@@ -16,33 +16,34 @@ pub struct GitOverview {
     commits: Vec<Commit>,
 }
 
-#[tauri::command]
+// These run git, which can take a while on a big instance, so we keep them off the main thread.
+#[tauri::command(async)]
 pub fn git_overview(state: State<'_, AppState>) -> CmdResult<GitOverview> {
     let dir = state.settings().instance_dir;
     Ok(GitOverview { status: gitops::status(&dir).map_err(err)?, commits: gitops::recent_commits(&dir, 30) })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_diff(state: State<'_, AppState>, path: String, staged: bool, untracked: bool) -> CmdResult<Diff> {
     gitops::diff(&state.settings().instance_dir, &path, staged, untracked).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_stage(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<()> {
     gitops::stage(&state.settings().instance_dir, &paths).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_unstage(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<()> {
     gitops::unstage(&state.settings().instance_dir, &paths).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_discard(state: State<'_, AppState>, tracked: Vec<String>, untracked: Vec<String>) -> CmdResult<()> {
     gitops::discard(&state.settings().instance_dir, &tracked, &untracked).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_ignore(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<Vec<String>> {
     gitops::ignore(&state.settings().instance_dir, &paths).map_err(err)
 }

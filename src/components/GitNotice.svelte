@@ -58,12 +58,6 @@
     gap: 4px;
   }
 
-  .quiet {
-    background: transparent;
-    border-color: transparent;
-    color: var(--muted);
-  }
-
   .small {
     font-size: var(--step--1);
   }

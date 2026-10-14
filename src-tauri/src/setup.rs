@@ -254,7 +254,7 @@ pub async fn setup(dir: PathBuf, options: SetupOptions, log: Log) -> Result<Stri
     }
 
     git::run(&dir, &["config", "core.hooksPath", ".githooks"])?;
-    modsync::adopt(&dir, &log).await.context("building mods.lock.json failed")?;
+    let committed_directly = modsync::adopt(&dir, &log).await.context("building mods.lock.json failed")?;
 
     if let Some(remote) = options.remote.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
         if git::run(&dir, &["remote", "get-url", "origin"]).is_ok() {
@@ -285,8 +285,16 @@ pub async fn setup(dir: PathBuf, options: SetupOptions, log: Log) -> Result<Stri
             }
             git::run(&dir, &args)?;
             log.info(format!("Committed \"{message}\""));
-            Ok("Ready".into())
+            Ok(format!("Ready. packraven made the first commit.{}", committed_directly_note(&committed_directly)))
         }
-        None => Ok("Ready; packraven staged the changes for your next commit".into()),
+        None => Ok(format!("Ready. packraven staged the changes for your next commit.{}", committed_directly_note(&committed_directly))),
+    }
+}
+
+fn committed_directly_note(paths: &[String]) -> String {
+    match paths.len() {
+        0 => String::new(),
+        1 => format!(" 1 file isn't on CurseForge, so git tracks it directly: {}", paths[0]),
+        n => format!(" {n} files aren't on CurseForge, so git tracks them directly. The setup log lists them."),
     }
 }

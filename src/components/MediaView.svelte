@@ -19,7 +19,7 @@
         release = loaded.release
         url = loaded.url
       },
-      (e) => (error = errorText(e)),
+      (e) => !cancelled && (error = errorText(e)),
     )
     return () => {
       cancelled = true

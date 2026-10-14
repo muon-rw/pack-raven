@@ -227,34 +227,37 @@ button {
   cursor: pointer;
 }
 
-button:hover:not(:disabled) {
+button:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--control-hi);
 }
 
-button:disabled {
+/* Tip keeps its buttons focusable with aria-disabled, so we style both forms alike. */
+button:disabled,
+button[aria-disabled='true'] {
   color: var(--muted);
   background: transparent;
   border-color: var(--control-hi);
   cursor: not-allowed;
 }
 
-button.primary:not(:disabled) {
+button.primary:not(:disabled, [aria-disabled='true']) {
   color: var(--paper);
   background: var(--forest);
   border-color: var(--forest);
 }
 
-button.primary:hover:not(:disabled) {
+button.primary:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--forest-hi);
   border-color: var(--forest-hi);
 }
 
-button.busy:disabled {
+button.busy:disabled,
+button.busy[aria-disabled='true'] {
   color: var(--text);
   border-color: var(--busy);
 }
 
-button.danger {
+button.danger:not(:disabled, [aria-disabled='true']) {
   color: var(--fail);
   background: transparent;
   border-color: color-mix(in srgb, var(--fail) 75%, var(--paper));

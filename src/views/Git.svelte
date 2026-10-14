@@ -2,10 +2,10 @@
   import { onMount, tick } from 'svelte'
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
   import { api, errorText, type FileChange, type GitCommit, type GitDiff, type GitStatus } from '../lib/api'
-  import { job } from '../lib/jobs.svelte'
+  import { job, onJobEnd } from '../lib/jobs.svelte'
   import { nav, showInFiles } from '../lib/nav.svelte'
   import { addToGitignore, confirmDiscard, discardChanges } from '../lib/gitActions'
-  import { fileManager } from '../lib/platform'
+  import { fileManager, shortcut } from '../lib/platform'
   import type { MenuItem } from '../lib/menu'
   import ContextMenu from '../components/ContextMenu.svelte'
   import Notice from '../components/Notice.svelte'
@@ -22,6 +22,7 @@
   let diffLoading = $state(false)
   let message = $state('')
   let error = $state<string | null>(null)
+  let loadError = $state<string | null>(null)
   let lastAction = $state<string | null>(null)
   let notice = $state<string | null>(null)
   let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
@@ -37,16 +38,30 @@
     U: 'Conflict',
   }
 
-  async function load() {
-    try {
-      const result = await api.gitOverview()
-      status = result.status
-      commits = result.commits
-      error = null
-      if (selected && !stillListed(selected)) selected = null
-    } catch (e) {
-      error = errorText(e)
-    }
+  // The poll clears only its own error, so a failed stage or commit stays on screen until your next action.
+  let loading: Promise<void> | null = null
+
+  function load() {
+    loading ??= (async () => {
+      try {
+        const result = await api.gitOverview()
+        status = result.status
+        commits = result.commits
+        loadError = null
+        if (selected && !stillListed(selected)) selected = null
+      } catch (e) {
+        loadError = errorText(e)
+      } finally {
+        loading = null
+      }
+    })()
+    return loading
+  }
+
+  // Each tick we also re-read the open diff, so edits on disk show up without you reselecting the file.
+  function poll() {
+    if (document.hidden || loading) return
+    load().then(() => selected && loadDiff(selected, false))
   }
 
   function stillListed(s: Selection) {
@@ -56,18 +71,30 @@
 
   onMount(() => {
     load()
-    const timer = setInterval(load, 5000)
+    const timer = setInterval(poll, 5000)
     return () => clearInterval(timer)
   })
 
-  $effect(() => {
-    const phase = job('git').phase
-    if (phase === 'done' || phase === 'failed') {
-      load()
-      onchange()
-      if (phase === 'done' && lastAction === 'commit') message = ''
-    }
+  onJobEnd('git', (phase) => {
+    load()
+    onchange()
+    if (phase === 'done' && lastAction === 'commit') message = ''
   })
+
+  // We clear the old diff on a new selection, so the header never sits over another file's changes.
+  function loadDiff(current: Selection, fresh: boolean) {
+    if (fresh) {
+      diff = null
+      diffLoading = true
+    }
+    api
+      .gitDiff(current.path, current.staged, current.untracked)
+      .then((d) => {
+        if (selected === current) diff = d
+      })
+      .catch((e) => selected === current && (error = errorText(e)))
+      .finally(() => selected === current && (diffLoading = false))
+  }
 
   $effect(() => {
     const current = selected
@@ -75,14 +102,7 @@
       diff = null
       return
     }
-    diffLoading = true
-    api
-      .gitDiff(current.path, current.staged, current.untracked)
-      .then((d) => {
-        if (selected === current) diff = d
-      })
-      .catch((e) => (error = errorText(e)))
-      .finally(() => (diffLoading = false))
+    loadDiff(current, true)
   })
 
   // The Files tree's "Show diff" sends you here with a path to select.
@@ -224,7 +244,7 @@
       aria-pressed={isSelected}
     >
       <span class="badge s{change.status === '?' ? 'N' : change.status}" title={statusNames[change.status] ?? change.status}>{change.status === '?' ? 'N' : change.status}</span>
-      <span class="sr-only">{statusNames[change.status] ?? change.status}:</span>
+      <span class="visually-hidden">{statusNames[change.status] ?? change.status}:</span>
       <span class="path"><span class="dir">{parts.dir}</span><span class="name">{parts.name}</span></span>
     </button>
     <span class="row-actions">
@@ -241,31 +261,34 @@
 {/snippet}
 
 <div class="git">
-  <div class="side">
-    <div class="branch">
-      <div>
-        <div class="branch-name"><span class="file">{status?.branch ?? 'No branch'}</span></div>
-        <div class="muted small">
-          {#if !status?.hasRemote}
-            No remote set, so there's nowhere to push yet.
-          {:else if !status.upstream}
-            Not pushed yet. Push to create the branch on the remote.
-          {:else if status.ahead || status.behind}
-            {[status.ahead && `${status.ahead} to push`, status.behind && `${status.behind} to pull`].filter(Boolean).join(', ')}
-          {:else}
-            Up to date with {status.upstream}
-          {/if}
-        </div>
-      </div>
-      <div class="sync">
-        <button disabled={busy || !status?.hasRemote} onclick={() => sync('fetch')} class:busy={busy && lastAction === 'fetch'}>Fetch</button>
-        <button disabled={busy || !status?.upstream} onclick={() => sync('pull')} class:busy={busy && lastAction === 'pull'}>Pull</button>
-        <button disabled={busy || !status?.hasRemote || !status?.hasCommits} onclick={() => sync('push')} class:busy={busy && lastAction === 'push'}>Push</button>
-      </div>
+  <header class="head">
+    <div>
+      <h2>Git</h2>
+      <p class="muted">
+        On <span class="file">{status?.branch ?? 'no branch'}</span>.
+        {#if !status?.hasRemote}
+          No remote set, so there's nowhere to push yet.
+        {:else if !status.upstream}
+          Not pushed yet. Push to create the branch on the remote.
+        {:else if status.ahead || status.behind}
+          {[status.ahead && `${status.ahead} to push`, status.behind && `${status.behind} to pull`].filter(Boolean).join(', ')}.
+        {:else}
+          Up to date with {status.upstream}.
+        {/if}
+      </p>
     </div>
+    <div class="sync">
+      <button disabled={busy || !status?.hasRemote} onclick={() => sync('fetch')} class:busy={busy && lastAction === 'fetch'}>Fetch</button>
+      <button disabled={busy || !status?.upstream} onclick={() => sync('pull')} class:busy={busy && lastAction === 'pull'} class:primary={!!status?.behind}>Pull</button>
+      <button disabled={busy || !status?.hasRemote || !status?.hasCommits} onclick={() => sync('push')} class:busy={busy && lastAction === 'push'} class:primary={!!status?.ahead && !status?.behind}>Push</button>
+    </div>
+  </header>
+
+  <div class="work">
+  <div class="side">
 
     <form class="commit" onsubmit={(e) => { e.preventDefault(); commit() }}>
-      <label for="commit-message" class="sr-only">Commit message</label>
+      <label for="commit-message" class="visually-hidden">Commit message</label>
       <textarea
         id="commit-message"
         bind:value={message}
@@ -275,7 +298,7 @@
         onkeydown={(e) => (e.ctrlKey || e.metaKey) && e.key === 'Enter' && (e.preventDefault(), commit())}
       ></textarea>
       <div class="commit-row">
-        <span id="commit-hint" class="muted small">{commitHint ?? 'Press Ctrl+Enter to commit.'}</span>
+        <span id="commit-hint" class="muted small">{commitHint ?? `Press ${shortcut('Ctrl+Enter')} to commit.`}</span>
         <button type="submit" class="primary" class:busy={busy && lastAction === 'commit'} disabled={!canCommit}>
           {busy && lastAction === 'commit' ? 'Committing' : `Commit ${status?.staged.length ?? 0} ${status?.staged.length === 1 ? 'file' : 'files'}`}
         </button>
@@ -283,10 +306,11 @@
     </form>
 
     {#if error}<Notice tone="error"><p>{error}</p></Notice>{/if}
+    {#if loadError}<Notice tone="error"><p>Couldn't read the repository: {loadError}</p></Notice>{/if}
     {#if notice}<Notice tone="warn"><p>{notice}</p></Notice>{/if}
     {#if gitJob.phase === 'failed'}<Notice tone="error"><p>{gitJob.message}</p></Notice>{/if}
     {#if status?.conflicted.length}
-      <Notice tone="warn"><p>{status.conflicted.length} files have merge conflicts. Resolve them in an editor, then stage them.</p></Notice>
+      <Notice tone="warn"><p>{status.conflicted.length === 1 ? '1 file has a merge conflict' : `${status.conflicted.length} files have merge conflicts`}. Resolve them in an editor, then stage them.</p></Notice>
     {/if}
 
     <section class="group" aria-labelledby="staged-heading">
@@ -348,10 +372,10 @@
       </div>
     {:else}
       <div class="diff-head">
-        <span class="file">{selected.path}</span>
-        <span class="muted small">{selected.staged ? 'Staged' : selected.untracked ? 'New file' : 'Not staged'}</span>
+        <span class="file path-text" title={selected.path}>{selected.path}</span>
+        <span class="muted small state">{selected.staged ? 'Staged' : selected.untracked ? 'New file' : 'Not staged'}</span>
       </div>
-      {#if diffLoading && !diff}
+      {#if !diff && diffLoading}
         <p class="muted pad">Loading the diff.</p>
       {:else if diff?.binary}
         <p class="muted pad">This is a binary file, so there's no text diff to show.</p>
@@ -368,6 +392,7 @@
       {/if}
     {/if}
   </section>
+  </div>
 </div>
 
 {#if menu}
@@ -376,10 +401,30 @@
 
 <style>
   .git {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    flex: 1;
+    min-height: 420px;
+  }
+
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: end;
+    gap: 12px 24px;
+  }
+
+  .head p {
+    margin-top: 4px;
+  }
+
+  .work {
+    flex: 1;
     display: grid;
-    grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
+    grid-template-columns: minmax(260px, 34%) minmax(0, 1fr);
     gap: 24px;
-    height: 100%;
     min-height: 0;
   }
 
@@ -394,27 +439,6 @@
 
   .small {
     font-size: var(--step--1);
-  }
-
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  .branch {
-    display: flex;
-    justify-content: space-between;
-    align-items: start;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  .branch-name {
-    font-weight: 800;
   }
 
   .sync {
@@ -443,6 +467,11 @@
     gap: 12px;
   }
 
+  .commit-row button {
+    flex: none;
+    white-space: nowrap;
+  }
+
   .group {
     display: grid;
     gap: 6px;
@@ -466,17 +495,9 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .link {
-    padding: 2px 6px;
-    font-weight: 400;
+  .group-head .link {
     font-size: var(--step--1);
-    color: var(--forest);
-    background: transparent;
-    border-color: transparent;
-  }
-
-  .link:hover:not(:disabled) {
-    background: var(--surface);
+    font-weight: 400;
   }
 
   .empty {
@@ -532,7 +553,7 @@
     font-family: var(--font-log);
     font-size: var(--step--2);
     font-weight: 700;
-    border-radius: 4px;
+    border-radius: var(--radius-small);
     color: var(--muted);
     background: var(--highlight);
   }
@@ -582,13 +603,17 @@
     display: flex;
     gap: 2px;
     padding-right: 4px;
-    opacity: 0.55;
+    color: var(--muted);
+  }
+
+  .row-actions .icon {
+    color: inherit;
   }
 
   .changes li:hover .row-actions,
   .changes li:focus-within .row-actions,
   .changes li.selected .row-actions {
-    opacity: 1;
+    color: var(--text);
   }
 
   .icon {
@@ -661,10 +686,23 @@
   .diff-head {
     display: flex;
     justify-content: space-between;
+    align-items: baseline;
+    min-width: 0;
     gap: 12px;
     padding: 10px 14px;
     background: var(--surface);
     border-bottom: 1px solid var(--line);
+  }
+
+  .path-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .state {
+    flex: none;
   }
 
   .pad {

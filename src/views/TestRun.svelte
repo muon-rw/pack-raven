@@ -35,7 +35,7 @@
 
   async function sendCommand() {
     const line = command.trim()
-    if (!line) return
+    if (!line || whyNoSend) return
     await run(() => api.serverCommand(line))
     command = ''
   }
@@ -81,25 +81,31 @@
 <div class="test">
   <div class="head">
     <div>
-      <h2>Test run</h2>
-      <p class="muted">{status}</p>
+      <h2>Test</h2>
+      <p class="muted" role="status">{status}</p>
     </div>
     <div class="controls">
-      <label class="check" title={serverRunning ? 'Stop the test server to change this' : RECOPY_TIP}>
-        <input type="checkbox" bind:checked={testOptions.recopyAll} disabled={serverRunning} /> Recopy all server files
+      <label class="check">
+        <input type="checkbox" bind:checked={testOptions.recopyAll} disabled={serverRunning} aria-describedby="recopy-hint" /> Recopy all server files
       </label>
-      <Tip tip={whyNoQuick ?? 'Start the server, then launch the client and join it'}>
-        <button
-          class="primary"
-          class:busy={preparing}
-          disabled={!!whyNoQuick}
-          onclick={() => ((clientJoins = true), startTest(true))}
-        >
-          {preparing ? 'Starting' : 'Quick test'}
-        </button>
+      <Tip tip={whyNoQuick}>
+        {#snippet children(why)}
+          <button
+            class="primary"
+            class:busy={preparing}
+            aria-disabled={!!whyNoQuick}
+            aria-describedby={why}
+            title={whyNoQuick ? undefined : 'Start the server, then launch the client and join it'}
+            onclick={() => !whyNoQuick && ((clientJoins = true), startTest(true))}
+          >
+            {preparing ? 'Starting' : 'Quick test'}
+          </button>
+        {/snippet}
       </Tip>
     </div>
   </div>
+
+  <p class="hint muted recopy" id="recopy-hint">{serverRunning ? 'Stop the test server to change whether it recopies everything.' : RECOPY_TIP}</p>
 
   {#if serverRunning && serverMods.changedSinceTest}
     <Notice tone="warn">
@@ -116,20 +122,28 @@
         <h3>Server</h3>
         <div class="buttons">
           <Tip tip={whyNoStart}>
-            <button disabled={!!whyNoStart} onclick={() => startTest(false)}>Start server</button>
+            {#snippet children(why)}
+              <button aria-disabled={!!whyNoStart} aria-describedby={why} onclick={() => !whyNoStart && startTest(false)}>Start server</button>
+            {/snippet}
           </Tip>
           <Tip tip={whyNoStop ?? 'Save the world and shut the server down'}>
-            <button disabled={!!whyNoStop} onclick={() => run(() => api.serverCommand('stop'))}>Stop</button>
+            {#snippet children(why)}
+              <button aria-disabled={!!whyNoStop} aria-describedby={why} onclick={() => !whyNoStop && run(() => api.serverCommand('stop'))}>Stop</button>
+            {/snippet}
           </Tip>
           <Tip tip={whyNoStop ?? 'End the process at once without saving'}>
-            <button class="danger" disabled={!!whyNoStop} onclick={() => run(() => api.killProcess('server'))}>Kill</button>
+            {#snippet children(why)}
+              <button class="danger" aria-disabled={!!whyNoStop} aria-describedby={why} onclick={() => !whyNoStop && run(() => api.killProcess('server'))}>Kill</button>
+            {/snippet}
           </Tip>
         </div>
       </div>
       <JobLog lines={serverLines} label="Server log" empty="Start the server to see its log." />
       <form class="console" onsubmit={(e) => { e.preventDefault(); sendCommand() }}>
         <input bind:value={command} placeholder="op Dev" disabled={!serverRunning} aria-label="Server command" aria-describedby="console-hint" />
-        <Tip tip={whyNoSend}><button type="submit" disabled={!!whyNoSend}>Send</button></Tip>
+        <Tip tip={whyNoSend}>
+          {#snippet children(why)}<button type="submit" aria-disabled={!!whyNoSend} aria-describedby={why}>Send</button>{/snippet}
+        </Tip>
       </form>
       <p class="hint muted" id="console-hint">
         {serverRunning ? 'Send commands to the server console. Use Stop to save and shut down, or Kill to end the process without saving.' : 'You can send commands once the server is running.'}
@@ -141,26 +155,30 @@
       <div class="pane-head">
         <h3>Client</h3>
         <div class="buttons">
-          <label class="check" title={clientRunning ? "Can't change this while the client is running" : undefined}>
-            <input type="checkbox" bind:checked={join} disabled={clientRunning} /> Auto-join test server
+          <label class="check join">
+            <input type="checkbox" bind:checked={join} disabled={clientRunning} aria-describedby="client-hint" /> Join server
           </label>
           <Tip tip={whyNoLaunch}>
-            <button disabled={!!whyNoLaunch} onclick={() => run(() => ((clientJoins = join), api.startClient(join)))}>Launch client</button>
+            {#snippet children(why)}
+              <button aria-disabled={!!whyNoLaunch} aria-describedby={why} onclick={() => !whyNoLaunch && run(() => ((clientJoins = join), api.startClient(join)))}>Launch client</button>
+            {/snippet}
           </Tip>
           <Tip tip={clientRunning ? 'End the client process at once' : "The client isn't running"}>
-            <button class="danger" disabled={!clientRunning} onclick={() => run(() => api.killProcess('client'))}>Kill</button>
+            {#snippet children(why)}
+              <button class="danger" aria-disabled={!clientRunning} aria-describedby={why} onclick={() => clientRunning && run(() => api.killProcess('client'))}>Kill</button>
+            {/snippet}
           </Tip>
         </div>
       </div>
       <JobLog lines={job('client').lines} label="Client log" empty="The client log will appear here after you launch it." />
-      <p class="hint muted">
+      <p class="hint muted" id="client-hint">
         {clientRunning
-          ? 'Running offline as the test username.'
+          ? "Running offline as the test username. You can't change Join server while the client runs."
           : !join
             ? 'Launch this instance offline to the title screen.'
             : testState.serverReady
               ? 'Launch this instance offline and join the test server.'
-              : 'Start the server first, or untick auto-join to launch to the title screen.'}
+              : 'Start the server first, or untick Join server to launch to the title screen.'}
       </p>
     </div>
   </div>
@@ -171,7 +189,12 @@
     display: flex;
     flex-direction: column;
     gap: 18px;
-    height: 100%;
+    flex: 1;
+    min-height: 480px;
+  }
+
+  .recopy {
+    margin-top: -10px;
   }
 
   .head {
@@ -202,13 +225,6 @@
     gap: 20px;
   }
 
-  @media (max-width: 900px) {
-    .logs {
-      grid-template-columns: minmax(0, 1fr);
-      grid-auto-rows: minmax(280px, 1fr);
-    }
-  }
-
   .pane {
     display: flex;
     flex-direction: column;
@@ -225,28 +241,25 @@
     gap: 8px;
   }
 
+  .pane-head,
+  .buttons {
+    flex-wrap: wrap;
+  }
+
+  .buttons {
+    justify-content: end;
+  }
+
+  .join {
+    white-space: nowrap;
+  }
+
   .buttons button {
     white-space: nowrap;
   }
 
   .hint {
     font-size: var(--step--1);
-  }
-
-  .link {
-    display: inline;
-    padding: 0;
-    font: inherit;
-    color: var(--forest);
-    text-decoration: underline;
-    text-underline-offset: 0.18em;
-    background: transparent;
-    border: 0;
-  }
-
-  .link:hover:not(:disabled) {
-    color: var(--forest-hi);
-    background: transparent;
   }
 
   .console input {

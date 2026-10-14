@@ -1,3 +1,4 @@
+import { untrack } from 'svelte'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 export type JobName = 'client-export' | 'server-pack' | 'test' | 'server' | 'client' | 'publish' | 'setup' | 'git'
@@ -13,6 +14,20 @@ class JobRecord {
   phase = $state<JobPhase>('idle')
   message = $state<string | null>(null)
   lines = $state.raw<LogLine[]>([])
+  // The phase stays 'done' or 'failed' until the next run starts, so effects that react to a run
+  // ending compare this count instead.
+  finishedRuns = $state(0)
+}
+
+export function onJobEnd(name: JobName, run: (phase: JobPhase) => void) {
+  let seen = job(name).finishedRuns
+  $effect(() => {
+    const record = job(name)
+    if (record.finishedRuns === seen) return
+    seen = record.finishedRuns
+    const phase = record.phase
+    untrack(() => run(phase))
+  })
 }
 
 const MAX_LINES = 4000
@@ -85,6 +100,7 @@ function register(): Promise<UnlistenFn[]> {
     }
     entry.phase = payload.state
     entry.message = payload.message
+    if (payload.state !== 'running') entry.finishedRuns++
   }),
   listen<{ kind: string; detail: string }>('test-event', ({ payload }) => {
     if (payload.kind === 'server-started') {

@@ -593,9 +593,9 @@
               ondblclick={() => pin(tab.path)}
               onkeydown={(e) => onTabKey(e, index)}
             >
-<span class="name">{name(tab.path)}</span>{#if tab.dirty}<span class="dirty" aria-label="unsaved"></span>{/if}
+<span class="name">{name(tab.path)}</span>{#if tab.dirty}<span class="dirty" aria-hidden="true"></span><span class="visually-hidden">, unsaved</span>{/if}
             </button>
-            <button class="close" aria-label="Close {name(tab.path)}" title="Close (Ctrl+W)" onclick={() => closeTab(tab)}>×</button>
+            <button class="close" tabindex="-1" aria-label="Close {name(tab.path)}" title="Close ({shortcut('Ctrl+W')})" onclick={() => closeTab(tab)}>×</button>
           </div>
         {/each}
       </div>
@@ -613,22 +613,22 @@
             </span>
           {/if}
           {#if problems}
-            <button class="link problems {problems.tone}" title="Show problems (Ctrl+Shift+M)" onclick={showProblems}>{problems.text}</button>
+            <button class="ghost action problems {problems.tone}" title="Show problems ({shortcut('Ctrl+Shift+M')})" onclick={showProblems}>{problems.text}</button>
           {/if}
           {#if current.state && current.large}
             <span class="muted small" title="Checking and folding are off for this large file, so typing stays responsive.">Simplified editor</span>
           {:else if current.state && current.lintPaused}
             <span class="muted small" title="Checking this file took long enough to slow down typing, so we only check it when you ask.">
               Checking paused
-              <button class="link" onclick={checkNow}>Check now</button>
+              <button class="ghost action" onclick={checkNow}>Check now</button>
             </span>
           {/if}
           {#if readOnly && viewer !== 'log'}<span class="read-only" class:flash={blockedNotice}>Read-only</span>{/if}
-          <button class="link" onclick={() => reveal(outerArchive(current!.path))}>{current.archived ? 'Show the archive in folder' : 'Show in folder'}</button>
-          <button class="link" onclick={() => reloadTab(current!)}>Reload</button>
+          <button class="ghost action" onclick={() => reveal(outerArchive(current!.path))}>{current.archived ? 'Show the archive in folder' : 'Show in folder'}</button>
+          <button class="ghost action" onclick={() => reloadTab(current!)}>Reload</button>
           {#if current.state && !readOnly}
             <button class="primary save" disabled={!current.dirty} onclick={() => save(current!.path).then(loadChanges)}>
-              {current.dirty ? 'Save' : 'Saved'} <kbd>Ctrl S</kbd>
+              {current.dirty ? 'Save' : 'Saved'} <kbd aria-hidden="true">{shortcut('Ctrl+S')}</kbd>
             </button>
           {/if}
         </span>
@@ -712,7 +712,10 @@
     {:else if !current}
       <div class="placeholder">
         <p>Open a file from the tree to edit it.</p>
-        <p class="muted small">Press Ctrl+S to save, Ctrl+F to search, or Ctrl+W to close the tab.</p>
+        <p class="muted small">
+          Press {shortcut('Ctrl+S')} to save, {shortcut('Ctrl+F')} to search, or {shortcut('Ctrl+W')} to close the tab. In the editor, Tab
+          indents; press Esc, then Tab, to move on.
+        </p>
       </div>
     {/if}
   </section>
@@ -725,10 +728,10 @@
 <style>
   .files {
     display: grid;
-    grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+    grid-template-columns: minmax(200px, min(300px, 30%)) minmax(0, 1fr);
     gap: 20px;
-    height: 100%;
-    min-height: 0;
+    flex: 1;
+    min-height: 360px;
   }
 
   .browser {
@@ -834,17 +837,10 @@
     border-style: solid;
   }
 
-  .link {
-    padding: 2px 6px;
-    font-weight: 400;
-    font-size: var(--step--1);
+  .action {
+    padding-inline: 6px;
     color: var(--forest);
-    background: transparent;
-    border-color: transparent;
-  }
-
-  .link:hover:not(:disabled) {
-    background: var(--control);
+    white-space: nowrap;
   }
 
   .editor {
@@ -950,14 +946,16 @@
   .toolbar {
     position: relative;
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
-    gap: 12px;
+    gap: 4px 12px;
     padding: 6px 10px 6px 14px;
     border-bottom: 1px solid var(--line);
   }
 
   .path {
+    flex: 1 1 120px;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -967,9 +965,11 @@
 
   .actions {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: end;
     align-items: center;
     gap: 6px;
-    flex: none;
+    margin-left: auto;
   }
 
   .problems {

@@ -34,6 +34,9 @@
   let discordFailed = $state(false)
   let testing = $state(false)
   let removeError: string | null = $state(null)
+  let saving = $state(false)
+  let portMissing = $state(false)
+  let portField = $state<HTMLInputElement>()
 
   async function load() {
     try {
@@ -53,6 +56,17 @@
 
   async function save() {
     if (!config) return
+    // Svelte binds a cleared number field to null, which packraven.toml can't hold. We treat an
+    // empty project ID as not set, but the test server needs a port.
+    config.curseforge.project_id = Number(config.curseforge.project_id) || 0
+    portMissing = !config.test.port
+    if (portMissing) {
+      messageFailed = true
+      message = 'Enter a test server port, such as 25565.'
+      portField?.focus()
+      return
+    }
+    saving = true
     try {
       await api.savePackConfig(config)
       await api.setWebhook(webhook)
@@ -64,6 +78,8 @@
     } catch (error) {
       messageFailed = true
       message = `Couldn't save: ${errorText(error)}`
+    } finally {
+      saving = false
     }
   }
 
@@ -117,11 +133,11 @@
       <p><button onclick={load}>Try again</button></p>
     </Notice>
   {:else if config}
-    <form class="form" onsubmit={(e) => { e.preventDefault(); save() }}>
+    <form class="form" onsubmit={(e) => { e.preventDefault(); save() }} oninput={() => !messageFailed && (message = null)}>
       <section>
         <h3>CurseForge</h3>
         <div class="grid">
-          <label>Project ID <input type="number" bind:value={config.curseforge.project_id} /></label>
+          <label>Project ID <input type="number" min="0" bind:value={config.curseforge.project_id} placeholder="Not set" /></label>
           <label>
             Release type
             <select bind:value={config.curseforge.release_type}>
@@ -140,10 +156,14 @@
       <section>
         <h3>Server and test run</h3>
         <div class="grid">
-          <label>Server memory <input bind:value={config.server.memory} placeholder="4G" title="Java heap size, such as 4G or 6144M" /></label>
+          <label>Server memory <input bind:value={config.server.memory} placeholder="4G" aria-describedby="memory-hint" /></label>
           <label>Test username <input bind:value={config.test.username} /></label>
-          <label>Test server port <input type="number" bind:value={config.test.port} /></label>
+          <label>
+            Test server port
+            <input type="number" min="1" max="65535" bind:this={portField} bind:value={config.test.port} aria-invalid={portMissing} aria-describedby={portMissing ? 'pack-save-status' : undefined} />
+          </label>
         </div>
+        <p class="hint" id="memory-hint">Server memory is the Java heap size, such as 4G or 6144M.</p>
         <div class="field">
           <label for="server-graalvm">Server pack Java</label>
           <div class="inline">
@@ -165,11 +185,12 @@
                 pattern={'\\d+(\\.\\d+){1,2}'}
                 placeholder="21.0.7"
                 aria-label="GraalVM release"
-                title="A GraalVM release such as 21.0.7"
+                aria-describedby="server-graalvm-hint"
               />
             {/if}
           </div>
           <p class="hint" id="server-graalvm-hint">
+            {#if graalvmChoice === 'exact'}Write a GraalVM release such as 21.0.7.{/if}
             The server pack's run scripts download this on a host's first start. Latest means the newest release at that moment. Hosts can run their own Java
             instead by writing its path in <span class="file">java.txt</span> next to the scripts.
           </p>
@@ -192,13 +213,20 @@
             <input id="webhook" type="password" autocomplete="off" bind:value={webhook} placeholder="https://discord.com/api/webhooks/..." aria-describedby="webhook-hint" />
             <button type="button" class:busy={testing} disabled={testing || !webhook.trim()} onclick={testWebhook}>{testing ? 'Sending' : 'Send test message'}</button>
           </div>
-          <p class="hint" id="webhook-hint">Copy it from the channel's Settings, Integrations, Webhooks. packraven saves it only on this machine, never in the pack repo.</p>
-          {#if discordMessage}<p class:muted={!discordFailed} class:failed={discordFailed} role="status">{discordMessage}</p>{/if}
+          <p class="hint" id="webhook-hint">
+            Copy it from the channel's Settings, Integrations, Webhooks. packraven saves it only on this machine, never in the pack repo. Sending a test
+            message saves it right away.
+          </p>
+          <p class:muted={!discordFailed} class:failed={discordFailed} role="status">{discordMessage ?? ''}</p>
         </div>
         <div class="grid">
-          <label>Role to ping <input bind:value={config.discord.role_id} placeholder="Role ID" title="Right-click the role with Developer Mode on, then Copy Role ID. Leave empty for no ping." /></label>
+          <label>Role to ping <input bind:value={config.discord.role_id} placeholder="Role ID" aria-describedby="role-hint" /></label>
           <label>Embed color <input type="color" bind:value={config.discord.color} /></label>
         </div>
+        <p class="hint" id="role-hint">
+          To get a role ID, turn on Developer Mode in Discord's Advanced settings, then right-click the role and choose Copy Role ID. Leave it empty
+          for no ping.
+        </p>
         <label class="block">
           Title
           <input bind:value={config.discord.title} placeholder={'{project_name} - v{version}'} aria-describedby="discord-placeholders" />
@@ -224,8 +252,8 @@
       </section>
 
       <div class="actions">
-        <button type="submit" class="primary">Save pack settings</button>
-        <span class:muted={!messageFailed} class:failed={messageFailed} role="status">{message ?? ''}</span>
+        <button type="submit" class="primary" class:busy={saving} disabled={saving}>{saving ? 'Saving' : 'Save pack settings'}</button>
+        <span id="pack-save-status" class:muted={!messageFailed} class:failed={messageFailed} role="status">{message ?? ''}</span>
       </div>
     </form>
   {/if}
@@ -270,7 +298,9 @@
     gap: 6px;
   }
 
-  .field > label {
+  .field > label,
+  .grid > label,
+  .block {
     color: var(--text);
     font-size: var(--step-0);
   }
@@ -285,9 +315,13 @@
   }
 
   .hint {
-    margin-top: -8px;
     color: var(--muted);
     font-size: var(--step--1);
+  }
+
+  .grid + .hint,
+  .block + .hint {
+    margin-top: -6px;
   }
 
   input[type='color'] {

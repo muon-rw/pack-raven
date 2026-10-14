@@ -147,7 +147,9 @@ fn addon_counts(pack: &Pack) -> AddonCounts {
     counts
 }
 
-#[tauri::command]
+// The shell polls this every few seconds, and it runs git and hashes the mods folder, so we
+// keep it off the main thread.
+#[tauri::command(async)]
 pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
     let pack = state.pack().map_err(err)?;
     let sync = sync::status(&pack).map_err(err)?;
@@ -253,7 +255,7 @@ pub fn set_side_override(state: State<'_, AppState>, project_id: u64, mode: Stri
     pack.save_config().map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn publish_preflight(state: State<'_, AppState>, version: String) -> CmdResult<Vec<String>> {
     Ok(publish::preflight(&state.pack().map_err(err)?, version.trim()))
 }

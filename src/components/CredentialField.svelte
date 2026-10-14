@@ -75,7 +75,7 @@
       <button type="button" aria-pressed={revealed} onclick={() => (revealed = !revealed)}>{revealed ? 'Hide' : 'Show'}</button>
       <button type="submit" class="primary" class:busy disabled={busy || !secret.trim()}>Save</button>
     </form>
-    <p class="muted hint">packraven will store this key in {keychain}, it doesn't store secrets itself.</p>
+    <p class="muted hint">packraven stores this key in {keychain}; it doesn't keep secrets itself.</p>
   {:else}
     <form class="row" onsubmit={(e) => { e.preventDefault(); run(() => api.credentialUseEnv(credential, envName)) }}>
       <label class="grow">
@@ -141,11 +141,5 @@
 
   .hint {
     font-size: var(--step--1);
-  }
-
-  .quiet {
-    background: transparent;
-    border-color: transparent;
-    color: var(--muted);
   }
 </style>

@@ -16,6 +16,7 @@
     nbt = null
     expanded.clear()
     expanded.add('')
+    focused = 0
     api.readNbt(current).then(
       (loaded) => {
         if (path === current) nbt = loaded
@@ -94,16 +95,22 @@
     return children(tag) !== null
   }
 
+  const ROW = 22
+  const OVERSCAN = 20
+
+  type Row = { kind: 'tag'; id: string; name: string; tag: NbtTag; depth: number; kids: number; parent: number } | { kind: 'more'; id: string; depth: number; count: number }
+
   function toggle(id: string) {
     if (expanded.has(id)) expanded.delete(id)
     else expanded.add(id)
   }
 
+  // We walk the queue by index instead of shift(), so a 30k-entry list stays linear.
   function expandAll() {
     if (!nbt) return
     const queue: [string, NbtTag][] = [['', nbt.root]]
-    while (queue.length && expanded.size < MAX_EXPANDED) {
-      const [id, tag] = queue.shift()!
+    for (let at = 0; at < queue.length && expanded.size < MAX_EXPANDED; at++) {
+      const [id, tag] = queue[at]
       const kids = children(tag)
       if (!kids?.length) continue
       expanded.add(id)
@@ -114,6 +121,7 @@
   function collapseAll() {
     expanded.clear()
     expanded.add('')
+    focused = 0
   }
 
   let tagCount = $derived.by(() => {
@@ -126,32 +134,64 @@
     if (nbt) walk(nbt.root)
     return count
   })
-</script>
 
-{#snippet node(name: string, tag: NbtTag, id: string, depth: number)}
-  {@const kids = children(tag)}
-  {@const open = expanded.has(id)}
-  <div class="row" style="--depth: {depth}" role="treeitem" aria-level={depth + 1} aria-expanded={kids?.length ? open : undefined} aria-selected="false">
-    {#if kids?.length}
-      <button class="twisty" aria-label="{open ? 'Collapse' : 'Expand'} {name}" onclick={() => toggle(id)}>
-        <svg viewBox="0 0 12 12" class:open aria-hidden="true"><path d="M4.5 3l3 3-3 3" /></svg>
-      </button>
-    {:else}
-      <span class="twisty" aria-hidden="true"></span>
-    {/if}
-    <span class="type">{labels[tag.type]}</span>
-    {#if name}<span class="name">{name}</span>{/if}
-    <span class="value" class:string={tag.type === 'string'} class:container={container(tag)} title={tag.type === 'string' ? tag.value : undefined}>{summary(tag)}</span>
-  </div>
-  {#if kids && open}
-    {#each kids as child, i (i)}
-      {@render node(child.name, child.tag, `${id}/${i}`, depth + 1)}
-    {/each}
-    {#if hidden(tag) > 0}
-      <p class="more muted" style="--depth: {depth + 1}">…and {hidden(tag).toLocaleString()} more, which we don't show</p>
-    {/if}
-  {/if}
-{/snippet}
+  // We render only the rows in view, so expanding a huge structure file stays cheap.
+  let rows = $derived.by(() => {
+    const list: Row[] = []
+    if (!nbt) return list
+    const visit = (name: string, tag: NbtTag, id: string, depth: number, parent: number) => {
+      const kids = children(tag)
+      const index = list.length
+      list.push({ kind: 'tag', id, name, tag, depth, kids: kids?.length ?? 0, parent })
+      if (!kids || !expanded.has(id)) return
+      kids.forEach((child, i) => visit(child.name, child.tag, `${id}/${i}`, depth + 1, index))
+      const more = hidden(tag)
+      if (more > 0) list.push({ kind: 'more', id: `${id}/more`, depth: depth + 1, count: more })
+    }
+    visit(nbt.rootName, nbt.root, '', 0, -1)
+    return list
+  })
+
+  let viewport = $state<HTMLDivElement>()
+  let scrollTop = $state(0)
+  let height = $state(0)
+  let focused = $state(0)
+  let first = $derived(Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN))
+  let last = $derived(Math.min(rows.length, Math.ceil((scrollTop + height) / ROW) + OVERSCAN))
+
+  function moveTo(index: number) {
+    focused = Math.max(0, Math.min(rows.length - 1, index))
+    if (!viewport) return
+    const top = focused * ROW
+    if (top < viewport.scrollTop) viewport.scrollTop = top
+    else if (top + ROW > viewport.scrollTop + viewport.clientHeight) viewport.scrollTop = top + ROW - viewport.clientHeight
+  }
+
+  function onKey(event: KeyboardEvent) {
+    const row = rows[focused]
+    if (!row) return
+    const page = Math.max(1, Math.floor((viewport?.clientHeight ?? ROW) / ROW) - 1)
+    const tagRow = row.kind === 'tag' ? row : null
+    const open = tagRow ? expanded.has(tagRow.id) : false
+    let handled = true
+    if (event.key === 'ArrowDown') moveTo(focused + 1)
+    else if (event.key === 'ArrowUp') moveTo(focused - 1)
+    else if (event.key === 'PageDown') moveTo(focused + page)
+    else if (event.key === 'PageUp') moveTo(focused - page)
+    else if (event.key === 'Home') moveTo(0)
+    else if (event.key === 'End') moveTo(rows.length - 1)
+    else if (event.key === 'ArrowRight' && tagRow?.kids) open ? moveTo(focused + 1) : expanded.add(tagRow.id)
+    else if (event.key === 'ArrowLeft' && tagRow?.kids && open) expanded.delete(tagRow.id)
+    else if (event.key === 'ArrowLeft' && tagRow && tagRow.parent >= 0) moveTo(tagRow.parent)
+    else if ((event.key === 'Enter' || event.key === ' ') && tagRow?.kids) toggle(tagRow.id)
+    else handled = false
+    if (handled) event.preventDefault()
+  }
+
+  $effect(() => {
+    if (focused >= rows.length) focused = Math.max(0, rows.length - 1)
+  })
+</script>
 
 <div class="viewer">
   <div class="bar">
@@ -168,8 +208,52 @@
     </span>
   </div>
   {#if nbt}
-    <div class="tree" role="tree" aria-label="NBT tags">
-      {@render node(nbt.rootName, nbt.root, '', 0)}
+    <div
+      class="tree"
+      role="tree"
+      aria-label="NBT tags"
+      tabindex="0"
+      aria-activedescendant="nbt-row-{focused}"
+      bind:this={viewport}
+      bind:clientHeight={height}
+      onscroll={() => (scrollTop = viewport!.scrollTop)}
+      onkeydown={onKey}
+    >
+      <div class="space" style:height="{rows.length * ROW}px">
+        {#each rows.slice(first, last) as row, k (row.id)}
+          {@const index = first + k}
+          {#if row.kind === 'tag'}
+            {@const open = expanded.has(row.id)}
+            <!-- svelte-ignore a11y_click_events_have_key_events (the tree handles keys for the focused row) -->
+            <div
+              id="nbt-row-{index}"
+              class="row"
+              class:focused={index === focused}
+              style:top="{index * ROW}px"
+              style="--depth: {row.depth}"
+              role="treeitem"
+              tabindex="-1"
+              aria-level={row.depth + 1}
+              aria-expanded={row.kids ? open : undefined}
+              aria-selected={index === focused}
+              onclick={() => (focused = index)}
+            >
+              {#if row.kids}
+                <button class="twisty" tabindex="-1" aria-hidden="true" onclick={() => toggle(row.id)}>
+                  <svg viewBox="0 0 12 12" class:open aria-hidden="true"><path d="M4.5 3l3 3-3 3" /></svg>
+                </button>
+              {:else}
+                <span class="twisty" aria-hidden="true"></span>
+              {/if}
+              <span class="type">{labels[row.tag.type]}</span>
+              {#if row.name}<span class="name">{row.name}</span>{/if}
+              <span class="value" class:string={row.tag.type === 'string'} class:container={container(row.tag)} title={row.tag.type === 'string' ? row.tag.value : undefined}>{summary(row.tag)}</span>
+            </div>
+          {:else}
+            <p id="nbt-row-{index}" class="row more muted" style:top="{index * ROW}px" style="--depth: {row.depth}">…and {row.count.toLocaleString()} more, which we don't show</p>
+          {/if}
+        {/each}
+      </div>
     </div>
   {/if}
 </div>
@@ -198,18 +282,6 @@
     gap: 2px;
   }
 
-  .ghost {
-    padding: 2px 8px;
-    font-weight: 400;
-    font-size: var(--step--1);
-    background: transparent;
-    border-color: transparent;
-  }
-
-  .ghost:hover:not(:disabled) {
-    background: var(--control);
-  }
-
   .tree {
     flex: 1;
     min-height: 0;
@@ -219,18 +291,35 @@
     font-size: var(--step--1);
   }
 
+  .tree:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .space {
+    position: relative;
+    min-width: max-content;
+  }
+
   .row {
+    position: absolute;
+    left: 0;
+    right: 0;
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 1px 12px 1px calc(8px + var(--depth) * 18px);
+    height: 22px;
+    margin: 0;
+    padding: 0 12px 0 calc(8px + var(--depth) * 18px);
     white-space: nowrap;
-    content-visibility: auto;
-    contain-intrinsic-size: auto 22px;
   }
 
   .row:hover {
     background: var(--surface);
+  }
+
+  .tree:focus-visible .row.focused {
+    background: var(--highlight);
+    box-shadow: inset 2px 0 0 var(--forest);
   }
 
   .twisty {
@@ -242,6 +331,7 @@
     padding: 0;
     background: transparent;
     border: 0;
+    cursor: pointer;
   }
 
   .twisty svg {
@@ -290,8 +380,9 @@
     color: var(--muted);
   }
 
-  .more {
-    padding: 2px 12px 2px calc(30px + var(--depth) * 18px);
+  .row.more {
+    max-width: none;
+    padding-left: calc(30px + var(--depth) * 18px);
     font-size: var(--step--2);
   }
 

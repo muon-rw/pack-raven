@@ -74,7 +74,7 @@ pub fn run_hook_command() -> Option<i32> {
         match args[..] {
             [setup::IRIS_CLEAN_COMMAND] => iris_clean_stdio(),
             [_, "lock"] => modsync::lock(&dir, &log).await,
-            [_, "adopt"] => modsync::adopt(&dir, &log).await,
+            [_, "adopt"] => modsync::adopt(&dir, &log).await.map(|_| ()),
             [_, "restore"] => modsync::restore(&dir, &log).await,
             [_, "status"] => modsync::status(&dir, &log),
             _ => Err(anyhow::anyhow!("usage: packraven {} lock|adopt|restore|status", setup::MODSYNC_COMMAND)),

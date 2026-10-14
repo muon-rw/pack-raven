@@ -213,7 +213,6 @@
     margin-top: 4px;
   }
 
-
   .columns {
     display: grid;
     grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
@@ -294,21 +293,5 @@
     flex-wrap: wrap;
     gap: 2px 10px;
     padding: 2px 0;
-  }
-
-  .link {
-    display: inline;
-    padding: 0;
-    font: inherit;
-    color: var(--forest);
-    text-decoration: underline;
-    text-underline-offset: 0.18em;
-    background: transparent;
-    border: 0;
-  }
-
-  .link:hover:not(:disabled) {
-    color: var(--forest-hi);
-    background: transparent;
   }
 </style>

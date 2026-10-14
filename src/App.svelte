@@ -36,7 +36,23 @@
   let hookFailed = $state(false)
   let hooksDismissed = $state(false)
 
+  // We skip ticks while the window is hidden in the tray, or while the last refresh is still running.
+  let refreshing = false
+
+  function poll() {
+    if (!document.hidden && !refreshing) refresh()
+  }
+
   async function refresh() {
+    refreshing = true
+    try {
+      await load()
+    } finally {
+      refreshing = false
+    }
+  }
+
+  async function load() {
     packs = await api.listPacks().catch(() => packs)
     if (packs && !packs.active) {
       overview = null
@@ -56,8 +72,7 @@
   onMount(() => {
     startListening()
     startWatching()
-    refresh()
-    const timer = setInterval(refresh, 5000)
+    const timer = setInterval(poll, 5000)
     const unlisten = listen<{ kind: string }>('test-event', ({ payload }) => {
       if (payload.kind.endsWith('-started') || payload.kind.endsWith('-stopped')) refresh()
     })
@@ -623,7 +638,6 @@
     }
   }
 
-
   .app-settings {
     margin-top: auto;
     color: var(--rail-muted);
@@ -661,18 +675,15 @@
     outline-color: var(--rail-text);
   }
 
-  .quiet {
-    background: transparent;
-    border-color: transparent;
-    color: var(--muted);
-  }
-
   main {
     --view-inset: 32px;
   }
 
+  /* We use a flex column so full-height views (Test, Files, Git) fill the space below any banners. */
   .view {
     flex: 1;
+    display: flex;
+    flex-direction: column;
     min-height: 0;
     overflow: auto;
     padding: 28px var(--view-inset);

@@ -109,9 +109,19 @@ function clean(parent: Element, context: Context) {
   }
 }
 
+// A stray % in a README link or image would make decodeURIComponent throw and break the whole
+// preview, so we keep a bad escape as written.
+function decodeOrKeep(text: string) {
+  try {
+    return decodeURIComponent(text)
+  } catch {
+    return text
+  }
+}
+
 function rewriteLink(link: Element, href: string, context: Context) {
   if (/^(https?:|mailto:)/i.test(href)) link.setAttribute('data-external', href)
-  else if (href.startsWith('#')) link.setAttribute('data-anchor', decodeURIComponent(href.slice(1)))
+  else if (href.startsWith('#')) link.setAttribute('data-anchor', decodeOrKeep(href.slice(1)))
   else if (href && !/^[a-z][a-z0-9+.-]*:/i.test(href)) link.setAttribute('data-path', resolve(href, context.path))
   link.setAttribute('href', '#')
 }
@@ -133,7 +143,7 @@ function rewriteImage(image: Element, src: string, context: Context) {
 // Like GitHub, a leading slash means the root of the repository, which for a file inside a jar
 // is the jar and otherwise the pack.
 export function resolve(reference: string, from: string) {
-  const clean = decodeURIComponent(reference.split(/[?#]/)[0])
+  const clean = decodeOrKeep(reference.split(/[?#]/)[0])
   const archive = outerArchive(from)
   const root = archive === from ? '' : archive
   const base = clean.startsWith('/') ? root : from.slice(0, from.lastIndexOf('/') + 1).replace(/\/$/, '')

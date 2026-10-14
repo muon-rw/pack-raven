@@ -17,6 +17,8 @@
   let messageFailed = $state(false)
   let settingsError: string | null = $state(null)
   let autostartError: string | null = $state(null)
+  let credentialsError: string | null = $state(null)
+  let saving = $state(false)
 
   async function load() {
     try {
@@ -30,10 +32,17 @@
   }
 
   async function loadCredentials() {
-    ;[credentials, envNames] = await Promise.all([api.credentialsStatus(), api.envVarNames()]).catch(() => [null, []])
+    try {
+      ;[credentials, envNames] = await Promise.all([api.credentialsStatus(), api.envVarNames()])
+      credentialsError = null
+    } catch (error) {
+      credentials = null
+      credentialsError = errorText(error)
+    }
   }
 
   const UPLOAD_TOKEN_PAGE = 'https://legacy.curseforge.com/account/api-tokens'
+  const API_KEY_PAGE = 'https://console.curseforge.com/'
 
   onMount(async () => {
     await load()
@@ -58,18 +67,22 @@
 
   async function save() {
     if (!settings) return
+    saving = true
     try {
       const editorAskMb = Math.max(1, Math.round(settings.editorAskMb || 50))
       const editorMaxMb = Math.max(editorAskMb, Math.round(settings.editorMaxMb || 100))
+      const adjusted = editorAskMb !== settings.editorAskMb || editorMaxMb !== settings.editorMaxMb
       const javaByMajor = Object.fromEntries(Object.entries(settings.javaByMajor).map(([major, java]) => [major, java.trim()]).filter(([, java]) => java))
       await api.saveSettings({ ...settings, javaByMajor, editorAskMb, editorMaxMb })
       await load()
       onchange()
       messageFailed = false
-      message = 'Saved'
+      message = adjusted ? `Saved. The editor limits are now ${editorAskMb} MB and ${editorMaxMb} MB, since the second can't be lower than the first.` : 'Saved'
     } catch (error) {
       messageFailed = true
       message = `Couldn't save: ${errorText(error)}`
+    } finally {
+      saving = false
     }
   }
 
@@ -89,6 +102,7 @@
   let defender = $state<DefenderView | null>(null)
   let defenderBusy = $state(false)
   let defenderMessage = $state<string | null>(null)
+  let defenderFailed = $state(false)
 
   onMount(async () => {
     defender = await api.defenderStatus().catch(() => null)
@@ -100,17 +114,25 @@
     try {
       await api.defenderExclude(defender.missing)
       defender = await api.defenderStatus()
+      defenderFailed = false
       defenderMessage = 'Folders excluded.'
     } catch (error) {
-      defenderMessage = errorText(error)
+      defenderFailed = true
+      defenderMessage = `Couldn't exclude the folders: ${errorText(error)}`
     } finally {
       defenderBusy = false
     }
   }
 
-  async function setDefenderPrompt(enabled: boolean) {
-    await api.defenderDismiss(!enabled)
-    if (settings) settings.defenderDismissed = !enabled
+  async function setDefenderPrompt(enabled: boolean, box: HTMLInputElement) {
+    try {
+      await api.defenderDismiss(!enabled)
+      if (settings) settings.defenderDismissed = !enabled
+    } catch (error) {
+      box.checked = !enabled
+      defenderFailed = true
+      defenderMessage = `Couldn't change the reminder: ${errorText(error)}`
+    }
   }
 </script>
 
@@ -129,7 +151,7 @@
   <div class="switch-row">
     <div>
       <div id="autostart-label">Start in the tray when I sign in</div>
-      <p class="muted">Keep packraven running so builds and test servers are a click away.</p>
+      <p class="muted" id="autostart-hint">Keep packraven running so builds and test servers are a click away. This changes right away; it doesn't wait for Save.</p>
       {#if autostartError}<p class="failed" role="alert">{autostartError}</p>{/if}
     </div>
     <button
@@ -138,15 +160,16 @@
       class="switch"
       aria-checked={autostart}
       aria-labelledby="autostart-label"
+      aria-describedby="autostart-hint"
       onclick={toggleAutostart}
     ><span></span></button>
   </div>
 
-  <form class="form" onsubmit={(e) => { e.preventDefault(); save() }}>
+  <form class="form" onsubmit={(e) => { e.preventDefault(); save() }} oninput={() => !messageFailed && (message = null)}>
     <section>
       <h3>This machine</h3>
       <div class="path">
-        <label>CurseForge Install folder <input bind:value={settings.installDir} /></label>
+        <label>CurseForge install folder <input bind:value={settings.installDir} /></label>
         <button type="button" onclick={pickInstall}>Choose</button>
       </div>
     </section>
@@ -154,9 +177,8 @@
     <section>
       <h3>Java</h3>
       <p class="muted">
-        Optional overrides for java versions; leave a field empty to use CurseForge's installed java version. You are not blocked from setting
-        newer than official, but potentially compatible versions (like setting Java 25 for all versions), but they may cause issues. A pack's own
-        Java override under Pack Settings takes precedence over these.
+        Leave a field empty to use the Java that CurseForge installed for those versions. You can pick a newer Java than Minecraft officially
+        supports, such as Java 25 for every version, but some packs may not run on it. A pack's own Java, under Pack settings, wins over these.
       </p>
       {#each JAVA_SLOTS as slot (slot.major)}
         <div class="path">
@@ -177,7 +199,6 @@
       <h3>Editor</h3>
       <label>
         Ask before opening files larger than (MB)
-        
         <input type="number" min="1" step="1" bind:value={settings.editorAskMb} aria-describedby="editor-ask-hint" />
       </label>
       <p class="muted hint" id="editor-ask-hint">Past this size, you can open a file in a simplified editor, without checking or folding, so typing stays responsive.</p>
@@ -189,18 +210,29 @@
     </section>
 
     <div class="actions">
-      <button type="submit" class="primary">Save app settings</button>
+      <button type="submit" class="primary" class:busy={saving} disabled={saving}>{saving ? 'Saving' : 'Save app settings'}</button>
       <span class:muted={!messageFailed} class:failed={messageFailed} role="status">{message ?? ''}</span>
     </div>
   </form>
 
-  {#if credentials}
+  {#if credentialsError}
     <section class="removal">
+      <h3>CurseForge access</h3>
+      <Notice tone="error">
+        <p>Couldn't read the saved CurseForge keys: {credentialsError}</p>
+        <p><button type="button" onclick={loadCredentials}>Try again</button></p>
+      </Notice>
+    </section>
+  {:else if credentials}
+    <section class="removal" id="curseforge-access">
       <h3>CurseForge access</h3>
       <p class="muted">Changes here take effect right away, including in the git hooks.</p>
       <CredentialField credential="download" label="CurseForge API key (a.k.a. Launcher Token)" status={credentials.download} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
         {#snippet help()}
-          <p class="muted hint">packraven uses this to look up and download mods. For now, you'll need to provide your own.</p>
+          <p class="muted hint">
+            packraven uses this to look up and download mods, and to keep jars you added by hand out of git. For now, you'll need your own:
+            <a href={API_KEY_PAGE} onclick={(e) => { e.preventDefault(); openUrl(API_KEY_PAGE) }}>create one in the CurseForge for Studios console</a>, then paste it here.
+          </p>
         {/snippet}
       </CredentialField>
       <CredentialField credential="upload" label="CurseForge upload token" status={credentials.upload} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
@@ -227,9 +259,9 @@
       {:else}
         <p class="muted">Defender skips the pack, CurseForge and packraven folders.</p>
       {/if}
-      {#if defenderMessage}<p class="muted">{defenderMessage}</p>{/if}
+      <p class:muted={!defenderFailed} class:failed={defenderFailed} role="status">{defenderMessage ?? ''}</p>
       <label class="check">
-        <input type="checkbox" checked={!settings.defenderDismissed} onchange={(e) => setDefenderPrompt(e.currentTarget.checked)} />
+        <input type="checkbox" checked={!settings.defenderDismissed} onchange={(e) => setDefenderPrompt(e.currentTarget.checked, e.currentTarget)} />
         Remind me when these folders aren't excluded
       </label>
     </section>
@@ -274,7 +306,8 @@
     height: 26px;
     padding: 0;
     border-radius: 13px;
-    background: var(--line);
+    background: var(--control);
+    border-color: var(--edge);
   }
 
   .switch span {

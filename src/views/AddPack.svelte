@@ -2,7 +2,8 @@
   import { onMount } from 'svelte'
   import { open } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type InstanceInfo } from '../lib/api'
-  import { job } from '../lib/jobs.svelte'
+  import { job, onJobEnd } from '../lib/jobs.svelte'
+  import { nav } from '../lib/nav.svelte'
   import Notice from '../components/Notice.svelte'
   import LogView from '../components/LogView.svelte'
 
@@ -21,8 +22,13 @@
   let error: string | null = $state(null)
   let pickError: string | null = $state(null)
   let started = $state(false)
+  let result = $state<{ ok: boolean; message: string } | null>(null)
+  let hasKey = $state(true)
 
-  onMount(discover)
+  onMount(() => {
+    discover()
+    api.credentialsStatus().then((c) => (hasKey = c.download.present), () => {})
+  })
 
   async function discover() {
     loading = true
@@ -59,18 +65,24 @@
     if (!selected) return
     try {
       error = null
+      result = null
       started = true
       await api.setupInstance(selected.dir, { remote: remote.trim() || null, author, projectId: Number(projectId) || 0,
         untrackBinaries: untrack,
         commit: !selected.hasGit && commitFirst ? { message: commitMessage, author: commitAuthor.trim() || null } : null,
       })
     } catch (e) {
+      started = false
       error = errorText(e)
     }
   }
 
-  $effect(() => {
-    if (started && job('setup').phase === 'done') onadded()
+  // We show what setup did before moving on, since it can commit jars to git that you expected
+  // it to leave out.
+  onJobEnd('setup', (phase) => {
+    if (!started) return
+    started = false
+    result = { ok: phase === 'done', message: job('setup').message ?? '' }
   })
 
   function status(i: InstanceInfo): string {
@@ -157,7 +169,7 @@
                 {#if commitFirst}
                   <div class="commit-fields">
                     <div class="field">
-                      <label for="commit-message">Commit message <span class="optional">(default Initial)</span></label>
+                      <label for="commit-message">Commit message <span class="optional">(optional, defaults to "Initial")</span></label>
                       <input id="commit-message" bind:value={commitMessage} placeholder="Initial" />
                     </div>
                     <div class="field">
@@ -167,6 +179,16 @@
                     </div>
                   </div>
                 {/if}
+              </div>
+            </li>
+          {/if}
+          {#if !hasKey}
+            <li class="caution">
+              <span class="marker warn" aria-hidden="true"></span>
+              <div>
+                Without a CurseForge API key, packraven can't recognize jars you added by hand, so it tracks them in git directly instead of
+                in the mod list. <button type="button" class="link" onclick={() => (nav.view = 'settings')}>Add a key in App settings</button> first
+                to keep them out of git.
               </div>
             </li>
           {/if}
@@ -205,14 +227,20 @@
       </fieldset>
 
       {#if error}<Notice tone="error"><p>{error}</p></Notice>{/if}
-      {#if started && job('setup').phase === 'failed'}<Notice tone="error"><p>{job('setup').message}</p></Notice>{/if}
-
-      <div class="actions">
-        <button type="submit" class="primary" class:busy={running} disabled={running}>
-          {running ? 'Setting up' : selected.hasLock && selected.hooks === 'current' ? 'Add pack' : 'Set up'}
-        </button>
-      </div>
-      {#if started && job('setup').lines.length}
+      {#if result && !result.ok}<Notice tone="error"><p>{result.message}</p></Notice>{/if}
+      {#if result?.ok}
+        <Notice tone="ok">
+          <p>{result.message}</p>
+          <p><button type="button" class="primary" onclick={onadded}>Open Changes</button></p>
+        </Notice>
+      {:else}
+        <div class="actions">
+          <button type="submit" class="primary" class:busy={running} disabled={running}>
+            {running ? 'Setting up' : selected.hasLock && selected.hooks === 'current' ? 'Add pack' : 'Set up'}
+          </button>
+        </div>
+      {/if}
+      {#if (started || result) && job('setup').lines.length}
         <LogView lines={job('setup').lines} label="Setup log" />
       {/if}
     </form>
@@ -282,7 +310,6 @@
 
   .instance input {
     grid-row: span 2;
-    accent-color: var(--forest);
   }
 
   .instance .title {
@@ -350,6 +377,14 @@
     background: var(--muted);
   }
 
+  .marker.warn {
+    background: var(--warn-icon);
+  }
+
+  .caution {
+    color: var(--warn);
+  }
+
   .files {
     margin: 4px 0 0;
     padding: 0;
@@ -369,7 +404,6 @@
   .steps > li > input {
     justify-self: center;
     margin: 0;
-    accent-color: var(--forest);
     transform: translateY(2px);
   }
 
@@ -396,6 +430,7 @@
   }
 
   .field label {
+    display: block;
     color: var(--text);
     font-size: var(--step-0);
   }

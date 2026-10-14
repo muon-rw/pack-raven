@@ -119,7 +119,7 @@
 {/snippet}
 
 <div class="results">
-  <p class="summary muted">
+  <p class="summary muted" role="status">
     {#if loadError}
       <span class="failed">{loadError}</span>
     {:else if !index}
