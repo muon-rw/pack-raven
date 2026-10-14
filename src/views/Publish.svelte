@@ -5,7 +5,7 @@
   import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
   import { api, errorText, type Overview, type PackConfig } from '../lib/api'
   import { job, onJobEnd } from '../lib/jobs.svelte'
-  import { renderMarkdown } from '../lib/markdown'
+  import RenderedChangelog from '../components/RenderedChangelog.svelte'
   import { bumpVersion, parseVersion, type Bump } from '../lib/version'
   import JobLog from '../components/JobLog.svelte'
   import LinkedText from '../components/LinkedText.svelte'
@@ -161,13 +161,6 @@
 
   function reveal(path: string) {
     revealItemInDir(path).catch((e) => (error = `Couldn't open the folder: ${errorText(e)}`))
-  }
-
-  function openLink(event: MouseEvent) {
-    const link = (event.target as HTMLElement).closest('a')
-    if (!link) return
-    event.preventDefault()
-    openUrl(link.href)
   }
 
   let publishJob = $derived(job('publish'))
@@ -327,13 +320,12 @@
     {:else if changelog === null}
       <p class="muted">Building the preview.</p>
     {:else if !changelog.trim()}
-      <div class="changelog empty">
+      <div class="empty-changelog">
         <p>No release notes and no mod changes yet, so the CurseForge changelog would be empty.</p>
         <p><button onclick={onchanges}>Write notes in Changes</button></p>
       </div>
     {:else}
-      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-      <article class="changelog" aria-label="Changelog preview" onclick={openLink}>{@html renderMarkdown(changelog, { headingOffset: 2 })}</article>
+      <RenderedChangelog markdown={changelog} label="Changelog preview" />
     {/if}
   </section>
 
@@ -442,53 +434,18 @@
     gap: 10px;
   }
 
-  .changelog {
-    max-height: 60vh;
-    overflow: auto;
+  .step {
+    --changelog-max-height: 60vh;
+  }
+
+  .empty-changelog {
+    display: grid;
+    gap: 12px;
     padding: 18px 22px;
+    color: var(--muted);
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--radius-panel);
-    line-height: 1.6;
-  }
-
-  .changelog.empty {
-    display: grid;
-    gap: 12px;
-    color: var(--muted);
-  }
-
-  .changelog :global(h4),
-  .changelog :global(h5),
-  .changelog :global(h6) {
-    margin: 20px 0 6px;
-    font-size: var(--step-1);
-  }
-
-  .changelog :global(h5),
-  .changelog :global(h6) {
-    font-size: var(--step-0);
-    color: var(--muted);
-  }
-
-  .changelog > :global(:first-child) {
-    margin-top: 0;
-  }
-
-  .changelog :global(p),
-  .changelog :global(ul),
-  .changelog :global(ol) {
-    margin: 0 0 10px;
-  }
-
-  .changelog :global(ul),
-  .changelog :global(ol) {
-    padding-left: 20px;
-  }
-
-  .changelog :global(code) {
-    font-family: var(--font-log);
-    font-size: 0.9em;
   }
 
   .ships {

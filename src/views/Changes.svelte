@@ -6,6 +6,7 @@
   import { api, errorText, type ModDiff, type Overview } from '../lib/api'
   import { shortcut } from '../lib/platform'
   import { nav } from '../lib/nav.svelte'
+  import RenderedChangelog from '../components/RenderedChangelog.svelte'
 
   let { overview, onpublish }: { overview: Overview | null; onpublish: () => void } = $props()
 
@@ -75,10 +76,42 @@
     }
   }
 
+  type NotesMode = 'write' | 'split' | 'preview'
+
+  const NOTES_MODES: { id: NotesMode; label: string }[] = [
+    { id: 'write', label: 'Write' },
+    { id: 'split', label: 'Split' },
+    { id: 'preview', label: 'Preview' },
+  ]
+  const NOTES_MODE_KEY = 'packraven.notesMode'
+
+  let notesMode = $state<NotesMode>(storedNotesMode())
+
+  function storedNotesMode(): NotesMode {
+    try {
+      const stored = localStorage.getItem(NOTES_MODE_KEY)
+      return NOTES_MODES.some((m) => m.id === stored) ? (stored as NotesMode) : 'write'
+    } catch {
+      return 'write'
+    }
+  }
+
+  function setNotesMode(mode: NotesMode) {
+    notesMode = mode
+    try {
+      localStorage.setItem(NOTES_MODE_KEY, mode)
+    } catch {}
+  }
+
   function onKey(event: KeyboardEvent) {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+    if (!(event.ctrlKey || event.metaKey)) return
+    const key = event.key.toLowerCase()
+    if (key === 's' && !event.shiftKey) {
       event.preventDefault()
       saveNotes()
+    } else if (key === 'v' && event.shiftKey) {
+      event.preventDefault()
+      setNotesMode(NOTES_MODES[(NOTES_MODES.findIndex((m) => m.id === notesMode) + 1) % NOTES_MODES.length].id)
     }
   }
 
@@ -154,12 +187,39 @@
     </Notice>
   {/if}
 
-  <div class="columns">
+  <div class="columns" class:wide={notesMode === 'split'}>
     <div class="column">
-      <label class="notes">
-        <span class="label-row">Release notes <span class="file">changelog.md</span></span>
-        <textarea bind:value={notes} onblur={saveNotes} rows="16" placeholder="What's new? Don't worry about mod changes, we'll add those automatically." aria-describedby="notes-status"></textarea>
-      </label>
+      <div class="label-row">
+        <label for="release-notes">Release notes <span class="file">changelog.md</span></label>
+        <span class="modes" role="group" aria-label="Release notes view">
+          {#each NOTES_MODES as mode (mode.id)}
+            <button class="mode" aria-pressed={notesMode === mode.id} title="{mode.label} ({shortcut('Ctrl+Shift+V')} switches)" onclick={() => setNotesMode(mode.id)}>
+              {mode.label}
+            </button>
+          {/each}
+        </span>
+      </div>
+      <div class="notes" class:split={notesMode === 'split'}>
+        {#if notesMode !== 'preview'}
+          <textarea
+            id="release-notes"
+            bind:value={notes}
+            onblur={saveNotes}
+            rows="16"
+            placeholder="What's new? Don't worry about mod changes, we'll add those automatically."
+            aria-describedby="notes-status"
+          ></textarea>
+        {/if}
+        {#if notesMode !== 'write'}
+          {#if notes.trim()}
+            <RenderedChangelog markdown={notes} label="Release notes preview" />
+          {:else}
+            <p class="muted empty-preview">
+              {notesMode === 'split' ? 'Your notes show here as CurseForge will render them.' : 'No release notes yet. Switch to Write or Split to add some.'}
+            </p>
+          {/if}
+        {/if}
+      </div>
       <div class="row">
         <button onclick={saveNotes} disabled={notes === savedNotes}>Save notes <kbd aria-hidden="true">{shortcut('Ctrl+S')}</kbd></button>
         <span id="notes-status" class:muted={!notesError} class:failed={!!notesError} role="status">
@@ -230,6 +290,11 @@
     margin-top: 8px;
   }
 
+  /* Split needs the width, so we stack Mod changes below the notes. */
+  .columns.wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   @media (max-width: 1000px) {
     .columns {
       grid-template-columns: minmax(0, 1fr);
@@ -238,10 +303,42 @@
 
   .label-row {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px 12px;
+  }
+
+  .label-row label {
+    display: flex;
     gap: 8px;
     align-items: baseline;
     color: var(--text);
+    font-size: var(--step-0);
     font-weight: 700;
+  }
+
+  .notes {
+    --changelog-max-height: 60vh;
+    display: grid;
+  }
+
+  .notes.split {
+    --changelog-max-height: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(280px, 60vh);
+    gap: 16px;
+  }
+
+  .notes.split textarea {
+    height: 100%;
+    resize: none;
+  }
+
+  .empty-preview {
+    padding: 18px 22px;
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--radius-panel);
   }
 
   .label-row .file {
@@ -326,6 +423,7 @@
   }
 
   .notes textarea {
+    width: 100%;
     min-height: 280px;
     font-size: var(--step-0);
     line-height: 1.6;

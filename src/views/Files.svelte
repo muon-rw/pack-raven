@@ -1033,29 +1033,6 @@
     border-right: 1px solid var(--line);
   }
 
-  .modes {
-    display: flex;
-    padding: 2px;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-control);
-  }
-
-  .mode {
-    padding: 1px 10px;
-    font-weight: 400;
-    font-size: var(--step--1);
-    color: var(--muted);
-    background: transparent;
-    border-color: transparent;
-  }
-
-  .mode[aria-pressed='true'] {
-    color: var(--text);
-    background: var(--field);
-    border-color: var(--line-strong);
-  }
-
   .host.hidden {
     display: none;
   }

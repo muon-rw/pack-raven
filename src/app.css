@@ -297,6 +297,29 @@ button.link:hover:not(:disabled) {
   background: transparent;
 }
 
+.modes {
+  display: flex;
+  padding: 2px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+button.mode {
+  padding: 1px 10px;
+  font-weight: 400;
+  font-size: var(--step--1);
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+}
+
+button.mode[aria-pressed='true'] {
+  color: var(--text);
+  background: var(--field);
+  border-color: var(--line-strong);
+}
+
 input,
 textarea,
 select {
