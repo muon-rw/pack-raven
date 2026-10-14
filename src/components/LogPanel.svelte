@@ -49,6 +49,7 @@
   let viewportHeight = $state(0)
   let pinned = $state(true)
   let selected = $state<number | null>(null)
+  let spoken = $state('')
   let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
   let viewport: HTMLDivElement
   let filterField: HTMLInputElement
@@ -66,16 +67,36 @@
     })
   })
 
-  let needle = $derived(query.trim().toLowerCase())
+  // Filtering scans every line, so we wait for a pause in typing before applying it.
+  let needle = $state('')
+  $effect(() => {
+    const next = query.trim().toLowerCase()
+    const timer = setTimeout(() => (needle = next), next ? 150 : 0)
+    return () => clearTimeout(timer)
+  })
+
+  // Lines only ever get appended, and clear() swaps in a new array, so we lowercase each line once.
+  let lowered: string[] = []
+  let loweredFrom: string[] | null = null
+
+  function lowerLines() {
+    if (loweredFrom !== model.lines) {
+      loweredFrom = model.lines
+      lowered = []
+    }
+    for (let i = lowered.length; i < model.lines.length; i++) lowered.push(model.lines[i].toLowerCase())
+    return lowered
+  }
 
   // A filter keeps whole entries, so a matching error keeps its stack trace.
   let matching = $derived.by(() => {
     void version
     void generation
     if (!needle) return null
+    const lines = lowerLines()
     const entries = new Uint8Array(model.entries.length)
-    for (let i = 0; i < model.lines.length; i++) {
-      if (model.lines[i].toLowerCase().includes(needle)) entries[model.lineEntry[i]] = 1
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(needle)) entries[model.lineEntry[i]] = 1
     }
     return entries
   })
@@ -221,15 +242,49 @@
     scrollToEnd()
   }
 
+  // You can move the selected line with the arrow keys and open its actions with the menu key or
+  // Shift+F10, so copying and filtering work without a mouse.
+  function moveSelection(by: number) {
+    if (!rows.length) return
+    const at = selected !== null ? rows.indexOf(selected) : -1
+    const from = at >= 0 ? at : Math.floor(viewport.scrollTop / ROW) - (by > 0 ? 1 : 0)
+    const next = Math.max(0, Math.min(rows.length - 1, from + by))
+    select(rows[next])
+    pinned = false
+    reveal(next)
+    announce(rows[next])
+  }
+
+  function announce(line: number) {
+    spoken = `Line ${line + 1}: ${model.lines[line]}`
+  }
+
   function onKey(event: KeyboardEvent) {
     userInput()
+    const command = event.ctrlKey || event.metaKey
+    const page = Math.max(1, Math.floor(viewport.clientHeight / ROW) - 1)
     if (event.key === 'F8') {
       event.preventDefault()
       stepError(event.shiftKey ? -1 : 1)
-    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+      if (selected !== null) announce(selected)
+    } else if (command && event.key.toLowerCase() === 'f') {
       event.preventDefault()
       filterField.focus()
       filterField.select()
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      moveSelection(event.key === 'ArrowDown' ? 1 : -1)
+    } else if (event.key === 'PageDown' || event.key === 'PageUp') {
+      event.preventDefault()
+      moveSelection(event.key === 'PageDown' ? page : -page)
+    } else if (selected !== null && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) {
+      event.preventDefault()
+      const row = viewport.querySelector<HTMLElement>('.row.selected')?.getBoundingClientRect()
+      const box = viewport.getBoundingClientRect()
+      openMenu(row ? row.left + 80 : box.left + 40, row ? row.bottom : box.top + 40, selected)
+    } else if (selected !== null && command && event.key.toLowerCase() === 'c' && window.getSelection()?.isCollapsed !== false) {
+      event.preventDefault()
+      copy(model.lines[selected])
     } else if (event.key === 'Escape' && query) {
       query = ''
     }
@@ -243,16 +298,20 @@
     navigator.clipboard.writeText(text).catch((e) => (note = `Couldn't copy: ${errorText(e)}`))
   }
 
-  function openMenu(event: MouseEvent, line: number) {
+  function onRowMenu(event: MouseEvent, line: number) {
     event.preventDefault()
     event.stopPropagation()
+    openMenu(event.clientX, event.clientY, line)
+  }
+
+  function openMenu(x: number, y: number, line: number) {
     select(line)
     const entry = model.lineEntry[line]
     const logger = model.entries[entry].head?.logger
     const lines = model.entryEnd(entry) - model.entries[entry].start
     menu = {
-      x: event.clientX,
-      y: event.clientY,
+      x,
+      y,
       items: [
         { label: 'Copy line', run: () => copy(model.lines[line]) },
         ...(lines > 1 ? [{ label: `Copy entry (${lines} lines)`, run: () => copy(entryText(entry)) }] : []),
@@ -291,7 +350,7 @@
   <div class="bar">
     <span class="levels" role="group" aria-label="Show levels">
       {#each FILTERS as { level, label: filterLabel } (level)}
-        <button class="chip {level}" aria-pressed={shown[level]} disabled={!counts[level] && !loading} onclick={() => toggleLevel(level)}>
+        <button class="filter {level}" aria-pressed={shown[level]} disabled={!counts[level] && !loading} onclick={() => toggleLevel(level)}>
           {filterLabel} <span class="count">{counts[level].toLocaleString()}</span>
         </button>
       {/each}
@@ -316,7 +375,7 @@
   {#if note}<p class="note failed small">{note}</p>{/if}
 
   <div class="frame">
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (the log takes F8 and Ctrl+F) -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (the log takes arrows, F8, Ctrl+F and the menu key) -->
     <div
       class="log"
       bind:this={viewport}
@@ -336,7 +395,7 @@
           {@const entry = model.entries[entryIndex]}
           {@const start = entry.start === line}
           {@const extra = start ? model.entryEnd(entryIndex) - line - 1 : 0}
-          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the log container handles keys) -->
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the log container moves the selection with arrow keys) -->
           <div
             class="row {entry.level}"
             class:app={entry.stream === 'info'}
@@ -344,7 +403,7 @@
             class:selected={selected === line}
             style:top="{(first + k) * ROW}px"
             onclick={() => select(line)}
-            oncontextmenu={(e) => openMenu(e, line)}
+            oncontextmenu={(e) => onRowMenu(e, line)}
           >
             <span class="number">{line + 1}</span>
             {#if extra}
@@ -376,6 +435,7 @@
     {#if live && !pinned}
       <button class="jump" onclick={jumpToLatest}>Jump to latest</button>
     {/if}
+    <span class="visually-hidden" aria-live="polite">{spoken}</span>
   </div>
 </div>
 
@@ -426,26 +486,28 @@
     margin-left: 4px;
   }
 
-  .chip {
+  .filter {
     padding: 2px 8px;
     font-weight: 400;
     font-size: var(--step--1);
+    white-space: nowrap;
     color: var(--muted);
     background: transparent;
     border-color: var(--line);
+    border-radius: 999px;
   }
 
-  .chip[aria-pressed='true'] {
+  .filter[aria-pressed='true'] {
     color: var(--text);
     background: var(--surface);
     border-color: var(--line-strong);
   }
 
-  .chip.error[aria-pressed='true'] .count {
+  .filter.error[aria-pressed='true'] .count {
     color: var(--fail);
   }
 
-  .chip.warn[aria-pressed='true'] .count {
+  .filter.warn[aria-pressed='true'] .count {
     color: var(--warn);
   }
 
@@ -457,13 +519,7 @@
   .ghost {
     width: 26px;
     padding: 2px 0;
-    font-weight: 400;
-    background: transparent;
-    border-color: transparent;
-  }
-
-  .ghost:hover:not(:disabled) {
-    background: var(--control);
+    font-size: inherit;
   }
 
   .search input {
@@ -645,8 +701,8 @@
   }
 
   mark {
-    color: inherit;
-    background: color-mix(in srgb, var(--ochre) 55%, transparent);
+    color: var(--hit-ink);
+    background: var(--hit);
     border-radius: 2px;
   }
 

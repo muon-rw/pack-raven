@@ -167,11 +167,11 @@
   }
 
   .menu button:hover {
-    background: var(--line-strong);
+    background: var(--menu-hover);
   }
 
   .menu button:focus-visible {
-    background: var(--line-strong);
+    background: var(--menu-hover);
     outline: 2px solid var(--forest);
     outline-offset: -2px;
   }

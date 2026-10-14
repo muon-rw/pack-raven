@@ -206,7 +206,7 @@
   button:hover:not(:disabled),
   button:focus-visible,
   button.expanded {
-    background: var(--line-strong);
+    background: var(--menu-hover);
   }
 
   button:focus-visible {

@@ -97,6 +97,19 @@
 
   export function forget(paths: string[]) {
     const gone = (path: string) => paths.some((p) => path === p || path.startsWith(`${p}/`))
+    // Deleting the focused row would leave no row in the tab order, so we focus its neighbor.
+    if (focused !== null && gone(focused)) {
+      const at = rows.findIndex((r) => r.entry.path === focused)
+      focused = null
+      tick().then(() => {
+        const next = rows[Math.min(Math.max(at, 0), rows.length - 1)]
+        if (!next) return
+        focused = next.entry.path
+        if (document.activeElement === document.body || tree?.contains(document.activeElement)) {
+          tree?.querySelector<HTMLElement>(`[data-path="${CSS.escape(next.entry.path)}"]`)?.focus()
+        }
+      })
+    }
     for (const path of [...expanded]) if (gone(path)) expanded.delete(path)
     for (const dir of [...children.keys()]) if (gone(dir)) children.delete(dir)
     for (const path of [...selection]) if (gone(path)) selection.delete(path)
@@ -142,6 +155,7 @@
   })
 
   let rows = $derived(lines.filter((line): line is Row => !('draft' in line)))
+  let tabStop = $derived(rows.some((r) => r.entry.path === focused) ? focused : (rows[0]?.entry.path ?? null))
   let entries = $derived(new Map(rows.map((r) => [r.entry.path, r.entry])))
 
   let changes = $derived.by(() => {
@@ -876,7 +890,7 @@
         aria-level={row.depth + 1}
         aria-expanded={expandable(row.entry) ? expanded.has(row.entry.path) : undefined}
         aria-selected={selection.has(row.entry.path)}
-        tabindex={row.entry.path === (focused ?? rows[0]?.entry.path) ? 0 : -1}
+        tabindex={row.entry.path === tabStop ? 0 : -1}
         data-path={row.entry.path}
         class="row"
         class:selected={selection.has(row.entry.path)}
@@ -915,11 +929,13 @@
     {/if}
   {/each}
   {#if jump}
-    <p class="jump" class:miss={!jump.found} aria-live="polite">
+    <p class="jump" class:miss={!jump.found}>
       {jump.found ? 'Jump to' : 'No name starts with'} <kbd>{jump.text}</kbd>
     </p>
   {/if}
 </div>
+
+<span class="visually-hidden" role="status">{message?.text ?? ''}{jump ? ` ${jump.found ? 'Jump to' : 'No name starts with'} ${jump.text}` : ''}</span>
 
 {#if ghost}
   <div class="ghost" style:left="{ghost.x + 14}px" style:top="{ghost.y + 10}px" aria-hidden="true">
@@ -993,12 +1009,12 @@
   }
 
   .row.cut .name {
-    opacity: 0.55;
+    color: var(--muted);
+    font-style: italic;
   }
 
   .row.ignored .name {
     color: var(--muted);
-    opacity: 0.75;
   }
 
   .row.editing {
