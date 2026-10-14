@@ -21,6 +21,9 @@ export const workspace = $state({ tabs: [] as Tab[], active: null as string | nu
 
 export const fs = $state({ seq: 0, dirs: [] as string[] })
 
+const MAX_CLOSED = 20
+const closed: string[] = []
+
 const bridge: { path: string | null; dispatch: ((spec: TransactionSpec) => void) | null } = { path: null, dispatch: null }
 
 export function bindView(path: string | null, dispatch: ((spec: TransactionSpec) => void) | null) {
@@ -37,6 +40,7 @@ export function resetFor(pack: string | null) {
   workspace.pack = pack
   workspace.tabs = []
   workspace.active = null
+  closed.length = 0
 }
 
 function tab(path: string) {
@@ -138,11 +142,54 @@ export async function reload(path: string) {
   })
 }
 
-export function close(path: string) {
+export function close(path: string, { remember = true } = {}) {
   const index = workspace.tabs.findIndex((t) => t.path === path)
   if (index < 0) return
   workspace.tabs.splice(index, 1)
   if (workspace.active === path) workspace.active = workspace.tabs[Math.min(index, workspace.tabs.length - 1)]?.path ?? null
+  if (!remember) return
+  closed.push(path)
+  if (closed.length > MAX_CLOSED) closed.shift()
+}
+
+export function canReopen() {
+  return closed.length > 0
+}
+
+export async function reopenClosed() {
+  while (closed.length) {
+    const path = closed.pop()!
+    if (tab(path)) continue
+    try {
+      await open(path)
+      return
+    } catch {
+      // The file may have been deleted since you closed it, so we try the next one.
+    }
+  }
+}
+
+// The editor state's save and change handlers capture the tab's path, so a moved tab needs a
+// fresh state. Rebuilding it keeps unsaved text but drops undo history.
+export async function moved(pairs: [string, string][]) {
+  const destination = (path: string) => {
+    for (const [from, to] of pairs) {
+      if (path === from) return to
+      if (path.startsWith(`${from}/`)) return to + path.slice(from.length)
+    }
+    return null
+  }
+  for (const current of [...workspace.tabs]) {
+    const to = destination(current.path)
+    if (!to) continue
+    const state = current.state ? await editorState(to, current.state.doc.toString()) : null
+    const wasActive = workspace.active === current.path
+    current.path = to
+    current.state = state
+    if (state) current.dirty = state.doc.toString() !== current.saved
+    if (wasActive) workspace.active = to
+  }
+  for (const [index, path] of closed.entries()) closed[index] = destination(path) ?? path
 }
 
 export function dirtyCount() {

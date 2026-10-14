@@ -146,6 +146,35 @@ pub fn discard(dir: &Path, tracked: &[String], untracked: &[String]) -> Result<(
     Ok(())
 }
 
+fn ignore_pattern(path: &str, is_dir: bool) -> String {
+    let mut pattern = String::from("/");
+    for c in path.chars() {
+        if matches!(c, '*' | '?' | '[' | '\\' | '!' | '#') {
+            pattern.push('\\');
+        }
+        pattern.push(c);
+    }
+    if pattern.ends_with(' ') {
+        pattern.insert(pattern.len() - 1, '\\');
+    }
+    if is_dir {
+        pattern.push('/');
+    }
+    pattern
+}
+
+/// Adds the paths to the pack's .gitignore and returns those git still tracks, which the new
+/// lines don't affect until you remove them from the index.
+pub fn ignore(dir: &Path, paths: &[String]) -> Result<Vec<String>> {
+    let lines = paths.iter().map(|p| Ok(ignore_pattern(p, crate::files::resolve(dir, p)?.is_dir()))).collect::<Result<Vec<_>>>()?;
+    crate::setup::ensure_lines(&dir.join(".gitignore"), &lines.iter().map(String::as_str).collect::<Vec<_>>())?;
+    let mut args = vec!["ls-files", "-z", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    let out = git::run(dir, &args)?;
+    let tracked: Vec<&str> = out.split('\0').filter(|p| !p.is_empty()).collect();
+    Ok(paths.iter().filter(|p| tracked.iter().any(|t| t == p || t.starts_with(&format!("{p}/")))).cloned().collect())
+}
+
 pub fn recent_commits(dir: &Path, count: usize) -> Vec<Commit> {
     let format = "--format=%H%x1f%h%x1f%an%x1f%ar%x1f%s%x1e";
     let Ok(out) = git::run(dir, &["log", &format!("-n{count}"), format]) else { return Vec::new() };
@@ -199,4 +228,17 @@ pub async fn push(dir: &Path, log: &Log) -> Result<String> {
 pub async fn fetch(dir: &Path, log: &Log) -> Result<String> {
     git_logged(dir, &["fetch", "--prune"], log).await?;
     Ok("Fetched".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ignore_pattern;
+
+    #[test]
+    fn anchors_and_escapes_ignore_patterns() {
+        assert_eq!(ignore_pattern("config/a.json", false), "/config/a.json");
+        assert_eq!(ignore_pattern("saves", true), "/saves/");
+        assert_eq!(ignore_pattern("#notes [old]!.txt", false), r"/\#notes \[old]\!.txt");
+        assert_eq!(ignore_pattern("trailing ", false), r"/trailing\ ");
+    }
 }

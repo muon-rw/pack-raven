@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { ask } from '@tauri-apps/plugin-dialog'
+  import { onMount, tick } from 'svelte'
   import { api, errorText, type FileChange, type GitCommit, type GitDiff, type GitStatus } from '../lib/api'
   import { job } from '../lib/jobs.svelte'
+  import { nav } from '../lib/nav.svelte'
+  import { confirmDiscard, discardChanges } from '../lib/gitActions'
   import Notice from '../components/Notice.svelte'
   import LogView from '../components/LogView.svelte'
 
@@ -78,6 +79,18 @@
       .finally(() => (diffLoading = false))
   })
 
+  // The Files tree's "Show diff" sends you here with a path to select.
+  $effect(() => {
+    const path = nav.diffPath
+    if (!path || !status) return
+    nav.diffPath = null
+    const unstaged = status.unstaged.find((c) => c.path === path)
+    const change = unstaged ?? status.staged.find((c) => c.path === path)
+    if (!change) return
+    selected = { path, staged: !unstaged, untracked: change.status === '?' }
+    tick().then(() => document.querySelector('.changes li.selected')?.scrollIntoView({ block: 'nearest' }))
+  })
+
   async function run(action: () => Promise<void>) {
     try {
       error = null
@@ -90,20 +103,7 @@
   }
 
   async function discard(changes: FileChange[]) {
-    const names = changes.length === 1 ? changes[0].path : `${changes.length} files`
-    const confirmed = await ask(`Discard your changes to ${names}? This can't be undone.`, {
-      title: 'Discard changes',
-      kind: 'warning',
-      okLabel: 'Discard',
-      cancelLabel: 'Cancel',
-    })
-    if (!confirmed) return
-    await run(() =>
-      api.gitDiscard(
-        changes.filter((c) => c.status !== '?').map((c) => c.path),
-        changes.filter((c) => c.status === '?').map((c) => c.path),
-      ),
-    )
+    if (await confirmDiscard(changes)) await run(() => discardChanges(changes))
   }
 
   async function commit() {

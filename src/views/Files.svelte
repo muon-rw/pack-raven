@@ -1,12 +1,17 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
   import { EditorView } from '@codemirror/view'
   import { openLintPanel } from '@codemirror/lint'
   import { ask } from '@tauri-apps/plugin-dialog'
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
-  import { api, errorText } from '../lib/api'
-  import { workspace, activeTab, open, pin, save, close, reload, resetFor, bindView, fs, useDiskVersion, keepMine, type Tab } from '../lib/workspace.svelte'
+  import { api, errorText, type GitStatus } from '../lib/api'
+  import { drag } from '../lib/drag.svelte'
+  import { workspace, activeTab, open, pin, save, close, reload, resetFor, bindView, fs, useDiskVersion, keepMine, canReopen, reopenClosed, type Tab } from '../lib/workspace.svelte'
+  import { commandKey, fileManager, shortcut, trashName } from '../lib/platform'
   import FileTree from '../components/FileTree.svelte'
+  import ContextMenu from '../components/ContextMenu.svelte'
+  import type { MenuItem } from '../lib/menu'
   import Notice from '../components/Notice.svelte'
 
   let { pack }: { pack: string | null } = $props()
@@ -14,20 +19,21 @@
   let host: HTMLDivElement = $state()!
   let view: EditorView | null = null
   let tree: FileTree = $state()!
-  let changes = $state(new Map<string, string>())
+  let status = $state<GitStatus | null>(null)
   let openError = $state<string | null>(null)
+  // A single click in the tree previews a file but leaves focus in the tree, as in VS Code, so
+  // tree shortcuts like Ctrl+C keep working. Opening a file to keep moves focus to the editor.
+  let focusEditor = true
+  const selection = new SvelteSet<string>()
+  let tabMenu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
 
   $effect.pre(() => resetFor(pack))
 
   async function loadChanges() {
     try {
-      const { status } = await api.gitOverview()
-      const map = new Map<string, string>()
-      for (const c of status.staged) map.set(c.path, c.status)
-      for (const c of status.unstaged) map.set(c.path, c.status)
-      changes = map
+      status = (await api.gitOverview()).status
     } catch {
-      changes = new Map()
+      status = null
     }
   }
 
@@ -66,7 +72,7 @@
     else view = new EditorView({ state, parent: host })
     const editor = view
     bindView(path, (spec) => editor.dispatch(spec))
-    view.focus()
+    if (focusEditor) view.focus()
   })
 
   $effect(() => {
@@ -77,12 +83,16 @@
   async function openFile(path: string, pinned: boolean) {
     const current = activeTab()
     if (view && current?.state) current.state = view.state
+    focusEditor = pinned
     try {
       openError = null
       await open(path, { pinned })
     } catch (e) {
       openError = errorText(e)
     }
+    await tick()
+    if (pinned) view?.focus()
+    focusEditor = true
   }
 
   function selectTab(tab: Tab) {
@@ -91,17 +101,108 @@
     workspace.active = tab.path
   }
 
-  async function closeTab(tab: Tab) {
-    if (tab.dirty) {
-      const discard = await ask(`${name(tab.path)} has unsaved changes. Close it and lose them?`, {
+  async function closeTabs(tabs: Tab[]) {
+    const dirty = tabs.filter((t) => t.dirty)
+    if (dirty.length) {
+      const message =
+        dirty.length === 1
+          ? `${name(dirty[0].path)} has unsaved changes. Close it and lose them?`
+          : `${dirty.length} files have unsaved changes. Close them and lose the changes?`
+      const discard = await ask(message, {
         title: 'Unsaved changes',
         kind: 'warning',
         okLabel: 'Close without saving',
         cancelLabel: 'Keep editing',
       })
-      if (!discard) return
+      if (!discard) return false
     }
-    close(tab.path)
+    for (const tab of tabs) close(tab.path)
+    return true
+  }
+
+  function closeTab(tab: Tab) {
+    return closeTabs([tab])
+  }
+
+  // Closing a group of tabs from a tab's menu leaves you on the tab you right-clicked,
+  // as in VS Code and JetBrains IDEs.
+  async function closeAround(tab: Tab, which: (index: number, at: number) => boolean) {
+    const at = workspace.tabs.indexOf(tab)
+    const closing = workspace.tabs.filter((_, index) => index !== at && which(index, at))
+    const activeClosing = closing.some((t) => t.path === workspace.active)
+    if ((await closeTabs(closing)) && activeClosing) workspace.active = tab.path
+  }
+
+  function openTabMenu(x: number, y: number, tab: Tab | null) {
+    const index = tab ? workspace.tabs.indexOf(tab) : -1
+    const last = workspace.tabs.length - 1
+    tabMenu = {
+      x,
+      y,
+      items: [
+        ...(tab
+          ? [
+              { label: 'Close', shortcut: shortcut('Ctrl+W'), run: () => closeTab(tab) },
+              { label: 'Close others', disabled: last === 0, run: () => closeAround(tab, () => true) },
+              { label: 'Close to the left', disabled: index === 0, run: () => closeAround(tab, (i, at) => i < at) },
+              { label: 'Close to the right', disabled: index === last, run: () => closeAround(tab, (i, at) => i > at) },
+            ]
+          : []),
+        { label: 'Close all', run: () => closeTabs([...workspace.tabs]) },
+        'separator',
+        { label: 'Reopen closed tab', shortcut: shortcut('Ctrl+Shift+T'), disabled: !canReopen(), run: reopenTab },
+      ],
+    }
+  }
+
+  function onTabContextMenu(event: MouseEvent, tab: Tab | null) {
+    event.preventDefault()
+    event.stopPropagation()
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    if (!event.clientX && !event.clientY) openTabMenu(rect.left + 12, rect.bottom, tab)
+    else openTabMenu(event.clientX, event.clientY, tab)
+  }
+
+  async function reopenTab() {
+    const current = activeTab()
+    if (view && current?.state) current.state = view.state
+    try {
+      openError = null
+      await reopenClosed()
+    } catch (e) {
+      openError = errorText(e)
+    }
+  }
+
+  async function remove(paths: string[]) {
+    if (!paths.length) return
+    const what = paths.length === 1 ? name(paths[0]) : `${paths.length} items`
+    const confirmed = await ask(`Move ${what} to the ${trashName}?`, {
+      title: 'Delete',
+      kind: 'warning',
+      okLabel: `Move to ${trashName}`,
+      cancelLabel: 'Cancel',
+    })
+    if (!confirmed) return
+    try {
+      await api.trashPaths(paths)
+    } catch (e) {
+      tree.report(errorText(e))
+      return
+    }
+    // We keep tabs with unsaved changes open, so you can still save them somewhere.
+    const removed = (path: string) => paths.some((p) => path === p || path.startsWith(`${p}/`))
+    for (const tab of workspace.tabs.filter((t) => removed(t.path) && !t.dirty)) close(tab.path, { remember: false })
+    tree.forget(paths)
+    tree.refresh()
+  }
+
+  async function openPackFolder() {
+    try {
+      await api.openPackFolder()
+    } catch (e) {
+      tree.report(`Couldn't open the pack folder: ${errorText(e)}`)
+    }
   }
 
   async function reloadTab(tab: Tab) {
@@ -132,12 +233,16 @@
   function onKey(event: KeyboardEvent) {
     if (!(event.ctrlKey || event.metaKey)) return
     const current = activeTab()
-    if (event.key.toLowerCase() === 's' && current) {
+    const key = event.key.toLowerCase()
+    if (key === 's' && current) {
       event.preventDefault()
       save(current.path).then(loadChanges)
-    } else if (event.key.toLowerCase() === 'w' && current) {
+    } else if (key === 'w' && current) {
       event.preventDefault()
       closeTab(current)
+    } else if (key === 't' && event.shiftKey && commandKey(event)) {
+      event.preventDefault()
+      reopenTab()
     }
   }
 
@@ -153,6 +258,12 @@
 
   function onTabKey(event: KeyboardEvent, index: number) {
     const tabs = workspace.tabs
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault()
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+      openTabMenu(rect.left + 12, rect.bottom, tabs[index])
+      return
+    }
     const to = event.key === 'ArrowRight' ? index + 1 : event.key === 'ArrowLeft' ? index - 1 : null
     if (to === null || !tabs[to]) return
     event.preventDefault()
@@ -183,16 +294,43 @@
   <aside class="browser">
     <div class="browser-head">
       <h2>Files</h2>
-      <button class="link" onclick={() => tree.refresh()}>Refresh</button>
+      <span class="tools">
+        <button class="icon" aria-label="Refresh" title="Refresh" onclick={() => tree.refresh()}>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.25 8a5.25 5.25 0 1 1-1.54-3.71" /><path d="M12.25 1.75v3h-3" /></svg>
+        </button>
+        <button
+          class="icon"
+          class:armed={drag.paths.length > 0}
+          class:over={drag.overTrash}
+          data-drop="trash"
+          aria-label="Delete selected"
+          aria-disabled={!selection.size}
+          title={selection.size ? `Move the selection to the ${trashName}, or drop files here` : 'Select files to delete, or drag them here'}
+          onclick={() => selection.size && remove(tree.selectedPaths())}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M3.75 4l.75 9.5h7l.75-9.5M6.5 6.75v4.5M9.5 6.75v4.5" /></svg>
+        </button>
+        <button class="icon" aria-label="Open the pack folder in {fileManager}" title="Open the pack folder in {fileManager}" onclick={openPackFolder}>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 3.25h4.5l1.5 1.75h6.5v7.75H1.75z" /></svg>
+        </button>
+      </span>
     </div>
-    <FileTree bind:this={tree} selected={workspace.active} {changes} onopen={openFile} />
+    <FileTree bind:this={tree} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} ongitchange={loadChanges} />
   </aside>
 
   <section class="editor">
     {#if workspace.tabs.length}
-      <div class="tabs" role="tablist" aria-label="Open files" onwheel={scrollTabs}>
+      <div class="tabs" role="tablist" aria-label="Open files" tabindex="-1" onwheel={scrollTabs} oncontextmenu={(e) => onTabContextMenu(e, null)}>
         {#each workspace.tabs as tab, index (tab.path)}
-          <div class="tab" class:active={tab.path === workspace.active} class:preview={tab.preview}>
+          <!-- svelte-ignore a11y_no_static_element_interactions (the tab button handles Ctrl+W and the menu key) -->
+          <div
+            class="tab"
+            class:active={tab.path === workspace.active}
+            class:preview={tab.preview}
+            oncontextmenu={(e) => onTabContextMenu(e, tab)}
+            onmousedown={(e) => e.button === 1 && e.preventDefault()}
+            onauxclick={(e) => e.button === 1 && closeTab(tab)}
+          >
             <button
               id="tab-{index}"
               role="tab"
@@ -217,9 +355,6 @@
         <span class="actions">
           {#if problems}
             <button class="link problems {problems.tone}" title="Show problems (Ctrl+Shift+M)" onclick={showProblems}>{problems.text}</button>
-          {/if}
-          {#if current.state}
-            <span class="muted small">{current.crlf ? 'CRLF' : 'LF'}</span>
           {/if}
           <button class="link" onclick={() => reveal(current!.path)}>Show in folder</button>
           <button class="link" onclick={() => reloadTab(current!)}>Reload</button>
@@ -263,6 +398,10 @@
   </section>
 </div>
 
+{#if tabMenu}
+  <ContextMenu x={tabMenu.x} y={tabMenu.y} label="Tab actions" items={tabMenu.items} onclose={() => (tabMenu = null)} />
+{/if}
+
 <style>
   .files {
     display: grid;
@@ -293,6 +432,57 @@
 
   .browser-head h2 {
     font-size: var(--step-0);
+  }
+
+  .tools {
+    display: flex;
+    gap: 2px;
+    margin: -4px -6px -4px 0;
+  }
+
+  .icon {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    color: var(--muted);
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .icon:hover:not([aria-disabled='true']) {
+    color: var(--text);
+    background: var(--control);
+  }
+
+  .icon[aria-disabled='true'] {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  .icon svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .icon.armed {
+    color: var(--fail);
+    opacity: 1;
+    border-color: color-mix(in srgb, var(--fail) 45%, transparent);
+    border-style: dashed;
+  }
+
+  .icon.over {
+    color: var(--fail);
+    background: var(--fail-fill);
+    border-color: var(--fail-border);
+    border-style: solid;
   }
 
   .link {

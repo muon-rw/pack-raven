@@ -11,6 +11,7 @@
   import SettingsView from './views/Settings.svelte'
   import AddPack from './views/AddPack.svelte'
   import Git from './views/Git.svelte'
+  import { nav } from './lib/nav.svelte'
   import Releases from './views/Releases.svelte'
   import PackSettings from './views/PackSettings.svelte'
   const loadFiles = () => import('./views/Files.svelte')
@@ -180,6 +181,12 @@
 
   $effect(() => {
     if (job('server-pack').phase === 'done' || publishPhase === 'done') serverMods.changedSinceBuild = false
+  })
+
+  $effect(() => {
+    if (!nav.view) return
+    view = nav.view
+    nav.view = null
   })
 
   function onKey(event: KeyboardEvent) {

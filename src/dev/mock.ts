@@ -62,6 +62,35 @@ const releases = [
   { version: fx.version === '0.1.0' ? '0.1.1' : fx.version, projectId: 1234567, fileId: 7105511, serverFileId: 7105512, publishedAt: '2026-10-12T21:40:00Z', status: 'Under review', serverStatus: 'Under review', serverPackLinked: null, announce: true, announcedAt: null },
 ]
 
+type MockEntry = { name: string; path: string; isDir: boolean; size: number; ignored: boolean }
+
+function addEntry(path: string, isDir: boolean) {
+  const index = path.lastIndexOf('/')
+  const dir = index < 0 ? '' : path.slice(0, index)
+  const list = (fx.dirs[dir] ??= []) as MockEntry[]
+  if (list.some((e) => e.path === path)) throw `${path} already exists`
+  list.push({ name: path.slice(index + 1), path, isDir, size: 0, ignored: false })
+  list.sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name))
+  if (isDir) fx.dirs[path] ??= []
+}
+
+function removeEntries(paths: string[]) {
+  for (const dir of Object.keys(fx.dirs)) fx.dirs[dir] = (fx.dirs[dir] as MockEntry[]).filter((e) => !paths.includes(e.path))
+}
+
+function moveEntry(from: string, to: string) {
+  const entry = Object.values(fx.dirs)
+    .flat()
+    .find((e) => (e as MockEntry).path === from) as MockEntry | undefined
+  removeEntries([from])
+  addEntry(to, entry?.isDir ?? false)
+  for (const dir of Object.keys(fx.dirs)) {
+    if (dir !== from && !dir.startsWith(`${from}/`)) continue
+    fx.dirs[to + dir.slice(from.length)] = (fx.dirs[dir] as MockEntry[]).map((e) => ({ ...e, path: to + e.path.slice(from.length) }))
+    if (dir !== to) delete fx.dirs[dir]
+  }
+}
+
 const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   list_packs: () => ({ active: pack.dir, packs: [pack], instancesRoot: 'C:/Instances' }),
   overview: () => ({
@@ -98,6 +127,21 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   list_dir: (a) => fx.dirs[String(a.path)] ?? [],
   read_file: (a) => fx.files[String(a.path)] ?? { text: `// ${a.path}\n`, size: 0, unreadable: null, crlf: false, bom: false },
   absolute_path: (a) => `${pack.dir}/${a.path}`,
+  create_file: (a) => addEntry(String(a.path), false),
+  create_dir: (a) => addEntry(String(a.path), true),
+  trash_paths: (a) => removeEntries(a.paths as string[]),
+  rename_path: (a) => moveEntry(String(a.from), String(a.to)),
+  move_paths: (a) =>
+    (a.paths as string[]).map((from) => {
+      const to = `${a.dir ? `${a.dir}/` : ''}${from.slice(from.lastIndexOf('/') + 1)}`
+      moveEntry(from, to)
+      return [from, to]
+    }),
+  git_ignore: () => [],
+  copy_files: () => null,
+  paste_files: () => {
+    throw 'The clipboard has no files to paste.'
+  },
   releases: () => releases,
   get_notes: () => '## Highlights\n\n- New dragon fights in the End\n- Rebalanced early armor tiers\n',
   changelog_preview: () => ({ diff: { since: 'v0.1.0', added: [], updated: [], removed: [] }, markdown: '' }),

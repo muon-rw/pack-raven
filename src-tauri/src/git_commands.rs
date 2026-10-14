@@ -43,6 +43,11 @@ pub fn git_discard(state: State<'_, AppState>, tracked: Vec<String>, untracked: 
 }
 
 #[tauri::command]
+pub fn git_ignore(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<Vec<String>> {
+    gitops::ignore(&state.settings().instance_dir, &paths).map_err(err)
+}
+
+#[tauri::command]
 pub fn git_commit(app: AppHandle, state: State<'_, AppState>, message: String) -> CmdResult<()> {
     let dir = state.settings().instance_dir;
     state.jobs.start(&app, "git", move |log| async move { gitops::commit(&dir, &message, &log).await })

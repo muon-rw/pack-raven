@@ -166,7 +166,7 @@ pub fn discover(root: &Path, added: &[PathBuf]) -> Vec<InstanceInfo> {
     found
 }
 
-fn ensure_lines(path: &Path, lines: &[&str]) -> Result<bool> {
+pub(crate) fn ensure_lines(path: &Path, lines: &[&str]) -> Result<bool> {
     let existing = std::fs::read_to_string(path).unwrap_or_default();
     let present: Vec<&str> = existing.lines().map(str::trim).collect();
     let missing: Vec<&&str> = lines.iter().filter(|l| !present.contains(l)).collect();
