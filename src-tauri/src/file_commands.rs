@@ -32,6 +32,34 @@ pub fn write_file(state: State<'_, AppState>, path: String, text: String, crlf: 
 }
 
 #[tauri::command]
+pub async fn index_files(state: State<'_, AppState>) -> CmdResult<files::Index> {
+    let root = state.settings().instance_dir;
+    tauri::async_runtime::spawn_blocking(move || files::index(&root)).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn copy_paths(state: State<'_, AppState>, paths: Vec<String>, absolute: bool) -> CmdResult<()> {
+    let text = files::path_text(&state.settings().instance_dir, &paths, absolute).map_err(err)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let clipboard = ClipboardContext::new().map_err(|e| format!("opening the clipboard: {e}"))?;
+        clipboard.set_text(text).map_err(|e| format!("copying to the clipboard: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn open_with_default_app(app: AppHandle, state: State<'_, AppState>, path: String) -> CmdResult<()> {
+    let absolute = files::path_text(&state.settings().instance_dir, &[path], true).map_err(err)?;
+    app.opener().open_path(absolute, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn default_app(extension: String) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || crate::associations::default_app(&extension)).await.ok().flatten()
+}
+
+#[tauri::command]
 pub fn absolute_path(state: State<'_, AppState>, path: String) -> CmdResult<String> {
     Ok(files::resolve(&state.settings().instance_dir, &path).map_err(err)?.to_string_lossy().into_owned())
 }

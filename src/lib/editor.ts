@@ -43,6 +43,44 @@ const theme = EditorView.theme({
   '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'var(--ochre)' },
   '.cm-panels': { backgroundColor: 'var(--surface)', color: 'var(--text)', borderColor: 'var(--line)' },
   '.cm-panel input, .cm-panel button': { fontFamily: 'var(--font-ui)', fontSize: 'var(--step--1)' },
+  // CodeMirror's base theme paints its own light buttons and fields, which leave light text
+  // unreadable in dark mode, so we restyle them like the rest of the app.
+  '.cm-textfield': { margin: '0', padding: '3px 8px', color: 'var(--text)', backgroundColor: 'var(--field)', border: '1px solid var(--edge)', borderRadius: 'var(--radius-control)' },
+  '.cm-button': {
+    margin: '0',
+    padding: '3px 10px',
+    fontWeight: '400',
+    color: 'var(--text)',
+    backgroundColor: 'var(--control)',
+    backgroundImage: 'none',
+    border: '1px solid var(--control-edge)',
+    borderRadius: 'var(--radius-control)',
+  },
+  '.cm-button:hover': { backgroundColor: 'var(--control-hi)' },
+  '.cm-button:active': { backgroundImage: 'none', backgroundColor: 'var(--here)' },
+  // The search panel separates its find and replace rows with a <br>, which flex layout
+  // ignores, so a full-width pseudo-element ordered between the rows breaks the line instead.
+  '.cm-panel.cm-search': { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', padding: '8px 40px 8px 10px' },
+  '.cm-panel.cm-search::after': { content: '""', order: '1', flexBasis: '100%', height: '0', margin: '-3px 0' },
+  '.cm-panel.cm-search br': { display: 'none' },
+  '.cm-panel.cm-search [name=replace], .cm-panel.cm-search [name=replaceAll]': { order: '2' },
+  '.cm-panel.cm-search input, .cm-panel.cm-search button, .cm-panel.cm-search label': { margin: '0' },
+  '.cm-panel.cm-search .cm-textfield': { flex: '0 1 18em', minWidth: '8em' },
+  '.cm-panel.cm-search label': { display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: 'var(--step--1)', color: 'var(--text)', cursor: 'pointer' },
+  '.cm-panel.cm-search label:first-of-type': { marginLeft: '8px' },
+  '.cm-panel.cm-search input[type=checkbox]': { margin: '0', accentColor: 'var(--forest)' },
+  '.cm-panel.cm-search [name=close]': {
+    top: '6px',
+    right: '8px',
+    width: '26px',
+    height: '26px',
+    fontSize: '18px',
+    lineHeight: '1',
+    color: 'var(--muted)',
+    borderRadius: 'var(--radius-control)',
+    cursor: 'pointer',
+  },
+  '.cm-panel.cm-search [name=close]:hover': { color: 'var(--text)', backgroundColor: 'var(--control)' },
   '.cm-foldGutter span': { color: 'var(--muted)' },
   '.cm-lintRange': { backgroundImage: 'none', textDecoration: 'underline wavy', textDecorationSkipInk: 'none', textUnderlineOffset: '3px' },
   '.cm-lintRange-error': { textDecorationColor: 'var(--fail-icon)' },
@@ -60,6 +98,21 @@ const theme = EditorView.theme({
   '.cm-panel.cm-panel-lint ul': { maxHeight: '140px' },
   '.cm-panel.cm-panel-lint ul [aria-selected]': { backgroundColor: 'var(--here)', color: 'var(--text)' },
   '.cm-panel.cm-panel-lint ul:focus [aria-selected]': { backgroundColor: 'var(--highlight)', color: 'var(--text)' },
+})
+
+// CodeMirror's default panel labels are lowercase shorthand like "all" and "regexp".
+const phrases = EditorState.phrases.of({
+  next: 'Next',
+  previous: 'Previous',
+  all: 'Select all',
+  'match case': 'Match case',
+  regexp: 'Regex',
+  'by word': 'Whole word',
+  replace: 'Replace',
+  'replace all': 'Replace all',
+  close: 'Close',
+  'Go to line': 'Go to line',
+  go: 'Go',
 })
 
 function language(path: string): Extension {
@@ -135,6 +188,7 @@ export function createState(
       language(path),
       lintFor(path),
       theme,
+      phrases,
       keymap.of([
         { key: 'Mod-s', preventDefault: true, run: () => (onSave(), true) },
         indentWithTab,

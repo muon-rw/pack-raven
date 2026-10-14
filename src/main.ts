@@ -13,4 +13,14 @@ if (import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)) {
 
 applyTheme()
 
+// The webview's own menu (Back, Reload, Print) makes no sense in an app, so we only keep it
+// where its Cut, Copy and Paste help: in text fields and over selected text. In dev builds,
+// hold Shift to reach Inspect.
+window.addEventListener('contextmenu', (e) => {
+  if (import.meta.env.DEV && e.shiftKey) return
+  const editable = e.target instanceof Element && e.target.closest('input, textarea, [contenteditable]:not([contenteditable="false"])')
+  if (editable || window.getSelection()?.isCollapsed === false) return
+  e.preventDefault()
+})
+
 export default mount(App, { target: document.getElementById('app')! })

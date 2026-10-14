@@ -8,8 +8,10 @@
   import { api, errorText, type GitStatus } from '../lib/api'
   import { drag } from '../lib/drag.svelte'
   import { workspace, activeTab, open, pin, save, close, reload, resetFor, bindView, fs, useDiskVersion, keepMine, canReopen, reopenClosed, type Tab } from '../lib/workspace.svelte'
-  import { commandKey, fileManager, shortcut, trashName } from '../lib/platform'
+  import { commandKey, fileManager, isWindows, shortcut, trashName } from '../lib/platform'
+  import { nav } from '../lib/nav.svelte'
   import FileTree from '../components/FileTree.svelte'
+  import FileSearchResults from '../components/FileSearchResults.svelte'
   import ContextMenu from '../components/ContextMenu.svelte'
   import type { MenuItem } from '../lib/menu'
   import Notice from '../components/Notice.svelte'
@@ -26,6 +28,12 @@
   let focusEditor = true
   const selection = new SvelteSet<string>()
   let tabMenu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  let query = $state('')
+  let searchField: HTMLInputElement
+  let results: FileSearchResults | undefined = $state()
+  let activeResult = $state(0)
+  let openedFromSearch: string | null = null
+  let searching = $derived(!!query.trim())
 
   $effect.pre(() => resetFor(pack))
 
@@ -55,6 +63,17 @@
 
   $effect(() => {
     if (fs.seq) loadChanges()
+  })
+
+  // The Git view's "Open in Files" sends you here with a file to open and show in the tree.
+  $effect(() => {
+    const path = nav.filePath
+    if (!path || !tree) return
+    nav.filePath = null
+    untrack(() => {
+      query = ''
+      tree.show(path).then(() => openFile(path, true))
+    })
   })
 
   $effect(() => {
@@ -230,6 +249,15 @@
     await revealItemInDir(await api.absolutePath(path))
   }
 
+  async function openWithDefaultApp(path: string) {
+    try {
+      openError = null
+      await api.openWithDefaultApp(path)
+    } catch (e) {
+      openError = errorText(e)
+    }
+  }
+
   function name(path: string) {
     return path.slice(path.lastIndexOf('/') + 1)
   }
@@ -244,6 +272,10 @@
     } else if (key === 'w' && current) {
       event.preventDefault()
       closeTab(current)
+    } else if (key === 'p' && !event.shiftKey && commandKey(event)) {
+      event.preventDefault()
+      searchField.focus()
+      searchField.select()
     } else if (key === 't' && event.shiftKey && commandKey(event)) {
       event.preventDefault()
       reopenTab()
@@ -275,6 +307,40 @@
     document.getElementById(`tab-${to}`)?.focus()
   }
 
+  function onSearchKey(event: KeyboardEvent) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      results?.move(event.key === 'ArrowDown' ? 1 : -1)
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      results?.choose(true)
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      endSearch()
+    }
+  }
+
+  function openFromSearch(path: string, pinned: boolean) {
+    openedFromSearch = path
+    openFile(path, pinned)
+  }
+
+  function showFolder(path: string) {
+    openedFromSearch = null
+    query = ''
+    tree.show(path, true)
+  }
+
+  // Leaving the search shows the file you last opened from it in the tree, so you can see
+  // what sits next to it.
+  function endSearch() {
+    const path = openedFromSearch === workspace.active ? openedFromSearch : null
+    openedFromSearch = null
+    query = ''
+    if (path) tree.show(path)
+    else searchField.blur()
+  }
+
   function plural(count: number, noun: string) {
     return `${count} ${noun}${count === 1 ? '' : 's'}`
   }
@@ -284,6 +350,20 @@
   }
 
   let current = $derived(workspace.tabs.find((t) => t.path === workspace.active))
+  let extension = $derived.by(() => {
+    const name = current ? current.path.slice(current.path.lastIndexOf('/') + 1) : ''
+    const dot = name.lastIndexOf('.')
+    return dot > 0 ? name.slice(dot + 1) : ''
+  })
+  let defaultApp = $state<string | null>(null)
+
+  // Only Windows tells us which app opens a file type, so elsewhere we show just the extension.
+  $effect(() => {
+    const wanted = current && !current.state && isWindows ? extension : ''
+    defaultApp = null
+    if (wanted) api.defaultApp(wanted).then((app) => extension === wanted && (defaultApp = app), () => {})
+  })
+
   let problems = $derived.by(() => {
     if (!current?.state) return null
     const { errors, warnings } = current.problems
@@ -298,6 +378,22 @@
   <aside class="browser">
     <div class="browser-head">
       <h2>Files</h2>
+      <span class="search">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.25" /><path d="M10.25 10.25l3.5 3.5" /></svg>
+        <input
+          bind:this={searchField}
+          bind:value={query}
+          type="search"
+          placeholder="Search names"
+          aria-label="Search file and folder names"
+          aria-controls="file-results"
+          aria-activedescendant={searching ? `result-${activeResult}` : undefined}
+          title="Search file and folder names ({shortcut('Ctrl+P')})"
+          spellcheck="false"
+          autocomplete="off"
+          onkeydown={onSearchKey}
+        />
+      </span>
       <span class="tools">
         <button class="icon" aria-label="Refresh" title="Refresh" onclick={() => tree.refresh()}>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.25 8a5.25 5.25 0 1 1-1.54-3.71" /><path d="M12.25 1.75v3h-3" /></svg>
@@ -319,7 +415,10 @@
         </button>
       </span>
     </div>
-    <FileTree bind:this={tree} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} onremoved={closeRemoved} ongitchange={loadChanges} />
+    {#if searching}
+      <FileSearchResults bind:this={results} bind:active={activeResult} {query} onopen={openFromSearch} onshowfolder={showFolder} />
+    {/if}
+    <FileTree bind:this={tree} hidden={searching} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} onremoved={closeRemoved} ongitchange={loadChanges} />
   </aside>
 
   <section class="editor">
@@ -392,7 +491,21 @@
     <div class="host" bind:this={host} class:hidden={!current?.state}></div>
 
     {#if current && !current.state}
-      <div class="placeholder"><p>{current.unreadable}</p></div>
+      <div class="placeholder">
+        <p>{current.unreadable}</p>
+        <p><button onclick={() => openWithDefaultApp(current!.path)}>Open in default app</button></p>
+        <p class="muted small">
+          {#if !extension}
+            This file has no extension{isWindows ? ', so Windows will ask which app to use' : ''}.
+          {:else if defaultApp}
+            <span class="file">.{extension}</span> files open in {defaultApp}.
+          {:else if isWindows}
+            No app is set for <span class="file">.{extension}</span> files, so Windows will ask which one to use.
+          {:else}
+            <span class="file">.{extension}</span> file
+          {/if}
+        </p>
+      </div>
     {:else if !current}
       <div class="placeholder">
         <p>Open a file from the tree to edit it.</p>
@@ -429,13 +542,42 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 10px;
     padding: 10px 12px;
     border-bottom: 1px solid var(--line);
     background: var(--surface);
   }
 
   .browser-head h2 {
+    flex: none;
     font-size: var(--step-0);
+  }
+
+  .search {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    margin: -4px 0;
+  }
+
+  .search svg {
+    position: absolute;
+    left: 7px;
+    top: 50%;
+    width: 13px;
+    height: 13px;
+    transform: translateY(-50%);
+    fill: none;
+    stroke: var(--muted);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    pointer-events: none;
+  }
+
+  .search input {
+    width: 100%;
+    padding: 3px 6px 3px 25px;
+    font-size: var(--step--1);
   }
 
   .tools {

@@ -21,7 +21,7 @@ export function discardChanges(changes: FileChange[]) {
   )
 }
 
-type Feedback = { ondone: () => void; onerror: (message: string) => void; onnotice: (message: string) => void }
+export type Feedback = { ondone: () => void; onerror: (message: string) => void; onnotice: (message: string) => void }
 
 export function gitMenu(paths: string[], status: GitStatus | null, ignored: (path: string) => boolean, feedback: Feedback): Submenu | null {
   if (!status || !paths.length) return null
@@ -36,7 +36,7 @@ export function gitMenu(paths: string[], status: GitStatus | null, ignored: (pat
       ? [{ label: unstaged.length === 1 ? 'Discard changes' : `Discard changes to ${unstaged.length} files`, danger: true, run: () => discard(unstaged, feedback) }]
       : []),
     'separator',
-    ...(ignorable.length ? [{ label: 'Add to .gitignore', run: () => ignore(ignorable, feedback) }] : []),
+    ...(ignorable.length ? [{ label: 'Add to .gitignore', run: () => addToGitignore(ignorable, feedback) }] : []),
   ]
   return items.some((item) => item !== 'separator') ? { label: 'Git', items } : null
 }
@@ -51,7 +51,7 @@ async function discard(changes: FileChange[], feedback: Feedback) {
   }
 }
 
-async function ignore(paths: string[], feedback: Feedback) {
+export async function addToGitignore(paths: string[], feedback: Feedback) {
   try {
     const tracked = await api.gitIgnore(paths)
     feedback.ondone()

@@ -1,4 +1,5 @@
 export const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent)
+export const isWindows = /Windows/.test(navigator.userAgent)
 
 export const fileManager = isMac ? 'Finder' : 'Explorer'
 

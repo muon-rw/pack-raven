@@ -1,9 +1,13 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
+  import { revealItemInDir } from '@tauri-apps/plugin-opener'
   import { api, errorText, type FileChange, type GitCommit, type GitDiff, type GitStatus } from '../lib/api'
   import { job } from '../lib/jobs.svelte'
-  import { nav } from '../lib/nav.svelte'
-  import { confirmDiscard, discardChanges } from '../lib/gitActions'
+  import { nav, showInFiles } from '../lib/nav.svelte'
+  import { addToGitignore, confirmDiscard, discardChanges } from '../lib/gitActions'
+  import { fileManager } from '../lib/platform'
+  import type { MenuItem } from '../lib/menu'
+  import ContextMenu from '../components/ContextMenu.svelte'
   import Notice from '../components/Notice.svelte'
   import LogView from '../components/LogView.svelte'
 
@@ -19,6 +23,8 @@
   let message = $state('')
   let error = $state<string | null>(null)
   let lastAction = $state<string | null>(null)
+  let notice = $state<string | null>(null)
+  let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
 
   const statusNames: Record<string, string> = {
     M: 'Modified',
@@ -94,6 +100,7 @@
   async function run(action: () => Promise<void>) {
     try {
       error = null
+      notice = null
       await action()
       await load()
       onchange()
@@ -104,6 +111,65 @@
 
   async function discard(changes: FileChange[]) {
     if (await confirmDiscard(changes)) await run(() => discardChanges(changes))
+  }
+
+  async function attempt(action: () => Promise<void>) {
+    try {
+      error = null
+      await action()
+    } catch (e) {
+      error = errorText(e)
+    }
+  }
+
+  function select(change: FileChange, staged: boolean) {
+    selected = { path: change.path, staged, untracked: change.status === '?' }
+  }
+
+  function onChangeMenu(event: MouseEvent | KeyboardEvent, change: FileChange, staged: boolean) {
+    event.preventDefault()
+    event.stopPropagation()
+    select(change, staged)
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    const fromKeyboard = !('clientX' in event) || (!event.clientX && !event.clientY)
+    openChangeMenu(fromKeyboard ? rect.left + 24 : event.clientX, fromKeyboard ? rect.bottom : event.clientY, change, staged)
+  }
+
+  // A deleted file has nothing on disk to open or show, but you can still copy its path.
+  function openChangeMenu(x: number, y: number, change: FileChange, staged: boolean) {
+    const path = change.path
+    const exists = change.status !== 'D'
+    menu = {
+      x,
+      y,
+      items: [
+        staged
+          ? { label: 'Unstage', run: () => run(() => api.gitUnstage([path])) }
+          : { label: 'Stage', run: () => run(() => api.gitStage([path])) },
+        'separator',
+        ...(exists
+          ? [
+              { label: 'Open in Files', run: () => showInFiles(path) },
+              { label: 'Open in default app', run: () => attempt(() => api.openWithDefaultApp(path)) },
+              { label: `Show in ${fileManager}`, run: () => attempt(async () => revealItemInDir(await api.absolutePath(path))) },
+            ]
+          : []),
+        'separator',
+        { label: 'Copy path', run: () => attempt(() => api.copyPaths([path], true)) },
+        { label: 'Copy relative path', run: () => attempt(() => api.copyPaths([path], false)) },
+        'separator',
+        {
+          label: 'Add to .gitignore',
+          run: () =>
+            addToGitignore([path], {
+              ondone: () => (load(), onchange()),
+              onerror: (text) => (error = text),
+              onnotice: (text) => (notice = text),
+            }),
+        },
+        ...(!staged ? ['separator' as const, { label: 'Discard changes', danger: true, run: () => discard([change]) }] : []),
+      ],
+    }
   }
 
   async function commit() {
@@ -148,10 +214,11 @@
 {#snippet changeRow(change: FileChange, staged: boolean)}
   {@const parts = split(change.path)}
   {@const isSelected = selected?.path === change.path && selected?.staged === staged}
-  <li class:selected={isSelected}>
+  <li class:selected={isSelected} oncontextmenu={(e) => onChangeMenu(e, change, staged)}>
     <button
       class="file-button"
-      onclick={() => (selected = { path: change.path, staged, untracked: change.status === '?' })}
+      onclick={() => select(change, staged)}
+      onkeydown={(e) => (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && onChangeMenu(e, change, staged)}
       ondblclick={() => run(() => (staged ? api.gitUnstage([change.path]) : api.gitStage([change.path])))}
       title="Double-click to {staged ? 'unstage' : 'stage'}"
       aria-pressed={isSelected}
@@ -216,6 +283,7 @@
     </form>
 
     {#if error}<Notice tone="error"><p>{error}</p></Notice>{/if}
+    {#if notice}<Notice tone="warn"><p>{notice}</p></Notice>{/if}
     {#if gitJob.phase === 'failed'}<Notice tone="error"><p>{gitJob.message}</p></Notice>{/if}
     {#if status?.conflicted.length}
       <Notice tone="warn"><p>{status.conflicted.length} files have merge conflicts. Resolve them in an editor, then stage them.</p></Notice>
@@ -301,6 +369,10 @@
     {/if}
   </section>
 </div>
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} label="Change actions" items={menu.items} onclose={() => (menu = null)} />
+{/if}
 
 <style>
   .git {

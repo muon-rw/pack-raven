@@ -15,6 +15,7 @@
     selected,
     status,
     selection,
+    hidden = false,
     onopen,
     ondelete,
     onremoved,
@@ -23,6 +24,7 @@
     selected: string | null
     status: GitStatus | null
     selection: SvelteSet<string>
+    hidden?: boolean
     onopen: (path: string, pinned: boolean) => void
     ondelete: (paths: string[]) => void
     onremoved: (paths: string[]) => void
@@ -33,6 +35,8 @@
   const EXPAND_DELAY = 600
   const SCROLL_EDGE = 28
   const SLOW_IMPORT = 400
+  const MAX_EXPAND_ALL = 200
+  const JUMP_RESET = 900
 
   const children = new SvelteMap<string, DirEntry[]>()
   const expanded = new SvelteSet<string>()
@@ -44,6 +48,8 @@
   let edit = $state<{ kind: 'file' | 'folder' | 'rename'; parent: string; path: string | null; error: string | null; busy: boolean } | null>(null)
   let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
   let cutPaths = $state<string[]>([])
+  let jump = $state<{ text: string; found: boolean } | null>(null)
+  let jumpTimer = 0
   let tree: HTMLDivElement
 
   let press: { x: number; y: number; row: Row; pointerId: number; target: HTMLElement } | null = null
@@ -75,6 +81,13 @@
 
   export function refresh() {
     return Promise.all(['', ...expanded].map(load))
+  }
+
+  export async function show(path: string, expand = false) {
+    await revealInTree(path)
+    if (expand) await expandDir(path)
+    selectOnly(path)
+    await focusRow(path)
   }
 
   export function report(text: string, tone: 'fail' | 'note' = 'fail') {
@@ -174,6 +187,39 @@
     if (!children.has(dir)) return load(dir)
   }
 
+  // We expand one level at a time, so a deep folder can't start hundreds of listings at once.
+  async function expandAll(dir: string) {
+    let level = [dir]
+    let count = 0
+    while (level.length && count < MAX_EXPAND_ALL) {
+      level = level.slice(0, MAX_EXPAND_ALL - count)
+      count += level.length
+      await Promise.all(level.map((path) => expandDir(path)))
+      level = level.flatMap((path) => (children.get(path) ?? []).filter((e) => e.isDir).map((e) => e.path))
+    }
+    if (level.length) report(`We stopped after expanding ${MAX_EXPAND_ALL} folders.`, 'note')
+  }
+
+  function collapseAll(dir: string) {
+    for (const path of [...expanded]) if (!dir || path === dir || path.startsWith(`${dir}/`)) expanded.delete(path)
+    if (focused && !rows.some((r) => r.entry.path === focused)) focusRow(dir || rows[0]?.entry.path)
+  }
+
+  // Like Explorer, typing a name's first letters jumps to it, and repeating one letter cycles
+  // through the names that start with it.
+  function jumpTo(key: string, from: number) {
+    clearTimeout(jumpTimer)
+    const text = (jump?.text ?? '') + key.toLowerCase()
+    const find = (prefix: string, start: number) => [...rows.slice(start), ...rows.slice(0, start)].find((r) => r.entry.name.toLowerCase().startsWith(prefix))
+    const repeated = [...text].every((c) => c === text[0])
+    const match = (text.length > 1 && find(text, from)) || (repeated && find(text[0], from + 1)) || null
+    jump = { text, found: !!match }
+    jumpTimer = setTimeout(() => (jump = null), JUMP_RESET)
+    if (!match) return
+    selectOnly(match.entry.path)
+    focusRow(match.entry.path)
+  }
+
   async function revealInTree(path: string) {
     const parts = path.split('/')
     for (let i = 1; i < parts.length; i++) await expandDir(parts.slice(0, i).join('/'))
@@ -224,7 +270,8 @@
     onopen(row.entry.path, true)
   }
 
-  async function focusRow(path: string) {
+  async function focusRow(path: string | undefined) {
+    if (!path) return
     focused = path
     await tick()
     tree.querySelector<HTMLElement>(`[data-path="${CSS.escape(path)}"]`)?.focus()
@@ -274,6 +321,10 @@
     } else if (event.key === 'ArrowLeft') {
       if (row.entry.isDir && expanded.has(row.entry.path)) toggle(row.entry, false)
       else if (row.parent) move(rows.findIndex((r) => r.entry.path === row.parent))
+    } else if (event.key === '*' && row.entry.isDir) {
+      expandAll(row.entry.path)
+    } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && (event.key !== ' ' || jump)) {
+      jumpTo(event.key, index)
     } else if (event.key === 'Enter' || event.key === ' ') {
       selectOnly(row.entry.path)
       activate(row)
@@ -303,6 +354,8 @@
     const dir = targetDir(row)
     const paths = row ? selectedPaths() : []
     const count = paths.length > 1 ? ` ${paths.length} items` : ''
+    const single = paths.length === 1 ? rows.find((r) => r.entry.path === paths[0])?.entry : undefined
+    const folder = single?.isDir ? single.path : row ? null : ''
     const git = gitMenu(paths, status, (path) => rows.find((r) => r.entry.path === path)?.entry.ignored ?? false, {
       ondone: ongitchange,
       onerror: (text) => report(text),
@@ -327,7 +380,18 @@
         { label: 'Paste', shortcut: shortcut('Ctrl+V'), run: () => paste(dir) },
         ...(paths.length === 1 ? [{ label: 'Rename', shortcut: 'F2', run: () => startRename(paths[0]) }] : []),
         'separator',
+        ...(paths.length
+          ? [
+              { label: paths.length > 1 ? 'Copy paths' : 'Copy path', run: () => copyPaths(paths, true) },
+              { label: paths.length > 1 ? 'Copy relative paths' : 'Copy relative path', run: () => copyPaths(paths, false) },
+            ]
+          : []),
+        'separator',
+        ...(folder ? [{ label: 'Expand all', shortcut: '*', run: () => expandAll(folder) }] : []),
+        ...(folder !== null ? [{ label: 'Collapse all', disabled: !expanded.size, run: () => collapseAll(folder) }] : []),
+        'separator',
         ...(git ? [git] : []),
+        ...(single && !single.isDir ? [{ label: 'Open in default app', run: () => openWithDefaultApp(single.path) }] : []),
         ...(paths.length === 1 ? [{ label: `Show in ${fileManager}`, run: () => reveal(paths[0]) }] : []),
         'separator',
         ...(paths.length ? [{ label: `Delete${count}`, shortcut: shortcut('Delete'), danger: true, run: () => ondelete(paths) }] : []),
@@ -545,6 +609,22 @@
     }
   })
 
+  async function copyPaths(paths: string[], absolute: boolean) {
+    try {
+      await api.copyPaths(paths, absolute)
+    } catch (e) {
+      report(errorText(e))
+    }
+  }
+
+  async function openWithDefaultApp(path: string) {
+    try {
+      await api.openWithDefaultApp(path)
+    } catch (e) {
+      report(errorText(e))
+    }
+  }
+
   async function reveal(path: string) {
     try {
       await revealItemInDir(await api.absolutePath(path))
@@ -684,6 +764,7 @@
 
 <div
   class="tree"
+  class:hidden
   class:dragging={!!ghost}
   class:drop-root={dropDir === ''}
   role="tree"
@@ -754,6 +835,11 @@
       {#if renaming && edit?.error}<p class="failed small edit-error" style="--depth: {row.depth}">{edit.error}</p>{/if}
     {/if}
   {/each}
+  {#if jump}
+    <p class="jump" class:miss={!jump.found} aria-live="polite">
+      {jump.found ? 'Jump to' : 'No name starts with'} <kbd>{jump.text}</kbd>
+    </p>
+  {/if}
 </div>
 
 {#if ghost}
@@ -776,6 +862,10 @@
     outline: none;
   }
 
+  .tree.hidden {
+    display: none;
+  }
+
   .tree.drop-root {
     box-shadow: inset 0 0 0 2px var(--forest);
   }
@@ -788,6 +878,8 @@
     white-space: nowrap;
     cursor: pointer;
     user-select: none;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 23px;
   }
 
   .row:hover {
@@ -927,6 +1019,27 @@
   .small {
     font-size: var(--step--2);
     padding: 0 10px;
+  }
+
+  /* The jump hint floats at the bottom of the tree rather than looking like a search field,
+     since it only moves the selection and never filters. */
+  .jump {
+    position: sticky;
+    bottom: 6px;
+    width: fit-content;
+    margin: 6px auto 0;
+    padding: 2px 10px;
+    font-size: var(--step--2);
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    box-shadow: 0 4px 12px var(--shadow);
+    pointer-events: none;
+  }
+
+  .jump.miss kbd {
+    color: var(--fail);
   }
 
   .ghost {

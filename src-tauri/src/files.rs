@@ -44,11 +44,15 @@ fn ignored(root: &Path, paths: &[String]) -> HashSet<String> {
     let mut command = crate::git::command();
     command.current_dir(root).args(["check-ignore", "-z", "--stdin"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     let Ok(mut child) = command.spawn() else { return HashSet::new() };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(paths.join("\0").as_bytes());
-        let _ = stdin.write_all(b"\0");
+    // Git answers each path as it reads it, so we feed stdin from another thread. Writing it
+    // all first stalls once git fills the stdout pipe and stops reading.
+    let input = format!("{}\0", paths.join("\0"));
+    let writer = child.stdin.take().map(|mut stdin| std::thread::spawn(move || stdin.write_all(input.as_bytes())));
+    let output = child.wait_with_output();
+    if let Some(writer) = writer {
+        let _ = writer.join();
     }
-    let Ok(output) = child.wait_with_output() else { return HashSet::new() };
+    let Ok(output) = output else { return HashSet::new() };
     String::from_utf8_lossy(&output.stdout).split('\0').filter(|p| !p.is_empty()).map(|p| p.trim_end_matches('/').to_string()).collect()
 }
 
@@ -141,6 +145,50 @@ pub fn trash(root: &Path, relatives: &[String]) -> Result<Option<Vec<trash::Tras
 
 pub fn absolute_paths(root: &Path, relatives: &[String]) -> Result<Vec<String>> {
     relatives.iter().map(|r| Ok(resolve_entry(root, r)?.to_string_lossy().into_owned())).collect()
+}
+
+/// The pack's entries as relative paths, with a trailing slash on folders.
+#[derive(Serialize)]
+pub struct Index {
+    pub paths: Vec<String>,
+    pub truncated: bool,
+}
+
+// A pack with worlds and caches can hold far more files than you'd search by name, so we stop
+// at a limit rather than stall the search.
+const MAX_INDEXED: usize = 100_000;
+
+pub fn index(root: &Path) -> Index {
+    let mut paths = Vec::new();
+    let walk = walkdir::WalkDir::new(root).min_depth(1).into_iter().filter_entry(|e| !HIDDEN.contains(&e.file_name().to_string_lossy().as_ref()));
+    for entry in walk.flatten() {
+        if paths.len() == MAX_INDEXED {
+            return Index { paths, truncated: true };
+        }
+        let Ok(relative) = entry.path().strip_prefix(root) else { continue };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        paths.push(if entry.file_type().is_dir() { format!("{relative}/") } else { relative });
+    }
+    Index { paths, truncated: false }
+}
+
+/// Returns the paths the way you'd paste them: absolute in the platform's own form, or
+/// pack-relative with forward slashes as configs and scripts expect.
+pub fn path_text(root: &Path, relatives: &[String], absolute: bool) -> Result<String> {
+    let lines = relatives
+        .iter()
+        .map(|relative| {
+            let path = resolve_entry(root, relative)?;
+            Ok(if !absolute {
+                relative.trim_matches('/').to_string()
+            } else if cfg!(windows) {
+                path.to_string_lossy().replace('/', "\\")
+            } else {
+                path.to_string_lossy().into_owned()
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(lines.join(if cfg!(windows) { "\r\n" } else { "\n" }))
 }
 
 // Like Explorer and Finder, we never overwrite on paste. We name a clashing copy
@@ -373,6 +421,47 @@ mod tests {
         assert!(resolve_entry(root, "").is_err());
         assert!(resolve_entry(root, "/").is_err());
         assert!(trash(root, &[String::new()]).is_err());
+        assert!(path_text(root, &[String::new()], true).is_err());
+    }
+
+    #[test]
+    fn lists_a_large_ignored_folder_without_stalling() {
+        let root = std::env::temp_dir().join("packraven-ignored-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("cache")).unwrap();
+        assert!(crate::git::command().current_dir(&root).arg("init").output().unwrap().status.success());
+        std::fs::write(root.join(".gitignore"), "cache/\n").unwrap();
+        for i in 0..3000 {
+            std::fs::write(root.join(format!("cache/entry-with-a-long-name-{i}.json")), "").unwrap();
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let dir = root.clone();
+        std::thread::spawn(move || sender.send(list(&dir, "cache").unwrap()));
+        let entries = receiver.recv_timeout(std::time::Duration::from_secs(30)).expect("listing stalled");
+        assert_eq!(entries.len(), 3000);
+        assert!(entries.iter().all(|e| e.ignored));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn indexes_everything_but_git_and_copies_paths_in_both_forms() {
+        let root = std::env::temp_dir().join("packraven-index-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".git/objects")).unwrap();
+        std::fs::create_dir_all(root.join("config/sub")).unwrap();
+        std::fs::write(root.join("config/sub/a.toml"), "").unwrap();
+        let mut index = index(&root);
+        index.paths.sort();
+        assert_eq!(index.paths, ["config/", "config/sub/", "config/sub/a.toml"]);
+
+        let paths = ["config/sub/a.toml".to_string(), "config".to_string()];
+        let relative = path_text(&root, &paths, false).unwrap();
+        assert!(relative.starts_with("config/sub/a.toml") && relative.ends_with("config"));
+        let absolute = path_text(&root, &paths[..1], true).unwrap();
+        assert!(Path::new(&absolute).is_file());
+        if cfg!(windows) {
+            assert!(!absolute.contains('/'));
+        }
     }
 
     #[test]

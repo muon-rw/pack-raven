@@ -134,7 +134,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   git_overview: () => ({ status: { ...fx.status, staged, unstaged }, commits: fx.commits }),
   git_diff: (a) => diffFor(String(a.path), Boolean(a.staged)),
   list_dir: (a) => fx.dirs[String(a.path)] ?? [],
-  read_file: (a) => fx.files[String(a.path)] ?? { text: `// ${a.path}\n`, size: 0, unreadable: null, crlf: false, bom: false },
+  read_file: (a) =>
+    fx.files[String(a.path)] ??
+    (/\.(png|jar|zip|nbt|dat)$/.test(String(a.path))
+      ? { text: null, size: 2048, unreadable: "This is a binary file, so packraven can't edit it.", crlf: false, bom: false }
+      : { text: `// ${a.path}\n`, size: 0, unreadable: null, crlf: false, bom: false }),
   absolute_path: (a) => `${pack.dir}/${a.path}`,
   create_file: (a) => addEntry(String(a.path), false),
   create_dir: (a) => addEntry(String(a.path), true),
@@ -148,6 +152,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     }),
   git_ignore: () => [],
   copy_files: () => null,
+  copy_paths: (a) => console.info('[mock] copied paths', a),
+  open_with_default_app: (a) => console.info('[mock] opened', a.path),
+  default_app: (a) => ({ png: 'Photos', zip: 'Windows Explorer' })[String(a.extension)] ?? null,
+  index_files: () => ({
+    paths: Object.values(fx.dirs)
+      .flat()
+      .map((e) => ((e as MockEntry).isDir ? `${(e as MockEntry).path}/` : (e as MockEntry).path)),
+    truncated: false,
+  }),
   import_paths: (a) => ({
     created: (a.sources as string[]).map((source) => {
       const path = `${a.dir ? `${a.dir}/` : ''}${source.split(/[\\/]/).pop()}`

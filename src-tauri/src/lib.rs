@@ -1,4 +1,5 @@
 mod announcer;
+mod associations;
 mod changelog;
 mod commands;
 mod credentials;
@@ -194,6 +195,10 @@ pub fn run() {
             file_commands::rename_path,
             file_commands::move_paths,
             file_commands::open_pack_folder,
+            file_commands::index_files,
+            file_commands::copy_paths,
+            file_commands::open_with_default_app,
+            file_commands::default_app,
             file_commands::import_paths,
             file_commands::drag_out,
             file_commands::file_history,
