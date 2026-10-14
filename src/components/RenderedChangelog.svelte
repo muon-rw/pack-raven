@@ -32,12 +32,19 @@
   .changelog :global(h5),
   .changelog :global(h6) {
     margin: 20px 0 6px;
+    font-size: var(--step-0);
+  }
+
+  /* After the shift, # and ## arrive as h3 and h4. We size them like the Files preview's h1 and h2. */
+  .changelog :global(h3) {
+    font-size: var(--step-2);
+  }
+
+  .changelog :global(h4) {
     font-size: var(--step-1);
   }
 
-  .changelog :global(h5),
   .changelog :global(h6) {
-    font-size: var(--step-0);
     color: var(--muted);
   }
 
