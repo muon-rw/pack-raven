@@ -17,6 +17,7 @@
     selection,
     onopen,
     ondelete,
+    onremoved,
     ongitchange,
   }: {
     selected: string | null
@@ -24,6 +25,7 @@
     selection: SvelteSet<string>
     onopen: (path: string, pinned: boolean) => void
     ondelete: (paths: string[]) => void
+    onremoved: (paths: string[]) => void
     ongitchange: () => void
   } = $props()
 
@@ -72,7 +74,7 @@
   }
 
   export function refresh() {
-    for (const dir of ['', ...expanded]) load(dir)
+    return Promise.all(['', ...expanded].map(load))
   }
 
   export function report(text: string, tone: 'fail' | 'note' = 'fail') {
@@ -245,6 +247,10 @@
       for (const r of rows) selection.add(r.entry.path)
     } else if (commandKey(event) && (key === 'c' || key === 'x')) {
       copy(selectedPaths(), key === 'x')
+    } else if (commandKey(event) && (key === 'y' || (key === 'z' && event.shiftKey))) {
+      stepHistory(true)
+    } else if (commandKey(event) && key === 'z') {
+      stepHistory(false)
     } else if (commandKey(event) && key === 'v') {
       paste(targetDir(row))
     } else if (event.key === 'F2') {
@@ -292,7 +298,8 @@
     }
   }
 
-  function openMenu(x: number, y: number, row: Row | null) {
+  async function openMenu(x: number, y: number, row: Row | null) {
+    const history = await api.fileHistory().catch(() => null)
     const dir = targetDir(row)
     const paths = row ? selectedPaths() : []
     const count = paths.length > 1 ? ` ${paths.length} items` : ''
@@ -305,6 +312,9 @@
       x,
       y,
       items: [
+        ...(history?.undo ? [{ label: `Undo ${history.undo}`, shortcut: shortcut('Ctrl+Z'), run: () => stepHistory(false) }] : []),
+        ...(history?.redo ? [{ label: `Redo ${history.redo}`, shortcut: shortcut(isMac ? 'Ctrl+Shift+Z' : 'Ctrl+Y'), run: () => stepHistory(true) }] : []),
+        'separator',
         { label: 'New file', run: () => startCreate(dir, 'file') },
         { label: 'New folder', run: () => startCreate(dir, 'folder') },
         'separator',
@@ -414,7 +424,34 @@
       }
     }
     for (const dir of [...children.keys()]) if (pairs.some(([from]) => dir === from || dir.startsWith(`${from}/`))) children.delete(dir)
-    refresh()
+    await refresh()
+  }
+
+  // Like Explorer, Ctrl+Z in the tree reverses the last file operation rather than an edit.
+  async function stepHistory(redo: boolean) {
+    message = null
+    try {
+      const outcome = await api.fileUndo(redo)
+      if (!outcome) {
+        report(redo ? 'Nothing to redo.' : 'Nothing to undo.', 'note')
+        return
+      }
+      if (outcome.removed.length) {
+        onremoved(outcome.removed)
+        forget(outcome.removed)
+      }
+      if (outcome.moved.length) await afterMove(outcome.moved)
+      else await refresh()
+      const shown = [...outcome.added, ...outcome.moved.map(([, to]) => to)]
+      for (const path of shown) await revealInTree(path)
+      selection.clear()
+      for (const path of shown) selection.add(path)
+      anchor = shown[0] ?? null
+      if (shown[0]) focusRow(shown[0])
+      report(`${redo ? 'Redid' : 'Undid'}: ${outcome.label}`, 'note')
+    } catch (e) {
+      report(errorText(e))
+    }
   }
 
   async function moveInto(paths: string[], dir: string) {

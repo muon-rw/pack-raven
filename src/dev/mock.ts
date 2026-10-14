@@ -157,6 +157,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     moved: [],
   }),
   drag_out: () => null,
+  file_history: () => ({ undo: 'Rename options.txt', redo: null }),
+  file_undo: () => null,
   paste_files: () => {
     throw 'The clipboard has no files to paste.'
   },

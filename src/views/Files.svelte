@@ -190,11 +190,15 @@
       tree.report(errorText(e))
       return
     }
-    // We keep tabs with unsaved changes open, so you can still save them somewhere.
-    const removed = (path: string) => paths.some((p) => path === p || path.startsWith(`${p}/`))
-    for (const tab of workspace.tabs.filter((t) => removed(t.path) && !t.dirty)) close(tab.path, { remember: false })
+    closeRemoved(paths)
     tree.forget(paths)
     tree.refresh()
+  }
+
+  // We keep tabs with unsaved changes open, so you can still save them somewhere.
+  function closeRemoved(paths: string[]) {
+    const removed = (path: string) => paths.some((p) => path === p || path.startsWith(`${p}/`))
+    for (const tab of workspace.tabs.filter((t) => removed(t.path) && !t.dirty)) close(tab.path, { remember: false })
   }
 
   async function openPackFolder() {
@@ -315,7 +319,7 @@
         </button>
       </span>
     </div>
-    <FileTree bind:this={tree} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} ongitchange={loadChanges} />
+    <FileTree bind:this={tree} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} onremoved={closeRemoved} ongitchange={loadChanges} />
   </aside>
 
   <section class="editor">

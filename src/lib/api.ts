@@ -157,6 +157,13 @@ export interface DirEntry {
   ignored: boolean
 }
 
+export interface HistoryOutcome {
+  label: string
+  moved: [string, string][]
+  removed: string[]
+  added: string[]
+}
+
 export interface Pasted {
   created: string[]
   moved: [string, string][]
@@ -220,6 +227,8 @@ export const api = {
   openPackFolder: () => invoke<void>('open_pack_folder'),
   importPaths: (dir: string, sources: string[]) => invoke<Pasted>('import_paths', { dir, sources }),
   dragOut: (paths: string[]) => invoke<void>('drag_out', { paths }),
+  fileHistory: () => invoke<{ undo: string | null; redo: string | null }>('file_history'),
+  fileUndo: (redo: boolean) => invoke<HistoryOutcome | null>('file_undo', { redo }),
   renamePath: (from: string, to: string) => invoke<void>('rename_path', { from, to }),
   movePaths: (paths: string[], dir: string) => invoke<[string, string][]>('move_paths', { paths, dir }),
   gitOverview: () => invoke<{ status: GitStatus; commits: GitCommit[] }>('git_overview'),

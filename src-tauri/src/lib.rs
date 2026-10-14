@@ -12,6 +12,7 @@ mod files;
 mod git;
 mod git_commands;
 mod git_install;
+mod history;
 mod gitops;
 mod http;
 mod jobs;
@@ -106,6 +107,7 @@ pub fn run() {
                 jobs: jobs::Jobs::default(),
                 test: Arc::new(testrun::TestRun::default()),
                 watcher: Mutex::new(None),
+                history: Mutex::default(),
             });
             app.state::<AppState>().rewatch(app.handle());
             announcer::start(app.handle().clone());
@@ -194,6 +196,8 @@ pub fn run() {
             file_commands::open_pack_folder,
             file_commands::import_paths,
             file_commands::drag_out,
+            file_commands::file_history,
+            file_commands::file_undo,
             system_commands::defender_status,
             system_commands::defender_exclude,
             system_commands::defender_dismiss,

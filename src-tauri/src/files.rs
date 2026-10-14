@@ -134,9 +134,9 @@ pub fn create_dir(root: &Path, relative: &str) -> Result<()> {
     std::fs::create_dir_all(&path).with_context(|| format!("creating {relative}"))
 }
 
-pub fn trash(root: &Path, relatives: &[String]) -> Result<()> {
+pub fn trash(root: &Path, relatives: &[String]) -> Result<Option<Vec<trash::TrashItem>>> {
     let paths = relatives.iter().map(|r| resolve_entry(root, r)).collect::<Result<Vec<_>>>()?;
-    trash::delete_all(&paths).context("moving files to the trash")
+    crate::history::trash(&paths)
 }
 
 pub fn absolute_paths(root: &Path, relatives: &[String]) -> Result<Vec<String>> {
@@ -223,9 +223,14 @@ pub struct Pasted {
     pub created: Vec<String>,
     /// The (old, new) paths of moved entries that were already inside the pack folder.
     pub moved: Vec<(String, String)>,
+    /// The (old, new) absolute paths of every moved entry, including ones from outside the pack.
+    #[serde(skip)]
+    pub transfers: Vec<(PathBuf, PathBuf)>,
+    #[serde(skip)]
+    pub copies: Vec<PathBuf>,
 }
 
-fn move_entry(source: &Path, target: &Path) -> Result<()> {
+pub(crate) fn move_entry(source: &Path, target: &Path) -> Result<()> {
     match std::fs::rename(source, target) {
         Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
             copy_tree(source, target)?;
@@ -259,8 +264,10 @@ pub fn paste(root: &Path, relative_dir: &str, sources: &[PathBuf], cut: bool) ->
             if let Ok(inside) = canonical_source.strip_prefix(&canonical_root) {
                 pasted.moved.push((inside.to_string_lossy().replace('\\', "/"), to.clone()));
             }
+            pasted.transfers.push((source.clone(), target));
         } else {
             copy_tree(source, &target)?;
+            pasted.copies.push(target);
         }
         pasted.created.push(to);
     }

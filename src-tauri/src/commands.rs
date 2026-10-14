@@ -26,6 +26,7 @@ pub struct AppState {
     pub jobs: Jobs,
     pub test: Arc<TestRun>,
     pub watcher: Mutex<Option<crate::watcher::PackWatcher>>,
+    pub history: Mutex<crate::history::History>,
 }
 
 impl AppState {

@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
 use tauri::{AppHandle, State, Window};
@@ -7,6 +7,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::commands::AppState;
 use crate::files::{self, Entry, FileContent, Pasted};
+use crate::history::{self, Action, HistoryView, Outcome};
 use crate::os_drag;
 
 type CmdResult<T> = Result<T, String>;
@@ -37,18 +38,46 @@ pub fn absolute_path(state: State<'_, AppState>, path: String) -> CmdResult<Stri
 
 #[tauri::command]
 pub fn create_file(state: State<'_, AppState>, path: String) -> CmdResult<()> {
-    files::create_file(&state.settings().instance_dir, &path).map_err(err)
+    let root = state.settings().instance_dir;
+    files::create_file(&root, &path).map_err(err)?;
+    record_created(&state, &root, "New file", &path);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn create_dir(state: State<'_, AppState>, path: String) -> CmdResult<()> {
-    files::create_dir(&state.settings().instance_dir, &path).map_err(err)
+    let root = state.settings().instance_dir;
+    files::create_dir(&root, &path).map_err(err)?;
+    record_created(&state, &root, "New folder", &path);
+    Ok(())
+}
+
+fn record_created(state: &AppState, root: &Path, what: &str, path: &str) {
+    let created = root.join(path);
+    let label = format!("{what} {}", history::describe(std::slice::from_ref(&created)));
+    state.history.lock().unwrap().record(root, label, Some(Action::Trash(vec![created])));
+}
+
+fn record_pasted(state: &AppState, root: &Path, verb: &str, pasted: &Pasted) {
+    let (label, undo) = if pasted.transfers.is_empty() {
+        (format!("{verb} {}", history::describe(&pasted.copies)), Action::Trash(pasted.copies.clone()))
+    } else {
+        let targets: Vec<&PathBuf> = pasted.transfers.iter().map(|(_, to)| to).collect();
+        (format!("{verb} {}", history::describe(&targets)), Action::Move(pasted.transfers.iter().map(|(from, to)| (to.clone(), from.clone())).collect()))
+    };
+    if !pasted.transfers.is_empty() || !pasted.copies.is_empty() {
+        state.history.lock().unwrap().record(root, label, Some(undo));
+    }
 }
 
 #[tauri::command]
 pub async fn trash_paths(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<()> {
     let root = state.settings().instance_dir;
-    tauri::async_runtime::spawn_blocking(move || files::trash(&root, &paths)).await.map_err(|e| e.to_string())?.map_err(err)
+    let label = format!("Delete {}", history::describe(&paths));
+    let task_root = root.clone();
+    let trashed = tauri::async_runtime::spawn_blocking(move || files::trash(&task_root, &paths)).await.map_err(|e| e.to_string())?.map_err(err)?;
+    state.history.lock().unwrap().record(&root, label, trashed.map(Action::Restore));
+    Ok(())
 }
 
 #[tauri::command]
@@ -85,7 +114,9 @@ fn explorer_cut(clipboard: &ClipboardContext) -> bool {
 #[tauri::command]
 pub async fn paste_files(state: State<'_, AppState>, dir: String, cut: Vec<String>) -> CmdResult<Pasted> {
     let root = state.settings().instance_dir;
-    tauri::async_runtime::spawn_blocking(move || {
+    let task_root = root.clone();
+    let pasted = tauri::async_runtime::spawn_blocking(move || {
+        let root = task_root;
         let clipboard = ClipboardContext::new().map_err(|e| format!("opening the clipboard: {e}"))?;
         // clipboard-rs reports a clipboard without files as an error, which isn't one for us.
         let sources: Vec<PathBuf> = clipboard.get_files().unwrap_or_default().into_iter().map(PathBuf::from).collect();
@@ -105,24 +136,54 @@ pub async fn paste_files(state: State<'_, AppState>, dir: String, cut: Vec<Strin
         Ok(pasted)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    record_pasted(&state, &root, "Paste", &pasted);
+    Ok(pasted)
 }
 
 #[tauri::command]
 pub fn rename_path(state: State<'_, AppState>, from: String, to: String) -> CmdResult<()> {
-    files::rename(&state.settings().instance_dir, &from, &to).map_err(err)
+    let root = state.settings().instance_dir;
+    files::rename(&root, &from, &to).map_err(err)?;
+    let label = format!("Rename {}", history::describe(&[&from]));
+    state.history.lock().unwrap().record(&root, label, Some(Action::Move(vec![(root.join(&to), root.join(&from))])));
+    Ok(())
 }
 
 #[tauri::command]
 pub fn move_paths(state: State<'_, AppState>, paths: Vec<String>, dir: String) -> CmdResult<Vec<(String, String)>> {
-    files::move_into(&state.settings().instance_dir, &paths, &dir).map_err(err)
+    let root = state.settings().instance_dir;
+    let moved = files::move_into(&root, &paths, &dir).map_err(err)?;
+    if !moved.is_empty() {
+        let targets: Vec<&String> = moved.iter().map(|(_, to)| to).collect();
+        let label = format!("Move {}", history::describe(&targets));
+        let undo = Action::Move(moved.iter().map(|(from, to)| (root.join(to), root.join(from))).collect());
+        state.history.lock().unwrap().record(&root, label, Some(undo));
+    }
+    Ok(moved)
 }
 
 #[tauri::command]
 pub async fn import_paths(state: State<'_, AppState>, dir: String, sources: Vec<PathBuf>) -> CmdResult<Pasted> {
     let root = state.settings().instance_dir;
     let requested_move = os_drag::requested_move();
-    tauri::async_runtime::spawn_blocking(move || files::import(&root, &dir, &sources, requested_move)).await.map_err(|e| e.to_string())?.map_err(err)
+    let task_root = root.clone();
+    let pasted = tauri::async_runtime::spawn_blocking(move || files::import(&task_root, &dir, &sources, requested_move)).await.map_err(|e| e.to_string())?.map_err(err)?;
+    record_pasted(&state, &root, if pasted.transfers.is_empty() { "Copy in" } else { "Move in" }, &pasted);
+    Ok(pasted)
+}
+
+#[tauri::command]
+pub fn file_history(state: State<'_, AppState>) -> HistoryView {
+    state.history.lock().unwrap().view(&state.settings().instance_dir)
+}
+
+#[tauri::command]
+pub async fn file_undo(state: State<'_, AppState>, redo: bool) -> CmdResult<Option<Outcome>> {
+    let root = state.settings().instance_dir;
+    // Restoring from the trash or moving across drives can take a while, but undo steps must
+    // run one at a time, so we hold the history for the whole step.
+    tokio::task::block_in_place(|| state.history.lock().unwrap().step(&root, redo)).map_err(err)
 }
 
 // The OS drag loop needs the main thread, and on Windows it blocks that thread until you drop,
