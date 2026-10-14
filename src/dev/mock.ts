@@ -291,7 +291,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   credentials_status: () => ({ download: { source: { kind: 'stored' }, present: true }, upload: { source: { kind: 'env', name: 'CURSEFORGE_TOKEN' }, present: true }, keychain: 'Windows Credential Manager' }),
   env_var_names: () => ['APPDATA', 'CF_DOWNLOAD_TOKEN', 'CURSEFORGE_TOKEN', 'PATH'],
   defender_status: () => ({ active: true, exclusionsReadable: false, missing: [], prompt: false }),
-  git_overview: () => ({ status: { ...fx.status, staged, unstaged }, commits: fx.commits }),
+  git_overview: () => ({ status: { branch: 'master', upstream: 'origin/master', ahead: 1, behind: 0, hasCommits: true, hasRemote: true, conflicted: [], ...fx.status, staged, unstaged }, commits: fx.commits }),
   git_diff: (a) => diffFor(String(a.path), Boolean(a.staged)),
   list_dir: (a) => listDir(String(a.path)),
   read_file: (a) =>

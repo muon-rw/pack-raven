@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { loaderName } from '../lib/loader'
   import { tick } from 'svelte'
   import type { PackList } from '../lib/api'
 
@@ -75,7 +76,7 @@
           onclick={() => choose(() => onswitch(pack.dir))}
         >
           <span class="name">{pack.name}</span>
-          <span class="meta">{pack.minecraft} {pack.loader ?? ''}</span>
+          <span class="meta">{pack.minecraft} {loaderName(pack.loader)}</span>
         </button>
       {/each}
       {#if list?.packs.length}<div class="separator" role="separator"></div>{/if}

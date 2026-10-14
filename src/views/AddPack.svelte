@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { loaderName } from '../lib/loader'
   import { onMount } from 'svelte'
   import { open } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type InstanceInfo } from '../lib/api'
@@ -125,7 +126,7 @@
         <label class="instance" class:chosen={selected?.dir === instance.dir} class:disabled={instance.added}>
           <input type="radio" name="instance" value={instance.dir} disabled={instance.added || running} checked={selected?.dir === instance.dir} onchange={() => select(instance)} />
           <span class="title">{instance.name}</span>
-          <span class="muted">{instance.minecraft} {instance.loader ?? ''}, {instance.addonCount} files</span>
+          <span class="muted">{instance.minecraft} {loaderName(instance.loader)}, {instance.addonCount} files</span>
           <span class="status">{status(instance)}</span>
         </label>
       {:else}

@@ -7,7 +7,7 @@
   --edge: #8f8a78;
   --control: #e8e5da;
   --control-hi: #dcd8ca;
-  --control-edge: #a39e8c;
+  --control-edge: #8d8875;
   --text: #1e211b;
   --muted: #595d4f;
   --forest: #4d6b2f;
@@ -20,8 +20,8 @@
   --busy: #77735f;
   --fail: #9c3a2e;
   --warn: #8a4a0c;
-  --warn-fill: #fbe6c8;
-  --warn-border: #d69a55;
+  --warn-fill: #f8e0ae;
+  --warn-border: #c99a3e;
   --warn-icon: #9a520c;
   --fail-fill: #f5dad3;
   --fail-border: #c4584a;
@@ -87,11 +87,11 @@
   --edge: #737a68;
   --control: #2a2f25;
   --control-hi: #353b2f;
-  --control-edge: #5b6350;
+  --control-edge: #6b7360;
   --text: #e9e6da;
   --muted: #a4a895;
-  --forest: #9cbf6e;
-  --forest-hi: #b3d385;
+  --forest: #a7bd7f;
+  --forest-hi: #bccd95;
   --sage: #6f8a50;
   --highlight: #353c2b;
   --here: #3b331d;
@@ -126,7 +126,7 @@
   --rail-warn: #f0b867;
   --rail-fail: #ec8a7a;
   --rail-pack: #252f20;
-  --rail-current: var(--rail-edge);
+  --rail-current: #463b1c;
   --mark-wing: var(--ochre);
 
   color-scheme: dark;

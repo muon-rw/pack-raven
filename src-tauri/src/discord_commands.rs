@@ -49,7 +49,7 @@ pub async fn discord_test(state: State<'_, AppState>) -> CmdResult<()> {
 #[tauri::command]
 pub async fn announce_release(state: State<'_, AppState>, version: String) -> CmdResult<()> {
     let settings = state.settings();
-    let webhook = settings.webhook(&settings.instance_dir).ok_or("Add a Discord webhook in Settings first.")?;
+    let webhook = settings.webhook(&settings.instance_dir).ok_or("Add a Discord webhook in Pack settings first.")?;
     discord::announce(&settings.instance_dir, &state.pack_data().join("releases.json"), &version, &webhook).await.map_err(err)
 }
 

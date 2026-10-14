@@ -287,7 +287,6 @@ export const api = {
   overview: () => invoke<Overview>('overview'),
   getPackConfig: () => invoke<PackConfig>('get_pack_config'),
   savePackConfig: (config: PackConfig) => invoke<void>('save_pack_config', { config }),
-  setVersion: (version: string) => invoke<void>('set_version', { version }),
   getNotes: () => invoke<string>('get_notes'),
   saveNotes: (text: string) => invoke<void>('save_notes', { text }),
   changelogPreview: () => invoke<{ diff: ModDiff; markdown: string }>('changelog_preview'),

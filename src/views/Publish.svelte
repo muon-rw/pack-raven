@@ -4,9 +4,10 @@
   import { ask } from '@tauri-apps/plugin-dialog'
   import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
   import { api, errorText, type Overview, type PackConfig } from '../lib/api'
-  import { job } from '../lib/jobs.svelte'
+  import { job, onJobEnd } from '../lib/jobs.svelte'
   import { renderMarkdown } from '../lib/markdown'
-  import LogView from '../components/LogView.svelte'
+  import { bumpVersion, parseVersion, type Bump } from '../lib/version'
+  import JobLog from '../components/JobLog.svelte'
   import LinkedText from '../components/LinkedText.svelte'
 
   let {
@@ -21,13 +22,31 @@
   let problems: string[] = $state([])
   let checking = $state(true)
   let config = $state<PackConfig | null>(null)
-  let changelog: string | null = $state(null)
+  let changelog = $state<string | null>(null)
   let changelogError: string | null = $state(null)
   let hasWebhook = $state(false)
   let previewing = $state(false)
   let previewError = $state<string | null>(null)
   let error: string | null = $state(null)
   let published: { version: string; pushed: boolean } | null = $state(null)
+
+  // You choose the version here, where a tag collision matters. Publishing writes it to the
+  // Better Compatibility Checker config, so until then the pack reports the last release.
+  let version = $state('')
+  let versionTouched = $state(false)
+  let lastTag = $derived(overview?.lastTag ?? null)
+  let lastVersion = $derived(lastTag?.replace(/^v/, '') ?? null)
+  let suggested = $derived(lastVersion && parseVersion(lastVersion) ? bumpVersion(lastVersion, 'patch') : overview?.version?.trim() || '1.0.0')
+
+  $effect(() => {
+    if (!versionTouched && overview) version = suggested
+  })
+
+  function bump(kind: Bump) {
+    if (!lastVersion) return
+    version = bumpVersion(lastVersion, kind)
+    versionTouched = true
+  }
 
   onMount(() => {
     loadChangelog()
@@ -38,10 +57,16 @@
     api.getWebhook().then((w) => (hasWebhook = !!w), () => (hasWebhook = false))
   })
 
+  onJobEnd('publish', (phase) => {
+    if (phase !== 'done') return
+    versionTouched = false
+    loadChangelog()
+  })
+
   async function previewInDiscohook() {
     previewing = true
     try {
-      openUrl(await api.discohookPreview(version || 'next'))
+      openUrl(await api.discohookPreview(trimmed || 'next'))
       previewError = null
     } catch (e) {
       previewError = `Couldn't open Discohook: ${errorText(e)}`
@@ -59,13 +84,13 @@
     }
   }
 
-  let version = $derived(overview?.version?.trim() ?? '')
+  let trimmed = $derived(version.trim())
   let outOfSync = $derived(overview ? overview.missing.length + overview.unlocked.length : 0)
 
   $effect(() => {
-    const wanted = version
+    const wanted = trimmed
     void outOfSync
-    void job('publish').phase
+    void job('publish').finishedRuns
     let current = true
     checking = true
     const timer = setTimeout(() => {
@@ -80,31 +105,45 @@
     }
   })
 
-  $effect(() => {
-    if (job('publish').phase === 'done') loadChangelog()
-  })
-
+  // You can't take back an upload, so we block a push that would fail after it.
+  let blockers = $derived(
+    [...problems, overview?.behind && push ? `This branch is ${overview.behind} ${overview.behind === 1 ? 'commit' : 'commits'} behind its remote, so the push would fail after the upload. Pull first, or untick the push.` : null].filter(
+      (p): p is string => !!p,
+    ),
+  )
+  let tagTaken = $derived(problems.some((p) => p.startsWith('You already released')))
+  let emptyNotes = $derived(changelog !== null && !changelog.trim())
   let warnings = $derived(
     [
       overview?.changed.length
         ? `${overview.changed.length} uncommitted ${overview.changed.length === 1 ? 'file' : 'files'}. packraven builds the packs from disk, so these changes ship but stay out of the release commit.`
         : null,
-      overview?.behind && push
-        ? `This branch is ${overview.behind} ${overview.behind === 1 ? 'commit' : 'commits'} behind its remote, so the push would fail after the upload. Pull first.`
-        : null,
+      emptyNotes ? 'No release notes and no mod changes, so the CurseForge changelog will be empty.' : null,
     ].filter((w): w is string => !!w),
   )
 
+  let rolePing = $derived(!!config?.discord.role_id.trim())
+  let announces = $derived(hasWebhook && !!config?.discord.announce_on_approval)
+
   async function publish() {
-    const confirmed = await ask(
-      `Upload ${overview?.name} ${version} and its server pack to CurseForge, then commit and tag v${version}${push ? ' and push' : ''}? This can't be undone.`,
-      { title: 'Publish release', kind: 'warning', okLabel: `Publish ${version}`, cancelLabel: 'Cancel' },
-    )
+    const consequences = [
+      `Upload ${overview?.name} ${trimmed} and its server pack to CurseForge as ${releaseType ? `a ${releaseType.toLowerCase()}` : 'a release'}${config?.curseforge.manual_release ? ', held until you release it' : ''}.`,
+      `Commit and tag v${trimmed}${push ? ', then push' : ''}.`,
+      'Archive the release notes and clear changelog.md for the next release.',
+      announces ? `Post to Discord once CurseForge approves it${rolePing ? ', pinging the role' : ''}.` : null,
+      emptyNotes ? 'The changelog on CurseForge will be empty.' : null,
+    ].filter(Boolean)
+    const confirmed = await ask(`${consequences.join('\n')}\n\nThis can't be undone.`, {
+      title: `Publish ${trimmed}`,
+      kind: 'warning',
+      okLabel: `Publish ${trimmed}`,
+      cancelLabel: 'Cancel',
+    })
     if (!confirmed) return
     try {
       error = null
-      published = { version, pushed: push }
-      await api.publish(version, push)
+      published = { version: trimmed, pushed: push }
+      await api.publish(trimmed, push)
       onchange()
     } catch (e) {
       error = errorText(e)
@@ -135,28 +174,37 @@
   let publishing = $derived(publishJob.phase === 'running')
   let serverJob = $derived(job('server-pack'))
   let clientJob = $derived(job('client-export'))
-  let logLines = $derived(publishJob.lines.concat(serverJob.lines, clientJob.lines))
+  let logLines = $derived(publishJob.lines.concat(serverJob.lines, clientJob.lines).sort((a, b) => a.id - b.id))
   let showLog = $derived(publishing || serverJob.phase === 'running' || clientJob.phase === 'running' || logLines.length > 0)
   let projectUrl = $derived(overview?.projectId ? `https://www.curseforge.com/projects/${overview.projectId}` : null)
   let releaseType = $derived(
     config ? ({ release: 'Release', beta: 'Beta', alpha: 'Alpha' } as Record<string, string>)[config.curseforge.release_type] ?? config.curseforge.release_type : null,
   )
+  let canPublish = $derived(!publishing && !checking && !blockers.length && !!trimmed)
 </script>
 
 <div class="publish">
   <header class="head">
     <div>
-      <h2>Release <span class="version-tag">{version || 'unversioned'}</span></h2>
-      <p class="muted">
-        Review what you'll send to CurseForge. The version and notes come from
-        <button class="link" onclick={onchanges}>Changes</button>.
-      </p>
+      <h2>Publish</h2>
+      <p class="muted">Review what ships, then publish at the bottom. Publishing can't be undone.</p>
     </div>
-    <div class="go">
-      <button class="primary" class:busy={publishing} disabled={publishing || checking || problems.length > 0} aria-describedby="publish-checks" onclick={publish}>
-        {publishing ? 'Publishing' : `Publish ${version || 'release'}`}
-      </button>
-      <label class="check"><input type="checkbox" bind:checked={push} /> Push the release commit and tag</label>
+    <div class="builds">
+      <span class="muted small">Build without publishing</span>
+      <span class="row-start">
+        <button class:busy={serverJob.phase === 'running'} disabled={serverJob.phase === 'running'} onclick={() => build(api.buildServerPack, 'server pack build')}>
+          {serverJob.phase === 'running' ? 'Building' : 'Server pack'}
+        </button>
+        <button class:busy={clientJob.phase === 'running'} disabled={clientJob.phase === 'running'} onclick={() => build(api.buildClientExport, 'client pack build')}>
+          {clientJob.phase === 'running' ? 'Building' : 'Client pack'}
+        </button>
+      </span>
+      {#if (serverJob.phase === 'done' && serverJob.message) || (clientJob.phase === 'done' && clientJob.message)}
+        <span class="reveal">
+          {#if serverJob.phase === 'done' && serverJob.message}<button class="link" onclick={() => reveal(serverJob.message!)}>Show server pack</button>{/if}
+          {#if clientJob.phase === 'done' && clientJob.message}<button class="link" onclick={() => reveal(clientJob.message!)}>Show client pack</button>{/if}
+        </span>
+      {/if}
     </div>
   </header>
 
@@ -176,140 +224,163 @@
   {/each}
   {#if error}<Notice tone="error"><p><LinkedText text={error} /></p></Notice>{/if}
 
-  <div class="columns">
-    <section class="review" aria-labelledby="changelog-title">
-      <div class="row">
-        <h3 id="changelog-title">Changelog on CurseForge</h3>
-        <button onclick={loadChangelog}>Refresh</button>
-      </div>
-      {#if changelogError}
-        <Notice tone="error"><p>{changelogError}</p></Notice>
-      {:else if changelog === null}
-        <p class="muted">Building the preview.</p>
-      {:else if !changelog.trim()}
-        <div class="changelog empty">
-          <p>No release notes and no mod changes yet, so the CurseForge changelog would be empty.</p>
-          <p><button onclick={onchanges}>Write notes in Changes</button></p>
-        </div>
-      {:else}
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-        <article class="changelog" onclick={openLink}>{@html renderMarkdown(changelog)}</article>
+  <section class="step" aria-labelledby="version-title">
+    <h3 id="version-title">Version</h3>
+    <div class="version-row">
+      <label class="version-field">
+        <span class="visually-hidden">Version to publish</span>
+        <input bind:value={version} oninput={() => (versionTouched = true)} placeholder={suggested} spellcheck="false" aria-describedby="version-hint" aria-invalid={tagTaken} />
+      </label>
+      {#if lastVersion && parseVersion(lastVersion)}
+        <span class="bumps" role="group" aria-label="Bump from {lastVersion}">
+          {#each ['patch', 'minor', 'major'] as const as kind (kind)}
+            {@const next = bumpVersion(lastVersion, kind)}
+            <button type="button" class="ghost" aria-pressed={trimmed === next} onclick={() => bump(kind)}>
+              {kind[0].toUpperCase() + kind.slice(1)} <span class="file">{next}</span>
+            </button>
+          {/each}
+        </span>
       {/if}
-    </section>
+    </div>
+    <p class="muted small" id="version-hint">
+      {#if tagTaken}
+        <span class="failed">{trimmed} is already released (tag v{trimmed}). Pick a newer version.</span>
+      {:else if lastTag}
+        The last release is <span class="file">{lastTag}</span>. packraven writes this version into the pack when you publish.
+      {:else}
+        This is the first release. packraven writes this version into the pack when you publish.
+      {/if}
+    </p>
+  </section>
 
-    <aside class="side">
-      <section aria-labelledby="checks-title" aria-busy={checking}>
-        <h3 id="checks-title">Checks</h3>
-        <ul class="checks" id="publish-checks">
-          {#each problems as problem (problem)}
-            <li class="bad">
-              <svg viewBox="0 0 16 16" role="img" aria-label="Blocks publishing"><path d="M4 4l8 8M12 4l-8 8" /></svg>
-              {problem}
-            </li>
-          {/each}
-          {#each warnings as warning (warning)}
-            <li class="warn">
-              <svg viewBox="0 0 16 16" role="img" aria-label="Warning"><path d="M8 3v6M8 12v1" /></svg>
-              {warning}
-            </li>
-          {/each}
-          {#if !problems.length && !warnings.length}
-            <li class="ok">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7" /></svg>
-              {checking ? 'Checking' : 'Ready to publish'}
-            </li>
-          {/if}
-        </ul>
-      </section>
+  <section class="step" aria-labelledby="checks-title" aria-busy={checking}>
+    <h3 id="checks-title">Checks</h3>
+    <ul class="checks" id="publish-checks">
+      {#each blockers as problem (problem)}
+        <li class="bad">
+          <svg viewBox="0 0 16 16" role="img" aria-label="Blocks publishing"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+          <span><LinkedText text={problem} /></span>
+        </li>
+      {/each}
+      {#each warnings as warning (warning)}
+        <li class="warn">
+          <svg viewBox="0 0 16 16" role="img" aria-label="Warning"><path d="M8 3v6M8 12v1" /></svg>
+          {warning}
+        </li>
+      {/each}
+      {#if !blockers.length && !warnings.length}
+        <li class="ok">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7" /></svg>
+          {checking ? 'Checking' : 'Ready to publish'}
+        </li>
+      {/if}
+    </ul>
+  </section>
 
-      <section aria-labelledby="ships-title">
-        <h3 id="ships-title">Publish Settings</h3>
-        <dl class="ships">
-          <div>
-            <dt>Client pack</dt>
-            <dd><span class="file">{overview?.name} {version}.zip</span></dd>
-          </div>
-          <div>
-            <dt>Server pack</dt>
-            <dd>Attached to the client file</dd>
-          </div>
-          <div>
-            <dt>Release type</dt>
-            <dd>{releaseType ?? 'Unknown'}{config?.curseforge.manual_release ? ', held until you release it' : ''}</dd>
-          </div>
-          <div>
-            <dt>Project</dt>
-            <dd>
-              {#if projectUrl}<a href={projectUrl} onclick={(e) => { e.preventDefault(); openUrl(projectUrl!) }}>{overview?.projectId}</a>{:else}Not set{/if}
-            </dd>
-          </div>
-          <div>
-            <dt>Git</dt>
-            <dd>Commit and tag <span class="file">v{version || '?'}</span>{push ? ', then push' : ''}</dd>
-          </div>
-          <div>
-            <dt>Notes</dt>
-            <dd>Archived to <span class="file">changelogs/{version || 'version'}.md</span></dd>
-          </div>
-        </dl>
-      </section>
+  <section class="step" aria-labelledby="ships-title">
+    <h3 id="ships-title">What ships</h3>
+    <dl class="ships">
+      <div>
+        <dt>Client pack</dt>
+        <dd>{#if trimmed}<span class="file">{overview?.name} {trimmed}.zip</span>{:else}<span class="muted">Set a version above</span>{/if}</dd>
+      </div>
+      <div>
+        <dt>Server pack</dt>
+        <dd>Uploaded as an additional file of the client pack</dd>
+      </div>
+      <div>
+        <dt>Release type</dt>
+        <dd>
+          {releaseType ?? 'Unknown'}{config?.curseforge.manual_release ? ', held until you release it' : ''}
+          <button class="link" onclick={onsettings}>Change</button>
+        </dd>
+      </div>
+      <div>
+        <dt>Project</dt>
+        <dd>
+          {#if projectUrl}<a href={projectUrl} onclick={(e) => { e.preventDefault(); openUrl(projectUrl!) }}>{overview?.projectId}</a>{:else}Not set{/if}
+        </dd>
+      </div>
+      <div>
+        <dt>Git</dt>
+        <dd>{#if trimmed}Commit and tag <span class="file">v{trimmed}</span>{push ? ', then push' : ''}{:else}<span class="muted">Set a version above</span>{/if}</dd>
+      </div>
+      <div>
+        <dt>Notes</dt>
+        <dd>
+          {#if trimmed}Archived to <span class="file">changelogs/{trimmed}.md</span>, and changelog.md is cleared{:else}<span class="muted">Set a version above</span>{/if}
+        </dd>
+      </div>
+    </dl>
+  </section>
 
-      <section aria-labelledby="discord-title">
-        <h3 id="discord-title">Discord</h3>
-        <p class="muted">
-          {#if !hasWebhook}
-            No webhook set, so packraven won't announce this release.
-          {:else if config?.discord.announce_on_approval}
-            Post to Discord once CurseForge approves {version || 'the release'}{config.discord.role_id.trim() ? ', pinging the role' : ''}.
-          {:else}
-            Automatic announcements are off. Announce it from Releases once CurseForge approves it.
-          {/if}
-          <button class="link" onclick={onsettings}>{hasWebhook ? 'Change Discord settings' : 'Set up a webhook'}</button>
-        </p>
-        <div class="row-start">
-          <button class:busy={previewing} disabled={previewing} onclick={previewInDiscohook}>{previewing ? 'Opening' : 'Preview in Discohook'}</button>
-        </div>
-        {#if previewError}<p class="failed">{previewError}</p>{/if}
-      </section>
+  <section class="step" aria-labelledby="changelog-title">
+    <div class="row">
+      <h3 id="changelog-title">Changelog on CurseForge</h3>
+      <span class="row-start">
+        <button class="ghost" onclick={onchanges}>Edit notes in Changes</button>
+        <button class="ghost" onclick={loadChangelog}>Refresh</button>
+      </span>
+    </div>
+    {#if changelogError}
+      <Notice tone="error"><p>{changelogError}</p></Notice>
+    {:else if changelog === null}
+      <p class="muted">Building the preview.</p>
+    {:else if !changelog.trim()}
+      <div class="changelog empty">
+        <p>No release notes and no mod changes yet, so the CurseForge changelog would be empty.</p>
+        <p><button onclick={onchanges}>Write notes in Changes</button></p>
+      </div>
+    {:else}
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+      <article class="changelog" aria-label="Changelog preview" onclick={openLink}>{@html renderMarkdown(changelog, { headingOffset: 2 })}</article>
+    {/if}
+  </section>
 
-      <section aria-labelledby="build-title">
-        <h3 id="build-title">Build without publishing</h3>
-        <p class="muted">Create publish-ready zips only, without uploading, committing or tagging.</p>
-        <div class="row-start">
-          <button class:busy={serverJob.phase === 'running'} disabled={serverJob.phase === 'running'} onclick={() => build(api.buildServerPack, 'server pack build')}>
-            {serverJob.phase === 'running' ? 'Building' : 'Server pack'}
-          </button>
-          <button class:busy={clientJob.phase === 'running'} disabled={clientJob.phase === 'running'} onclick={() => build(api.buildClientExport, 'client zip')}>
-            {clientJob.phase === 'running' ? 'Building' : 'Client zip'}
-          </button>
-        </div>
-        {#if (serverJob.phase === 'done' && serverJob.message) || (clientJob.phase === 'done' && clientJob.message)}
-          <p class="reveal">
-            {#if serverJob.phase === 'done' && serverJob.message}<button class="link" onclick={() => reveal(serverJob.message!)}>Show server pack</button>{/if}
-            {#if clientJob.phase === 'done' && clientJob.message}<button class="link" onclick={() => reveal(clientJob.message!)}>Show client zip</button>{/if}
-          </p>
-        {/if}
-      </section>
-    </aside>
-  </div>
+  <section class="step" aria-labelledby="discord-title">
+    <h3 id="discord-title">Discord</h3>
+    <p class="muted">
+      {#if !hasWebhook}
+        No webhook set, so packraven won't announce this release.
+      {:else if announces}
+        packraven posts to Discord once CurseForge approves {trimmed || 'the release'}{rolePing ? ', and pings the role' : ''}.
+      {:else}
+        Automatic announcements are off. You can announce it from Releases.
+      {/if}
+      <button class="link" onclick={onsettings}>{hasWebhook ? 'Change Discord settings' : 'Set up a webhook'}</button>
+    </p>
+    <div class="row-start">
+      <button class:busy={previewing} disabled={previewing} onclick={previewInDiscohook}>{previewing ? 'Opening' : 'Preview the announcement'}</button>
+    </div>
+    {#if previewError}<p class="failed">{previewError}</p>{/if}
+  </section>
 
   {#if showLog}
-    <div class="log-block">
-      <h3>Build log</h3>
-      <LogView lines={logLines} label="Build and publish log" />
-    </div>
+    <section class="step log-block" aria-labelledby="log-title">
+      <h3 id="log-title">Build log</h3>
+      <JobLog lines={logLines} label="Build and publish log" />
+    </section>
   {/if}
+
+  <div class="go">
+    <label class="check"><input type="checkbox" bind:checked={push} /> Push the release commit and tag</label>
+    <button class="primary" class:busy={publishing} disabled={!canPublish} aria-describedby="publish-checks" onclick={publish}>
+      {publishing ? 'Publishing' : `Publish ${trimmed || 'release'}`}
+    </button>
+  </div>
 </div>
 
 <style>
   .publish {
     display: grid;
-    gap: 22px;
+    gap: 28px;
+    max-width: 860px;
   }
 
   .head {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
     align-items: end;
     gap: 16px 24px;
   }
@@ -318,54 +389,49 @@
     margin-top: 4px;
   }
 
-  .version-tag {
-    font-family: var(--font-log);
-    font-weight: 400;
-    font-variant-numeric: tabular-nums;
-    color: var(--forest);
-  }
-
-  .go {
+  .builds {
     display: grid;
     justify-items: end;
-    gap: 8px;
+    gap: 6px;
+    margin-left: auto;
   }
 
-  .go .primary {
-    padding: 10px 22px;
-    font-size: var(--step-1);
-  }
-
-  .go .check {
+  .small {
     font-size: var(--step--1);
-    color: var(--muted);
   }
 
-  .columns {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
-    gap: 36px;
-    align-items: start;
-  }
-
-  @media (max-width: 1150px) {
-    .columns {
-      grid-template-columns: minmax(0, 1fr);
-    }
-  }
-
-  .review,
-  .side section,
-  .log-block {
+  .step {
     display: grid;
     gap: 12px;
     align-content: start;
   }
 
-  .side {
-    display: grid;
-    gap: 28px;
-    align-content: start;
+  .version-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+  }
+
+  .version-field input {
+    width: 160px;
+    font-family: var(--font-log);
+    font-size: var(--step-1);
+  }
+
+  .version-field input[aria-invalid='true'] {
+    border-color: var(--fail-border);
+  }
+
+  .bumps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .bumps button[aria-pressed='true'] {
+    background: var(--here);
+    border-color: var(--here-border);
   }
 
   .row {
@@ -392,14 +458,15 @@
     color: var(--muted);
   }
 
-  .changelog :global(h1),
-  .changelog :global(h2),
-  .changelog :global(h3) {
+  .changelog :global(h4),
+  .changelog :global(h5),
+  .changelog :global(h6) {
     margin: 20px 0 6px;
     font-size: var(--step-1);
   }
 
-  .changelog :global(h3) {
+  .changelog :global(h5),
+  .changelog :global(h6) {
     font-size: var(--step-0);
     color: var(--muted);
   }
@@ -450,6 +517,11 @@
     text-align: right;
   }
 
+  .ships .link {
+    margin-left: 8px;
+    font-size: var(--step--1);
+  }
+
   .checks {
     display: grid;
     gap: 8px;
@@ -488,7 +560,7 @@
   }
 
   .log-block {
-    grid-template-rows: auto minmax(220px, 1fr);
+    grid-template-rows: auto minmax(240px, 40vh);
   }
 
   .row-start {
@@ -500,5 +572,31 @@
   .reveal {
     display: flex;
     gap: 16px;
+    font-size: var(--step--1);
+  }
+
+  /* We keep the button in reach while you read the review above it. */
+  .go {
+    position: sticky;
+    bottom: -28px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: end;
+    align-items: center;
+    gap: 12px 20px;
+    margin-bottom: -28px;
+    padding: 16px 0 28px;
+    background: var(--paper);
+    border-top: 1px solid var(--line-strong);
+  }
+
+  .go .primary {
+    padding: 10px 22px;
+    font-size: var(--step-1);
+  }
+
+  .go .check {
+    color: var(--muted);
+    font-size: var(--step--1);
   }
 </style>

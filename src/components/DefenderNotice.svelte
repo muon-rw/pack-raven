@@ -20,30 +20,37 @@
       status = await api.defenderStatus()
       error = null
     } catch (e) {
-      error = errorText(e)
+      error = `Couldn't exclude the folders: ${errorText(e)}`
     } finally {
       busy = false
     }
   }
 
   async function dismiss() {
-    await api.defenderDismiss(true)
     hidden = true
+    await api.defenderDismiss(true).catch((e) => ((hidden = false), (error = `Couldn't save that: ${errorText(e)}`)))
   }
 </script>
 
 {#if status?.prompt && !hidden}
   <div class="banner">
     <Notice tone="warn">
-      <p>Windows Defender can slow things down. Exclude these folders to speed them up, but note that Defender will stop scanning files in them.</p>
-      <ul>{#each status.missing as path (path)}<li class="file">{path}</li>{/each}</ul>
-      {#if error}<p class="failed">{error}</p>{/if}
-      <div class="actions">
-        <button onclick={exclude} class:busy disabled={busy}>{busy ? 'Waiting for Windows' : 'Exclude folders'}</button>
-        <button class="quiet" onclick={() => (hidden = true)}>Not now</button>
-        <button class="quiet" onclick={dismiss}>Don't ask again</button>
+      <div class="row">
+        <div class="text">
+          Windows Defender scans every file packraven builds, which slows builds and test runs. Excluding
+          <details>
+            <summary>{status.missing.length === 1 ? 'this folder' : `these ${status.missing.length} folders`}</summary>
+            <ul>{#each status.missing as path (path)}<li class="file">{path}</li>{/each}</ul>
+          </details>
+          speeds them up, but Defender stops scanning files in them. Windows asks you to confirm.
+        </div>
+        <span class="actions">
+          <button onclick={exclude} class:busy disabled={busy}>{busy ? 'Waiting for Windows' : 'Exclude folders'}</button>
+          <button class="quiet" onclick={() => (hidden = true)}>Not now</button>
+          <button class="quiet" onclick={dismiss}>Don't ask again</button>
+        </span>
       </div>
-      <p class="muted small">You'll get a pop-up from Windows.</p>
+      {#if error}<p class="failed" role="alert">{error}</p>{/if}
     </Notice>
   </div>
 {/if}
@@ -53,8 +60,31 @@
     margin-bottom: 18px;
   }
 
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px 16px;
+  }
+
+  .text {
+    max-width: 72ch;
+  }
+
+  details {
+    display: inline;
+  }
+
+  summary {
+    display: inline;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+
   ul {
-    margin: 0;
+    margin: 4px 0;
     padding-left: 18px;
   }
 
@@ -64,7 +94,7 @@
     gap: 4px;
   }
 
-  .small {
-    font-size: var(--step--1);
+  .actions button {
+    padding-block: 4px;
   }
 </style>

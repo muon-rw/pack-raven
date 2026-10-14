@@ -212,7 +212,7 @@ pub struct Pack {
 impl Pack {
     pub fn open(dir: &Path) -> Result<Self> {
         if !dir.join(LOCKFILE).exists() {
-            bail!("{} has no {LOCKFILE}; set the instance folder in Settings", dir.display());
+            bail!("{} has no {LOCKFILE}; add the pack again from Add pack", dir.display());
         }
         let config = match std::fs::read_to_string(dir.join(CONFIG_FILE)) {
             Ok(text) => toml::from_str(&text).context("parsing packraven.toml")?,

@@ -46,7 +46,7 @@ pub fn save_releases(path: &Path, releases: &[Release]) -> Result<()> {
 pub fn preflight(pack: &Pack, version: &str) -> Vec<String> {
     let mut problems = Vec::new();
     if pack.config.curseforge.project_id == 0 {
-        problems.push("Set the CurseForge project ID in Settings.".into());
+        problems.push("Set the CurseForge project ID in Pack settings.".into());
     }
     if curseforge::upload_token().is_none() {
         problems.push("Add a CurseForge upload token in App settings.".into());

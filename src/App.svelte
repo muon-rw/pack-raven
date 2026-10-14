@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { loaderName } from './lib/loader'
   import Notice from './components/Notice.svelte'
   import { onMount } from 'svelte'
   import { listen } from '@tauri-apps/api/event'
@@ -23,10 +24,11 @@
   import RavenMark from './components/RavenMark.svelte'
   import ThemeToggle from './components/ThemeToggle.svelte'
   import { modSyncSummary } from './lib/modsync'
+  import { shortcut } from './lib/platform'
 
   type View = 'changes' | 'test' | 'mods' | 'files' | 'git' | 'publish' | 'releases' | 'pack' | 'settings' | 'add'
   type Tone = 'ok' | 'warn' | 'bad' | 'busy' | 'idle'
-  type NavItem = { id: View; title: string; key?: string; status?: string; tone?: Tone; count?: number }
+  type NavItem = { id: View; title: string; key?: string; alias?: string; status?: string; tone?: Tone; count?: number }
 
   let view: View = $state('changes')
   let overview = $state<Overview | null>(null)
@@ -143,9 +145,9 @@
     overview
       ? ([
           ['Mods', overview.addons.mods],
-          ['Resource Packs', overview.addons.resourcePacks],
-          ['Shader Packs', overview.addons.shaderPacks],
-          ['Data Packs', overview.addons.dataPacks],
+          ['Resource packs', overview.addons.resourcePacks],
+          ['Shader packs', overview.addons.shaderPacks],
+          ['Data packs', overview.addons.dataPacks],
           ['Other', overview.addons.other],
         ] as const).filter(([label, count]) => count > 0 || label !== 'Other')
       : [],
@@ -191,8 +193,8 @@
           status: serverMods.changedSinceBuild ? 'Changed since you last built the server pack' : undefined,
           tone: serverMods.changedSinceBuild ? 'warn' : 'idle',
         },
-        { id: 'files', title: 'Files', key: 'E' },
-        { id: 'git', title: 'Git', key: 'G', count: overview?.changed.length },
+        { id: 'files', title: 'Files', key: '4', alias: 'E' },
+        { id: 'git', title: 'Git', key: '5', alias: 'G', count: overview?.changed.length },
       ],
     },
     {
@@ -201,18 +203,25 @@
         {
           id: 'publish',
           title: 'Publish',
-          key: '4',
+          key: '6',
           status: { running: 'Uploading', failed: 'Publish failed', done: 'Published', idle: undefined }[publishPhase],
           tone: ({ running: 'busy', failed: 'bad', done: 'ok', idle: 'idle' } as const)[publishPhase],
         },
-        { id: 'releases', title: 'Releases' },
+        { id: 'releases', title: 'Releases', key: '7' },
       ],
     },
-    { items: [{ id: 'pack', title: 'Pack settings' }] },
+    { items: [{ id: 'pack', title: 'Pack settings', key: '8' }] },
   ])
 
   $effect(() => {
     if (job('server-pack').phase === 'done' || publishPhase === 'done') serverMods.changedSinceBuild = false
+  })
+
+  // Every view shares one scroller, so we reset it to the top on each view change.
+  let scroller = $state<HTMLElement>()
+  $effect(() => {
+    void view
+    if (scroller) scroller.scrollTop = 0
   })
 
   $effect(() => {
@@ -224,7 +233,8 @@
   function onKey(event: KeyboardEvent) {
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
     const key = event.key.toUpperCase()
-    const item = packs?.active ? groups.flatMap((group) => group.items).find((item) => item.key === key) : undefined
+    // Files and Git keep their old letter shortcuts as aliases.
+    const item = packs?.active ? groups.flatMap((group) => group.items).find((item) => item.key === key || item.alias === key) : undefined
     if (item) view = item.id
     else if (event.key === ',') view = 'settings'
     else return
@@ -243,7 +253,7 @@
         <PackSwitcher list={packs} name={overview?.name ?? (packs?.active ? 'Pack unavailable' : 'No pack')} onswitch={switchPack} onadd={() => (view = 'add')} />
         {#if overview}
           <div class="version" title="Pack version, from the Better Compatibility Checker config">{overview.version ?? 'No version'}</div>
-          <div class="game">Minecraft {overview.minecraft} with {overview.loader}</div>
+          <div class="game">Minecraft {overview.minecraft} with {loaderName(overview.loader)}</div>
         {/if}
       </div>
 
@@ -266,11 +276,13 @@
             </dt>
             <dd>{overview.lockCount}</dd>
             {#if addonsOpen}
-              <dl class="breakdown" id="addon-breakdown">
-                {#each addonRows as [label, count] (label)}
-                  <div><dt>{label}</dt><dd>{count}</dd></div>
-                {/each}
-              </dl>
+              <dd class="breakdown" id="addon-breakdown">
+                <ul>
+                  {#each addonRows as [label, count] (label)}
+                    <li><span>{label}</span><span>{count}</span></li>
+                  {/each}
+                </ul>
+              </dd>
             {/if}
           </div>
         </dl>
@@ -293,9 +305,10 @@
                   >
                     <span class="dot" aria-hidden="true"></span>
                     <span class="label">{item.title}{#if item.status}<span class="visually-hidden">, {item.status}</span>{/if}</span>
-                    {#if item.key}<kbd aria-hidden="true">Ctrl {item.key}</kbd>{/if}
+                    {#if item.key}<kbd aria-hidden="true">{shortcut(`Ctrl+${item.key}`)}</kbd>{/if}
                     {#if item.count}
-                      <span class="pending count" title="{item.count} uncommitted {item.count === 1 ? 'file' : 'files'}">{item.count}</span>
+                      <span class="pending count" aria-hidden="true">{item.count}</span>
+                      <span class="visually-hidden">, {item.count} uncommitted {item.count === 1 ? 'file' : 'files'}</span>
                     {/if}
                   </button>
                 </li>
@@ -306,21 +319,29 @@
       {/if}
     </section>
 
+    {#if view === 'add' && packs?.packs.length}
+      <div class="item current adding" aria-current="page"><span class="label">Adding a pack</span></div>
+    {/if}
+
     <button class="item app-settings" class:current={view === 'settings'} aria-current={view === 'settings' ? 'page' : undefined} aria-keyshortcuts="Control+," onclick={() => (view = 'settings')}>
       <span class="label">App settings</span>
-      <kbd>Ctrl ,</kbd>
+      <kbd aria-hidden="true">{shortcut('Ctrl+,')}</kbd>
     </button>
   </aside>
 
   <main>
-    <section class="view">
+    <section class="view" bind:this={scroller}>
       <GitNotice oninstalled={refresh} />
       {#if view !== 'add'}<DefenderNotice />{/if}
       {#if overview && overview.hooks !== 'current' && view !== 'add' && !hooksDismissed}
         <div class="banner">
           <Notice tone="warn">
             <div class="hook-row">
-              <p>{overview.hooks === 'missing' ? "This pack has no sync hooks, so pulling won't download mods." : 'Sync hooks are older than this version of packraven.'}</p>
+              <p>
+                {overview.hooks === 'missing'
+                  ? "This pack has no sync hooks, the git scripts that download mods when you pull, so pulling won't download them."
+                  : "This pack's sync hooks, the git scripts that download mods when you pull, are older than this version of packraven."}
+              </p>
               <span class="hook-actions">
                 <button onclick={updateHooks}>Update hooks</button>
                 <button class="quiet" onclick={() => (hooksDismissed = true)}>Not now</button>
@@ -339,7 +360,7 @@
             <p><button onclick={() => (view = 'settings')}>Open App settings</button></p>
           </Notice>
         {:else if view === 'changes'}
-          <Changes {overview} onchange={refresh} />
+          <Changes {overview} onpublish={() => (view = 'publish')} />
         {:else if view === 'mods'}
           <ServerMods />
         {:else if view === 'test'}
@@ -519,15 +540,23 @@
 
   .facts .breakdown {
     flex-basis: 100%;
-    display: grid;
-    gap: 2px;
+    display: block;
     margin: 4px 0 0;
-    padding-left: 18px;
   }
 
-  .facts .breakdown div {
-    padding: 0;
-    border: 0;
+  .breakdown ul {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding: 0 0 0 18px;
+    list-style: none;
+  }
+
+  .breakdown li {
+    display: flex;
+    justify-content: space-between;
+    color: var(--rail-muted);
+    font-size: var(--step--1);
   }
 
   .pending {
@@ -591,16 +620,24 @@
     min-width: 0;
   }
 
+  /* We overlay the hint instead of giving it room, so a long label like Server mods doesn't wrap
+     when it appears. */
+  .item {
+    position: relative;
+  }
+
   .item kbd {
+    display: none;
+    position: absolute;
+    right: 6px;
     border-color: var(--rail-edge);
     color: var(--rail-muted);
-    opacity: 0;
+    background: inherit;
   }
 
   .item:hover kbd,
   .item:focus-visible kbd {
-    opacity: 1;
-    transition: opacity 0.12s ease-out;
+    display: inline;
   }
 
   .item .count {
@@ -643,7 +680,12 @@
     color: var(--rail-muted);
   }
 
+  .adding {
+    cursor: default;
+  }
+
   main {
+    --view-inset: 32px;
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -675,10 +717,6 @@
     outline-color: var(--rail-text);
   }
 
-  main {
-    --view-inset: 32px;
-  }
-
   /* We use a flex column so full-height views (Test, Files, Git) fill the space below any banners. */
   .view {
     flex: 1;
@@ -689,23 +727,40 @@
     padding: 28px var(--view-inset);
   }
 
+  /* On short windows we tighten the rhythm but keep the Work and Release labels. */
   @media (max-height: 720px) {
-    .game,
-    .group {
+    .game {
       display: none;
     }
 
     .rail {
-      gap: 12px;
-      padding-block: 14px;
+      gap: 10px;
+      padding-block: 12px;
     }
 
     .pack {
-      gap: 10px;
+      gap: 8px;
+      padding-block: 10px 6px;
+    }
+
+    .facts div {
+      padding-block: 4px;
+    }
+
+    .pack-nav {
+      gap: 6px;
+    }
+
+    .pack-nav ul + ul {
+      padding-top: 6px;
+    }
+
+    .group {
+      padding-bottom: 1px;
     }
 
     .item {
-      padding-block: 3px;
+      padding-block: 2px;
     }
   }
 

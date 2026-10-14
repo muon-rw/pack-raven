@@ -217,19 +217,26 @@
     justify-content: end;
   }
 
+  /* We share rows across the panes, so both logs start level when the client's buttons wrap. */
   .logs {
     flex: 1;
     min-height: 0;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 20px;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    column-gap: 20px;
   }
 
   .pane {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+    display: grid;
+    grid-row: span 4;
+    grid-template-rows: subgrid;
+    row-gap: 10px;
     min-height: 0;
+  }
+
+  .pane > .hint {
+    grid-row: 4;
   }
 
   .pane-head,

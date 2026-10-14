@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { listen } from '@tauri-apps/api/event'
+  import { ask } from '@tauri-apps/plugin-dialog'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { api, errorText, type ReleaseStatus } from '../lib/api'
-  import { job } from '../lib/jobs.svelte'
+  import { onJobEnd } from '../lib/jobs.svelte'
 
   let { onsettings }: { onsettings: () => void } = $props()
 
@@ -13,19 +14,19 @@
   let hasWebhook = $state(false)
   let announcing = $state<string | null>(null)
   let discordError = $state<string | null>(null)
+  let rolePing = $state(false)
 
   onMount(() => {
     loadReleases()
     api.getWebhook().then((w) => (hasWebhook = !!w), () => (hasWebhook = false))
+    api.getPackConfig().then((c) => (rolePing = !!c.discord.role_id.trim()), () => {})
     const unlisten = listen('release-announced', () => loadReleases())
     return () => {
       unlisten.then((stop) => stop())
     }
   })
 
-  $effect(() => {
-    if (job('publish').phase === 'done') loadReleases()
-  })
+  onJobEnd('publish', (phase) => phase === 'done' && loadReleases())
 
   async function loadReleases() {
     loading = true
@@ -39,7 +40,23 @@
     }
   }
 
-  async function announceNow(version: string) {
+  // An announcement is public and can ping a whole role, so we ask first and say when CurseForge
+  // hasn't approved the file yet.
+  async function announceNow(release: ReleaseStatus) {
+    const { version } = release
+    const approved = statusTone(release.status) === 'ok'
+    const lines = [
+      `Post the ${version} announcement to the Discord channel your webhook points at${rolePing ? ', pinging the role from Pack settings' : ''}.`,
+      approved ? null : `CurseForge still lists the file as "${release.status}", so players may not be able to download it yet.`,
+      release.announcedAt ? `You already announced it on ${new Date(release.announcedAt).toLocaleDateString()}, so this posts it again.` : null,
+    ].filter(Boolean)
+    const confirmed = await ask(`${lines.join('\n\n')}\n\nYou can't unsend it from packraven.`, {
+      title: approved ? `Announce ${version}` : `Announce ${version} before approval`,
+      kind: 'warning',
+      okLabel: release.announcedAt ? 'Announce again' : 'Announce',
+      cancelLabel: 'Cancel',
+    })
+    if (!confirmed) return
     announcing = version
     try {
       await api.announceRelease(version)
@@ -77,12 +94,12 @@
     <div>
       <h2>Releases</h2>
       <p class="muted">
-        Versions published from packraven, with their CurseForge review status and Discord announcements.
+        Versions published from packraven on this machine, with their CurseForge review status and Discord announcements.
         {#if !hasWebhook}No Discord webhook is set, so packraven won't announce anything.{/if}
       </p>
     </div>
     <div class="actions">
-      <button class="quiet" onclick={onsettings}>Discord settings</button>
+      <button class="ghost settings" onclick={onsettings}>Discord settings</button>
       <button class:busy={loading} disabled={loading} onclick={loadReleases}>{loading ? 'Checking' : 'Refresh'}</button>
     </div>
   </header>
@@ -93,7 +110,7 @@
   {#if releases.length}
     <table>
       <thead>
-        <tr><th>Version</th><th>Published</th><th>Pack file</th><th>Server pack</th><th>Discord</th></tr>
+        <tr><th>Version</th><th>Published</th><th>Client pack</th><th>Server pack</th><th>Discord</th></tr>
       </thead>
       <tbody>
         {#each [...releases].reverse() as release (release.fileId)}
@@ -105,21 +122,26 @@
               <span class="chip {statusTone(release.serverStatus)}">{release.serverStatus}</span>
               {#if release.serverPackLinked === false}<span class="chip pending">Not linked as the server pack</span>{/if}
             </td>
-            <td class="discord">
-              <span class:muted={!release.announcedAt}>{discordState(release)}</span>
-              <span class="discord-actions">
-                {#if hasWebhook}
-                  <button class="link" class:busy={announcing === release.version} disabled={announcing !== null} onclick={() => announceNow(release.version)}>
-                    {release.announcedAt ? 'Announce again' : 'Announce now'}
-                  </button>
-                {/if}
-                <button class="link" onclick={() => editInDiscohook(release.version)}>Edit in Discohook</button>
-              </span>
+            <td>
+              <div class="discord">
+                <span class:muted={!release.announcedAt}>{discordState(release)}</span>
+                <span class="discord-actions">
+                  {#if hasWebhook}
+                    <button class="ghost" class:busy={announcing === release.version} disabled={announcing !== null} onclick={() => announceNow(release)}>
+                      {release.announcedAt ? 'Announce again' : statusTone(release.status) === 'ok' ? 'Announce now' : 'Announce before approval'}
+                    </button>
+                  {/if}
+                  <button class="ghost" onclick={() => editInDiscohook(release.version)} aria-describedby="discohook-hint">Edit in Discohook</button>
+                </span>
+              </div>
             </td>
           </tr>
         {/each}
       </tbody>
     </table>
+    <p class="muted small" id="discohook-hint">
+      Discohook is a web editor for Discord messages. packraven opens the announcement there, so you can change it and post it yourself.
+    </p>
   {:else if loading}
     <p class="muted" role="status">Checking CurseForge for releases.</p>
   {:else if !releasesError}
@@ -149,10 +171,12 @@
     gap: 6px;
   }
 
-  .quiet {
-    background: transparent;
-    border-color: transparent;
+  .settings {
     color: var(--forest);
+  }
+
+  .small {
+    font-size: var(--step--1);
   }
 
   table {
@@ -184,15 +208,10 @@
     display: flex;
     flex-wrap: wrap;
     gap: 2px;
+    margin-left: -8px;
   }
 
-  .discord .link {
-    padding: 1px 4px;
-    margin-left: -4px;
-    font-weight: 400;
-    font-size: var(--step--1);
+  .discord-actions button {
     color: var(--forest);
-    background: transparent;
-    border-color: transparent;
   }
 </style>

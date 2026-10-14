@@ -20,8 +20,10 @@ const marked = new Marked({
   },
 })
 
-export function renderMarkdown(source: string): string {
-  return marked.parse(source) as string
+export function renderMarkdown(source: string, { headingOffset = 0 } = {}): string {
+  const html = marked.parse(source) as string
+  if (!headingOffset) return html
+  return html.replace(/<(\/?)h([1-6])\b/g, (_, slash, level) => `<${slash}h${Math.min(6, Number(level) + headingOffset)}`)
 }
 
 // Files keep their raw HTML here, since READMEs lean on it for centered banners and badges.

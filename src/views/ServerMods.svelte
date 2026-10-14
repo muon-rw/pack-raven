@@ -27,16 +27,24 @@
 
   onMount(load)
 
+  // Exclude and Keep fix the side outright, so we only reload the tags for Automatic.
   async function setOverride(mod: ModSide, select: HTMLSelectElement) {
+    const mode = select.value as Override
     try {
-      await api.setSideOverride(mod.projectId, select.value as Override)
+      await api.setSideOverride(mod.projectId, mode)
       serverMods.changedSinceBuild = true
       serverMods.changedSinceTest = true
     } catch (error) {
       select.value = mod.override
       loadError = `Couldn't change the override for ${mod.name}: ${errorText(error)}`
+      return
     }
-    await load()
+    if (mode === 'auto') return load()
+    mods = mods.map((m) =>
+      m.path === mod.path
+        ? { ...m, override: mode, side: mode === 'client' ? 'client' : 'both', reason: mode === 'client' ? 'You excluded it' : 'You kept it on the server' }
+        : m,
+    )
   }
 
   let excludedCount = $derived(mods.filter((m) => m.side === 'client').length)
@@ -64,8 +72,14 @@
   <header class="head">
     <h2>Server mods</h2>
     <p class="muted">
-      {mods.length} mods. packraven leaves {excludedCount} off the server as client-only, based on their CurseForge and Modrinth tags.
-      Override that here; packraven uses your choices to build server packs for Test and Publish.
+      {#if loading && !mods.length}
+        Reading which mods the server needs.
+      {:else if !mods.length}
+        This pack has no mods yet.
+      {:else}
+        {mods.length} {mods.length === 1 ? 'mod' : 'mods'}. packraven leaves {excludedCount || 'none'} off the server as client-only, based on their
+        CurseForge and Modrinth tags. Override that here; Test and Publish build server packs with your choices.
+      {/if}
     </p>
   </header>
 
@@ -108,7 +122,7 @@
                 {#if mod.url}<a href={mod.url} onclick={(e) => { e.preventDefault(); openUrl(mod.url!) }}>{mod.name}</a>{:else}{mod.name}{/if}
                 <div class="file muted">{mod.path.slice(5)}</div>
               </td>
-              <td><span class="chip {mod.side === 'client' ? 'change' : 'ok'}">{mod.side === 'client' ? 'Excluded' : mod.side === 'server' ? 'Included (for Singleplayer)' : 'Included'}</span></td>
+              <td><span class="chip {mod.side === 'client' ? 'change' : 'ok'}">{mod.side === 'client' ? 'Excluded' : mod.side === 'server' ? 'Included, server-side' : 'Included'}</span></td>
               <td class="muted">{mod.reason}</td>
               <td>
                 <select value={mod.override} onchange={(e) => setOverride(mod, e.currentTarget)} aria-label="Override for {mod.name}">
@@ -119,7 +133,19 @@
               </td>
             </tr>
           {:else}
-            <tr><td colspan="4" class="muted">No mods match. Try another filter or clear the search.</td></tr>
+            <tr>
+              <td colspan="4" class="muted">
+                {#if search}
+                  No mods match "{search}". <button class="link" onclick={() => (search = '')}>Clear the search</button>
+                {:else if filter === 'excluded'}
+                  packraven isn't leaving any mods off the server.
+                {:else if filter === 'overridden'}
+                  You haven't overridden any mods. Every mod uses its CurseForge and Modrinth tags.
+                {:else}
+                  This pack has no mods yet.
+                {/if}
+              </td>
+            </tr>
           {/each}
         {/if}
       </tbody>
@@ -130,13 +156,20 @@
 
 <style>
   .server {
-    display: grid;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
     gap: 18px;
+    min-height: 0;
   }
 
   .head {
     display: grid;
     gap: 4px;
+  }
+
+  .head p {
+    max-width: 64ch;
   }
 
   .tools {
@@ -165,6 +198,11 @@
     border-color: transparent;
   }
 
+  .filters button:hover:not(.on) {
+    color: var(--text);
+    background: var(--control-hi);
+  }
+
   .filters button.on {
     color: var(--text);
     font-weight: 700;
@@ -177,7 +215,7 @@
     height: 0.9em;
     width: 70%;
     margin: 4px 0;
-    border-radius: 3px;
+    border-radius: var(--radius-small);
     background: var(--line);
     animation: pulse 1.4s ease-in-out infinite;
   }
@@ -197,8 +235,10 @@
     width: 240px;
   }
 
+  /* We let the table fill the rest of the view, so it scrolls without a page scroll around it. */
   .table {
-    max-height: calc(100vh - 260px);
+    flex: 1;
+    min-height: 240px;
     overflow: auto;
     border: 1px solid var(--line);
     border-radius: var(--radius-panel);
@@ -228,6 +268,10 @@
 
   td a {
     color: var(--text);
+  }
+
+  td .file {
+    overflow-wrap: anywhere;
   }
 
 </style>

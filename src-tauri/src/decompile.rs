@@ -87,7 +87,7 @@ fn run(java: &Path, vineflower: &Path, work: &Path, classes: &[(String, Vec<u8>)
     let Some(written) = written else {
         let log = std::fs::read_to_string(&log_path).unwrap_or_default();
         if log.contains("UnsupportedClassVersionError") {
-            bail!("Vineflower needs Java 17 or newer, and {} is older. Set a newer Java in Settings.", java.display());
+            bail!("Vineflower needs Java 17 or newer, and {} is older. Set a newer Java in App settings.", java.display());
         }
         let detail = log.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("it printed nothing");
         bail!("Vineflower couldn't decompile this class: {detail}");
