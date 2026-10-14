@@ -149,7 +149,7 @@
     <div class="column">
       <label class="notes">
         <span class="label-row">Release notes <span class="file">changelog.md</span></span>
-        <textarea bind:value={notes} onblur={saveNotes} rows="16" placeholder="What changed in this release, in Markdown." aria-describedby="notes-status"></textarea>
+        <textarea bind:value={notes} onblur={saveNotes} rows="16" placeholder="What's new? Don't worry about mod changes, we'll add those automatically." aria-describedby="notes-status"></textarea>
       </label>
       <div class="row">
         <button onclick={saveNotes} disabled={notes === savedNotes}>Save notes <kbd>Ctrl S</kbd></button>

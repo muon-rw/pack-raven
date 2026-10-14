@@ -4,12 +4,30 @@
   import { ask, open } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type PackConfig } from '../lib/api'
 
-  let { dir, name, onchange, onremoved }: { dir: string; name: string; onchange: () => void; onremoved: () => void } = $props()
+  let { dir, name, minecraft, onchange, onremoved }: { dir: string; name: string; minecraft: string | null; onchange: () => void; onremoved: () => void } =
+    $props()
 
   let config: PackConfig | null = $state(null)
   let configError: string | null = $state(null)
   let webhook = $state('')
   let packJava = $state('')
+  let graalvmChoice = $state<GraalvmChoice>('auto')
+
+  let automaticGraalvm = $derived.by(() => {
+    const [major, minor] = (minecraft ?? '').split('.').map(Number)
+    if (major >= 26) return 'GraalVM 25'
+    if (major === 1 && minor >= 18) return 'GraalVM 21'
+    return minecraft ? "the host's own Java" : 'GraalVM 21, or 25 for Minecraft 26.1 and later'
+  })
+
+  type GraalvmChoice = 'auto' | '21' | '25' | 'exact'
+
+  function chooseGraalvm(choice: GraalvmChoice) {
+    graalvmChoice = choice
+    if (!config) return
+    if (graalvmChoice === 'exact') config.server.graalvm = config.server.graalvm.includes('.') ? config.server.graalvm : ''
+    else config.server.graalvm = graalvmChoice === 'auto' ? '' : graalvmChoice
+  }
   let message: string | null = $state(null)
   let messageFailed = $state(false)
   let discordMessage = $state<string | null>(null)
@@ -20,6 +38,8 @@
   async function load() {
     try {
       config = await api.getPackConfig()
+      const graalvm = config.server.graalvm.trim()
+      graalvmChoice = graalvm === '' ? 'auto' : graalvm === '21' || graalvm === '25' ? graalvm : 'exact'
       webhook = (await api.getWebhook()) ?? ''
       packJava = (await api.getPackJava()) ?? ''
       configError = null
@@ -121,19 +141,41 @@
         <h3>Server and test run</h3>
         <div class="grid">
           <label>Server memory <input bind:value={config.server.memory} placeholder="4G" title="Java heap size, such as 4G or 6144M" /></label>
-          <label>
-            Server pack GraalVM
-            <input
-              bind:value={config.server.graalvm}
-              placeholder="Automatic"
-              title="The GraalVM version the server pack's run scripts download on first start: 21 for the latest GraalVM 21, or 21.0.7 to pin a release. Leave empty for GraalVM 21, or GraalVM 25 for Minecraft 26.1 and later."
-            />
-          </label>
           <label>Test username <input bind:value={config.test.username} /></label>
           <label>Test server port <input type="number" bind:value={config.test.port} /></label>
         </div>
         <div class="field">
-          <label for="pack-java">Java</label>
+          <label for="server-graalvm">Server pack Java</label>
+          <div class="inline">
+            <select
+              id="server-graalvm"
+              value={graalvmChoice}
+              onchange={(e) => chooseGraalvm(e.currentTarget.value as GraalvmChoice)}
+              aria-describedby="server-graalvm-hint"
+            >
+              <option value="auto">Automatic ({automaticGraalvm})</option>
+              <option value="21">Latest GraalVM 21</option>
+              <option value="25">Latest GraalVM 25</option>
+              <option value="exact">Exact GraalVM release</option>
+            </select>
+            {#if graalvmChoice === 'exact'}
+              <input
+                bind:value={config.server.graalvm}
+                required
+                pattern={'\\d+(\\.\\d+){1,2}'}
+                placeholder="21.0.7"
+                aria-label="GraalVM release"
+                title="A GraalVM release such as 21.0.7"
+              />
+            {/if}
+          </div>
+          <p class="hint" id="server-graalvm-hint">
+            The server pack's run scripts download this on a host's first start. Latest means the newest release at that moment. Hosts can run their own Java
+            instead by writing its path in <span class="file">java.txt</span> next to the scripts.
+          </p>
+        </div>
+        <div class="field">
+          <label for="pack-java">Java on this machine</label>
           <div class="inline">
             <input id="pack-java" bind:value={packJava} placeholder="The Java from App settings" aria-describedby="pack-java-hint" />
             <button type="button" onclick={pickJava}>Choose</button>

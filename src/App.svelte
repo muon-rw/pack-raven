@@ -340,7 +340,7 @@
         {:else if view === 'releases'}
           <Releases onsettings={() => (view = 'pack')} />
         {:else if view === 'pack' && packs?.active}
-          <PackSettings dir={packs.active} name={overview?.name ?? 'this pack'} onchange={refresh} onremoved={() => { view = 'changes'; refresh() }} />
+          <PackSettings dir={packs.active} name={overview?.name ?? 'this pack'} minecraft={overview?.minecraft ?? null} onchange={refresh} onremoved={() => { view = 'changes'; refresh() }} />
         {:else}
           <SettingsView onchange={refresh} />
         {/if}
