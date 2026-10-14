@@ -179,14 +179,21 @@ function countProblems(state: EditorState): Problems {
   return problems
 }
 
+export interface EditorOptions {
+  readOnly: boolean
+  /** Leaves out the features that scan the whole file, for files over the size you set. */
+  simplified: boolean
+  onBlocked: () => void
+  onLintPaused: () => void
+}
+
 export function createState(
   path: string,
   doc: string,
   onChange: (state: EditorState) => void,
   onSave: () => void,
   onProblems: (problems: Problems) => void,
-  readOnly = false,
-  onBlocked: () => void = () => {},
+  { readOnly, simplified, onBlocked, onLintPaused }: EditorOptions,
 ): EditorState {
   let reported = ''
   return EditorState.create({
@@ -196,7 +203,7 @@ export function createState(
       highlightActiveLineGutter(),
       highlightSpecialChars(),
       history(),
-      foldGutter(),
+      simplified ? [] : foldGutter(),
       drawSelection(),
       dropCursor(),
       EditorState.allowMultipleSelections.of(true),
@@ -209,7 +216,7 @@ export function createState(
       highlightSelectionMatches(),
       syntaxHighlighting(highlight),
       language(path),
-      lintFor(path),
+      simplified ? [] : lintFor(path, onLintPaused),
       EditorState.readOnly.of(readOnly),
       readOnly ? blockedEdits(onBlocked) : [],
       theme,
@@ -221,7 +228,7 @@ export function createState(
         ...defaultKeymap,
         ...searchKeymap,
         ...historyKeymap,
-        ...foldKeymap,
+        ...(simplified ? [] : foldKeymap),
         ...lintKeymap,
       ]),
       EditorView.updateListener.of((update) => {

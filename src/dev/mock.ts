@@ -122,7 +122,8 @@ function listDir(path: string) {
       { name: 'latest.log', path: 'logs/latest.log', isDir: false, size: 4096, ignored: true },
     ],
   }
-  const listed = (fx.dirs[path] as MockEntry[] | undefined) ?? fallback[path] ?? []
+  const listed = [...((fx.dirs[path] as MockEntry[] | undefined) ?? fallback[path] ?? [])]
+  if (path === '' && !listed.some((e) => e.name === 'huge-recipes.json')) listed.push({ name: 'huge-recipes.json', path: 'huge-recipes.json', isDir: false, size: 72e6, ignored: false })
   return listed.map((e) => ({ ...e, archive: !e.isDir && /\.(jar|zip)$/i.test(e.name), archived: false }))
 }
 
@@ -162,6 +163,22 @@ function mockImage(path: string) {
 function dataUrlBytes(url: string) {
   return Uint8Array.from(atob(url.split(',')[1]), (c) => c.charCodeAt(0)).buffer
 }
+
+// A short NeoForge log that grows by a line on each read, so you can watch the viewer follow it.
+const sampleLog = [
+  '[12:00:00] [main/INFO] [cpw.mods.modlauncher.Launcher/MODLAUNCHER]: ModLauncher running',
+  '[12:00:01] [main/DEBUG] [mixin/]: Registering new injector for @SugarWrapper',
+  '[12:00:02] [main/WARN] [mixin/]: Reference map \'example.refmap.json\' for example.mixins.json could not be read',
+  '[12:00:03] [Render thread/ERROR] [net.minecraft.client.Minecraft/]: Failed to load texture',
+  'java.io.FileNotFoundException: example:textures/block/missing.png',
+  '\tat net.minecraft.server.packs.resources.ResourceManager.getResourceOrThrow(ResourceManager.java:25)',
+  '\tat net.minecraft.client.renderer.texture.SimpleTexture.load(SimpleTexture.java:40)',
+  '[12:00:04] [main/INFO] [net.neoforged.fml.loading.moddiscovery.ModDiscoverer/SCAN]: Mod List:',
+  '\t\tName Version (Mod Id)',
+  '\t\t[NoCube\'s] Realm RPG: Treasure Balloons 1.0.0 (realmrpg_balloons)',
+  '[12:00:05] [Server thread/INFO] [net.minecraft.server.MinecraftServer/]: Done (3.2s)!',
+]
+let logReads = 0
 
 const sampleNbt = {
   compression: 'gzip',
@@ -228,7 +245,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     clientRunning: false,
     hooks: 'current',
   }),
-  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', java: null, defenderExcluded: [], defenderDismissed: false }),
+  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', java: null, defenderExcluded: [], defenderDismissed: false, editorAskMb: 50, editorMaxMb: 100 }),
   get_pack_config: () => config,
   get_webhook: () => 'https://discord.com/api/webhooks/0000/example',
   git_version: () => '2.56.0.windows.2',
@@ -238,9 +255,19 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   git_overview: () => ({ status: { ...fx.status, staged, unstaged }, commits: fx.commits }),
   git_diff: (a) => diffFor(String(a.path), Boolean(a.staged)),
   list_dir: (a) => listDir(String(a.path)),
-  read_file: (a) => readFile(String(a.path)),
+  read_file: (a) =>
+    String(a.path).endsWith('huge-recipes.json')
+      ? a.allowLarge
+        ? { text: '[\n' + '  {"type": "minecraft:crafting_shaped"},\n'.repeat(20000) + '  {}\n]\n', size: 72e6, unreadable: null, crlf: false, bom: false, archived: false, compressed: false, large: true }
+        : { text: null, size: 72e6, unreadable: 'This file is 72.0 MB, over the 50.0 MB you set to ask about. You can open it in a simplified editor without checking or folding.', crlf: false, bom: false, archived: false, compressed: false, large: true }
+      : readFile(String(a.path)),
   read_bytes: (a) => dataUrlBytes(mockImage(String(a.path))),
   read_nbt: () => sampleNbt,
+  read_log: (a) => {
+    if (!a.offset) return { text: `${sampleLog.join('\n')}\n`, offset: 1, reset: true, truncated: false, followable: !String(a.path).endsWith('.gz') }
+    logReads++
+    return { text: `[12:00:${String(5 + logReads).padStart(2, '0')}] [Server thread/INFO] [net.minecraft.server.MinecraftServer/]: Tick ${logReads}\n`, offset: 1 + logReads, reset: false, truncated: false, followable: true }
+  },
   media_path: (a) => `${pack.dir}/${a.path}`,
   decompile_class: (a) =>
     new Promise((resolve) =>

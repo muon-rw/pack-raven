@@ -7,6 +7,8 @@ export interface Settings {
   java: string | null
   defenderExcluded: string[]
   defenderDismissed: boolean
+  editorAskMb: number
+  editorMaxMb: number
 }
 
 export interface PackConfig {
@@ -179,6 +181,7 @@ export interface FileContent {
   bom: boolean
   archived: boolean
   compressed: boolean
+  large: boolean
 }
 
 export type NbtTag =
@@ -235,7 +238,7 @@ export const api = {
   defenderExclude: (paths: string[]) => invoke<void>('defender_exclude', { paths }),
   defenderDismiss: (dismissed: boolean) => invoke<void>('defender_dismiss', { dismissed }),
   listDir: (path: string) => invoke<DirEntry[]>('list_dir', { path }),
-  readFile: (path: string) => invoke<FileContent>('read_file', { path }),
+  readFile: (path: string, allowLarge = false) => invoke<FileContent>('read_file', { path, allowLarge }),
   writeFile: (path: string, text: string, crlf: boolean, bom: boolean) => invoke<void>('write_file', { path, text, crlf, bom }),
   absolutePath: (path: string) => invoke<string>('absolute_path', { path }),
   createFile: (path: string) => invoke<void>('create_file', { path }),
@@ -249,6 +252,8 @@ export const api = {
   copyPaths: (paths: string[], absolute: boolean) => invoke<void>('copy_paths', { paths, absolute }),
   readBytes: (path: string) => invoke<ArrayBuffer>('read_bytes', { path }),
   readNbt: (path: string) => invoke<NbtDocument>('read_nbt', { path }),
+  readLog: (path: string, offset: number) =>
+    invoke<{ text: string; offset: number; reset: boolean; truncated: boolean; followable: boolean }>('read_log', { path, offset }),
   decompileClass: (path: string) => invoke<string>('decompile_class', { path }),
   extractArchive: (path: string) => invoke<string>('extract_archive', { path }),
   compressPaths: (paths: string[]) => invoke<string>('compress_paths', { paths }),

@@ -17,6 +17,10 @@ pub struct Settings {
     pub defender_excluded: Vec<PathBuf>,
     pub defender_dismissed: bool,
     pub discord_webhooks: BTreeMap<String, String>,
+    /// Files larger than this many megabytes open only in the simplified editor, if you ask.
+    pub editor_ask_mb: u32,
+    /// Files larger than this many megabytes don't open in the editor at all.
+    pub editor_max_mb: u32,
 }
 
 fn curseforge_root() -> PathBuf {
@@ -30,7 +34,7 @@ fn curseforge_root() -> PathBuf {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { instance_dir: PathBuf::new(), packs: Vec::new(), install_dir: curseforge_root().join("Install"), java: None, defender_excluded: Vec::new(), defender_dismissed: false, discord_webhooks: BTreeMap::new() }
+        Self { instance_dir: PathBuf::new(), packs: Vec::new(), install_dir: curseforge_root().join("Install"), java: None, defender_excluded: Vec::new(), defender_dismissed: false, discord_webhooks: BTreeMap::new(), editor_ask_mb: (crate::files::Limits::DEFAULT.ask / 1_000_000) as u32, editor_max_mb: (crate::files::Limits::DEFAULT.max / 1_000_000) as u32 }
     }
 }
 
@@ -48,6 +52,11 @@ impl Settings {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, serde_json::to_string_pretty(self)?).context("writing settings")
+    }
+
+    pub fn editor_limits(&self) -> crate::files::Limits {
+        let ask = u64::from(self.editor_ask_mb.max(1)) * 1_000_000;
+        crate::files::Limits { ask, max: (u64::from(self.editor_max_mb) * 1_000_000).max(ask) }
     }
 
     pub fn webhook(&self, pack: &Path) -> Option<String> {

@@ -7,7 +7,7 @@
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
   import { api, errorText, type GitStatus } from '../lib/api'
   import { drag } from '../lib/drag.svelte'
-  import { workspace, activeTab, open, pin, save, close, reload, resetFor, bindView, fs, useDiskVersion, keepMine, canReopen, reopenClosed, showSource, type Tab } from '../lib/workspace.svelte'
+  import { workspace, activeTab, open, pin, save, close, reload, resetFor, bindView, fs, useDiskVersion, keepMine, canReopen, reopenClosed, showSource, openSimplified, type Tab } from '../lib/workspace.svelte'
   import { commandKey, fileManager, isWindows, shortcut, trashName } from '../lib/platform'
   import { nav } from '../lib/nav.svelte'
   import FileTree from '../components/FileTree.svelte'
@@ -15,6 +15,7 @@
   import ImageView from '../components/ImageView.svelte'
   import MediaView from '../components/MediaView.svelte'
   import NbtView from '../components/NbtView.svelte'
+  import LogViewer from '../components/LogViewer.svelte'
   import { isGzip, outerArchive, viewerFor } from '../lib/viewers'
   import ContextMenu from '../components/ContextMenu.svelte'
   import type { MenuItem } from '../lib/menu'
@@ -235,6 +236,10 @@
   }
 
   async function reloadTab(tab: Tab) {
+    if (viewer === 'log' && tab.path === current?.path) {
+      await logViewer?.reload()
+      return
+    }
     if (tab.dirty) {
       const confirmed = await ask(`Reload ${name(tab.path)} from disk? You'll lose your unsaved changes.`, {
         title: 'Reload file',
@@ -361,6 +366,7 @@
   let readOnly = $derived(!!current && (current.archived || current.compressed))
   let viewer = $derived(current && !current.state ? viewerFor(current.path) : null)
   let viewerError = $state<{ path: string; message: string } | null>(null)
+  let logViewer: LogViewer | undefined = $state()
   let failure = $derived(viewerError && viewerError.path === current?.path ? viewerError.message : null)
   const decompiling = new Set<string>()
 
@@ -387,6 +393,21 @@
     clearTimeout(blockedTimer)
     blockedTimer = setTimeout(() => (blockedNotice = false), 3000)
   })
+
+  async function openLarge(path: string) {
+    try {
+      openError = null
+      await openSimplified(path)
+    } catch (e) {
+      openError = errorText(e)
+    }
+  }
+
+  // The linter is part of the lazily loaded editor bundle, so we load it only when you ask.
+  async function checkNow() {
+    const lint = await import('../lib/lint')
+    if (view) lint.checkNow(view)
+  }
 
   function retryViewer() {
     viewerError = null
@@ -504,7 +525,15 @@
           {#if problems}
             <button class="link problems {problems.tone}" title="Show problems (Ctrl+Shift+M)" onclick={showProblems}>{problems.text}</button>
           {/if}
-          {#if readOnly}<span class="read-only" class:flash={blockedNotice}>Read-only</span>{/if}
+          {#if current.state && current.large}
+            <span class="muted small" title="Checking and folding are off for this large file, so typing stays responsive.">Simplified editor</span>
+          {:else if current.state && current.lintPaused}
+            <span class="muted small" title="Checking this file took long enough to slow down typing, so we only check it when you ask.">
+              Checking paused
+              <button class="link" onclick={checkNow}>Check now</button>
+            </span>
+          {/if}
+          {#if readOnly && viewer !== 'log'}<span class="read-only" class:flash={blockedNotice}>Read-only</span>{/if}
           <button class="link" onclick={() => reveal(outerArchive(current!.path))}>{current.archived ? 'Show the archive in folder' : 'Show in folder'}</button>
           <button class="link" onclick={() => reloadTab(current!)}>Reload</button>
           {#if current.state && !readOnly}
@@ -545,7 +574,9 @@
 
     <div class="host" bind:this={host} class:hidden={!current?.state}></div>
 
-    {#if current && !current.state && !failure && viewer === 'image'}
+    {#if current && viewer === 'log'}
+      {#key current.path}<LogViewer bind:this={logViewer} path={current.path} />{/key}
+    {:else if current && !current.state && !failure && viewer === 'image'}
       <ImageView path={current.path} archived={current.archived} />
     {:else if current && !current.state && !failure && (viewer === 'video' || viewer === 'audio')}
       <MediaView path={current.path} archived={current.archived} kind={viewer} />
@@ -558,6 +589,7 @@
         <p>{failure ?? current.unreadable}</p>
         <p class="buttons">
           {#if failure}<button onclick={retryViewer}>Try again</button>{/if}
+          {#if current.large}<button class="primary" onclick={() => openLarge(current!.path)}>Open in simplified editor</button>{/if}
           {#if (viewer === 'archive' || viewer === 'compressed') && !current.archived}<button onclick={() => tree.extract(current!.path)}>Extract here</button>{/if}
           {#if !current.archived}<button onclick={() => openWithDefaultApp(current!.path)}>Open in default app</button>{/if}
         </p>

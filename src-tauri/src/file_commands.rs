@@ -23,8 +23,9 @@ pub fn list_dir(state: State<'_, AppState>, path: String) -> CmdResult<Vec<Entry
 }
 
 #[tauri::command]
-pub fn read_file(state: State<'_, AppState>, path: String) -> CmdResult<FileContent> {
-    files::read(&state.settings().instance_dir, &path).map_err(err)
+pub fn read_file(state: State<'_, AppState>, path: String, allow_large: Option<bool>) -> CmdResult<FileContent> {
+    let settings = state.settings();
+    files::read(&settings.instance_dir, &path, settings.editor_limits(), allow_large.unwrap_or(false)).map_err(err)
 }
 
 #[tauri::command]
@@ -93,6 +94,12 @@ pub async fn read_bytes(state: State<'_, AppState>, path: String) -> CmdResult<t
     let root = state.settings().instance_dir;
     let bytes = tauri::async_runtime::spawn_blocking(move || files::bytes(&root, &path, MAX_VIEWED_BYTES)).await.map_err(|e| e.to_string())?.map_err(err)?;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+pub async fn read_log(state: State<'_, AppState>, path: String, offset: u64) -> CmdResult<crate::logs::LogChunk> {
+    let root = state.settings().instance_dir;
+    tauri::async_runtime::spawn_blocking(move || crate::logs::read(&root, &path, offset)).await.map_err(|e| e.to_string())?.map_err(err)
 }
 
 #[tauri::command]

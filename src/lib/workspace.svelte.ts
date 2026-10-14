@@ -2,6 +2,7 @@ import type { EditorState, TransactionSpec } from '@codemirror/state'
 import type { Problems } from './editor'
 import { listen } from '@tauri-apps/api/event'
 import { api, type FileContent } from './api'
+import { isGzip, isLog, outerArchive } from './viewers'
 
 export interface Tab {
   path: string
@@ -17,6 +18,9 @@ export interface Tab {
   preview: boolean
   archived: boolean
   compressed: boolean
+  /** Over the size you set to ask about, so its text, once loaded, shows in the simplified editor. */
+  large: boolean
+  lintPaused: boolean
 }
 
 // blocked counts attempts to edit a read-only tab, so the view can say why nothing happened.
@@ -58,7 +62,7 @@ export function updateDirty(path: string, state: EditorState) {
   if (current.dirty) current.preview = false
 }
 
-async function editorState(path: string, text: string, readOnly: boolean) {
+async function editorState(path: string, text: string, { readOnly = false, simplified = false } = {}) {
   const { createState } = await import('./editor')
   return createState(
     path,
@@ -69,9 +73,20 @@ async function editorState(path: string, text: string, readOnly: boolean) {
       const current = tab(path)
       if (current) current.problems = problems
     },
-    readOnly,
-    () => workspace.blocked++,
+    {
+      readOnly,
+      simplified,
+      onBlocked: () => workspace.blocked++,
+      onLintPaused: () => {
+        const current = tab(path)
+        if (current) current.lintPaused = true
+      },
+    },
   )
+}
+
+function stateOptions(content: { archived: boolean; compressed: boolean; large: boolean }) {
+  return { readOnly: content.archived || content.compressed, simplified: content.large }
 }
 
 export function pin(path: string) {
@@ -79,13 +94,18 @@ export function pin(path: string) {
   if (current) current.preview = false
 }
 
+// The log viewer reads logs itself, a piece at a time, so a log tab never loads its text here.
+function logContent(path: string): FileContent {
+  return { text: null, size: 0, unreadable: null, crlf: false, bom: false, archived: outerArchive(path) !== path, compressed: isGzip(path), large: false }
+}
+
 // Like VS Code, a preview tab shows a file until you open another one in its place. Editing
 // the file or opening it with pinned set keeps it open.
 export async function open(path: string, { pinned = true } = {}) {
   if (!tab(path)) {
-    const content = await api.readFile(path)
+    const content = isLog(path) ? logContent(path) : await api.readFile(path)
     const text = content.text ?? ''
-    const state = content.text === null ? null : await editorState(path, text, content.archived || content.compressed)
+    const state = content.text === null ? null : await editorState(path, text, stateOptions(content))
     // A double-click opens the same file three times at once, so another call may have
     // added the tab while we were reading.
     if (!tab(path)) addTab(path, content, text, state, pinned)
@@ -108,6 +128,8 @@ function addTab(path: string, content: FileContent, text: string, state: EditorS
     preview: !pinned,
     archived: content.archived,
     compressed: content.compressed,
+    large: content.large,
+    lintPaused: false,
     state,
   }
   const replaced = pinned ? -1 : workspace.tabs.findIndex((t) => t.preview)
@@ -119,8 +141,28 @@ function addTab(path: string, content: FileContent, text: string, state: EditorS
 export async function showSource(path: string, text: string) {
   const current = tab(path)
   if (!current || current.state) return
-  const state = await editorState(path, text, true)
+  const state = await editorState(path, text, { readOnly: true })
   Object.assign(current, { saved: text, dirty: false, unreadable: null, state })
+}
+
+/** Opens a file over the size you set to ask about, in the simplified editor. */
+export async function openSimplified(path: string) {
+  const current = tab(path)
+  if (!current || current.state) return
+  const content = await api.readFile(path, true)
+  if (content.text === null) {
+    current.unreadable = content.unreadable
+    return
+  }
+  Object.assign(current, {
+    saved: content.text,
+    dirty: false,
+    crlf: content.crlf,
+    bom: content.bom,
+    unreadable: null,
+    lintPaused: false,
+    state: await editorState(path, content.text, stateOptions(content)),
+  })
 }
 
 export async function save(path = workspace.active) {
@@ -141,8 +183,8 @@ export async function save(path = workspace.active) {
 
 export async function reload(path: string) {
   const current = tab(path)
-  if (!current) return
-  const content = await api.readFile(path)
+  if (!current || isLog(path)) return
+  const content = await api.readFile(path, current.large)
   const text = content.text ?? ''
   Object.assign(current, {
     saved: text,
@@ -153,7 +195,9 @@ export async function reload(path: string) {
     conflict: null,
     disk: null,
     problems: { errors: 0, warnings: 0 },
-    state: content.text === null ? null : await editorState(path, text, content.archived || content.compressed),
+    large: content.large,
+    lintPaused: false,
+    state: content.text === null ? null : await editorState(path, text, stateOptions(content)),
   })
 }
 
@@ -197,7 +241,7 @@ export async function moved(pairs: [string, string][]) {
   for (const current of [...workspace.tabs]) {
     const to = destination(current.path)
     if (!to) continue
-    const state = current.state ? await editorState(to, current.state.doc.toString(), current.archived || current.compressed) : null
+    const state = current.state ? await editorState(to, current.state.doc.toString(), { readOnly: current.archived || current.compressed, simplified: current.large }) : null
     const wasActive = workspace.active === current.path
     current.path = to
     current.state = state
@@ -258,7 +302,7 @@ async function onDiskChange(paths: string[]) {
   for (const current of workspace.tabs.filter((t) => paths.includes(t.path) && t.state)) {
     let text: string | null
     try {
-      text = (await api.readFile(current.path)).text
+      text = (await api.readFile(current.path, current.large)).text
     } catch {
       current.conflict = 'deleted'
       continue

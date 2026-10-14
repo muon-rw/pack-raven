@@ -1,7 +1,7 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from './api'
 
-export type Viewer = 'image' | 'video' | 'audio' | 'nbt' | 'class' | 'archive' | 'compressed'
+export type Viewer = 'image' | 'video' | 'audio' | 'nbt' | 'class' | 'archive' | 'compressed' | 'log'
 
 const kinds: Record<string, Viewer> = {
   png: 'image',
@@ -46,8 +46,13 @@ export function isGzip(path: string) {
   return extensionOf(path) === 'gz'
 }
 
+// Minecraft gzips each log when it starts a new one, so old logs end in .log.gz.
+export function isLog(path: string) {
+  return /\.log(\.gz)?$/i.test(path)
+}
+
 export function viewerFor(path: string): Viewer | null {
-  return kinds[extensionOf(path)] ?? null
+  return isLog(path) ? 'log' : (kinds[extensionOf(path)] ?? null)
 }
 
 /** Returns the pack-relative path of the jar or zip on disk that contains `path`. */

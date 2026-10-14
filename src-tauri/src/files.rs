@@ -6,7 +6,6 @@ use std::process::Stdio;
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
-const MAX_EDITABLE_BYTES: u64 = 2_000_000;
 const HIDDEN: [&str; 1] = [".git"];
 
 #[derive(Serialize)]
@@ -34,6 +33,8 @@ pub struct FileContent {
     pub archived: bool,
     /// Decompressed from a .gz file, so read-only.
     pub compressed: bool,
+    /// Over the size you set to ask about, so it opens only in the simplified editor.
+    pub large: bool,
 }
 
 pub fn resolve(root: &Path, relative: &str) -> Result<PathBuf> {
@@ -93,7 +94,37 @@ pub fn list(root: &Path, relative: &str) -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
-pub fn read(root: &Path, relative: &str) -> Result<FileContent> {
+/// The sizes, in bytes, past which we ask before opening a file in the editor, and past which
+/// we won't open it there at all.
+#[derive(Clone, Copy)]
+pub struct Limits {
+    pub ask: u64,
+    pub max: u64,
+}
+
+impl Limits {
+    pub const DEFAULT: Limits = Limits { ask: 50_000_000, max: 100_000_000 };
+}
+
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / 1e6)
+}
+
+// The editor slows down past `ask` and can run the webview out of memory past `max`, so we
+// stop at `max` and only go past `ask` when you choose the simplified editor.
+fn over_limit(size: u64, limits: Limits, allow_large: bool) -> Option<(String, bool)> {
+    if size > limits.max {
+        let reason = format!("This file is {}, over the {} limit for the editor. You can raise the limit in App settings.", megabytes(size), megabytes(limits.max));
+        Some((reason, false))
+    } else if size > limits.ask && !allow_large {
+        let reason = format!("This file is {}, over the {} you set to ask about. You can open it in a simplified editor without checking or folding.", megabytes(size), megabytes(limits.ask));
+        Some((reason, true))
+    } else {
+        None
+    }
+}
+
+pub fn read(root: &Path, relative: &str, limits: Limits, allow_large: bool) -> Result<FileContent> {
     let path = resolve(root, relative)?;
     let inside = crate::archive::split(root, relative).filter(|(_, inner)| !inner.is_empty());
     let archived = inside.is_some();
@@ -102,34 +133,38 @@ pub fn read(root: &Path, relative: &str) -> Result<FileContent> {
         None => std::fs::metadata(&path)?.len(),
     };
     let compressed = crate::archive::is_gzip(relative);
-    let unreadable = |reason: &str| FileContent { text: None, size, unreadable: Some(reason.to_string()), crlf: false, bom: false, archived, compressed };
-    if size > MAX_EDITABLE_BYTES {
-        return Ok(unreadable("This file is too large to edit here."));
+    let unreadable = |reason: &str, large: bool| FileContent { text: None, size, unreadable: Some(reason.to_string()), crlf: false, bom: false, archived, compressed, large };
+    if let Some((reason, large)) = over_limit(size, limits, allow_large) {
+        return Ok(unreadable(&reason, large));
     }
     let bytes = match &inside {
-        Some((file, inner)) => crate::archive::read(file, inner, MAX_EDITABLE_BYTES)?,
+        Some((file, inner)) => crate::archive::read(file, inner, limits.max)?,
         None => std::fs::read(&path)?,
     };
     // Minecraft gzips old logs, so we show them decompressed.
     let bytes = if compressed {
-        match crate::archive::gunzip(&bytes, MAX_EDITABLE_BYTES) {
+        match crate::archive::gunzip(&bytes, limits.max) {
             Ok(Some(data)) => data,
-            Ok(None) => return Ok(unreadable("This file is too large to show once decompressed.")),
-            Err(_) => return Ok(unreadable("This file ends in .gz but isn't valid gzip, so we can't decompress it.")),
+            Ok(None) => return Ok(unreadable(&format!("This file is over the {} limit for the editor once decompressed.", megabytes(limits.max)), false)),
+            Err(_) => return Ok(unreadable("This file ends in .gz but isn't valid gzip, so we can't decompress it.", false)),
         }
     } else {
         bytes
     };
+    if let Some((reason, large)) = over_limit(bytes.len() as u64, limits, allow_large) {
+        return Ok(unreadable(&reason, large));
+    }
+    let large = bytes.len() as u64 > limits.ask;
     if bytes.iter().take(8000).any(|b| *b == 0) {
-        return Ok(unreadable("This is a binary file, so you can't edit it as text."));
+        return Ok(unreadable("This is a binary file, so you can't edit it as text.", false));
     }
     let Ok(text) = String::from_utf8(bytes) else {
-        return Ok(unreadable("This file isn't UTF-8 text, so you can't edit it here."));
+        return Ok(unreadable("This file isn't UTF-8 text, so you can't edit it here.", false));
     };
     let bom = text.starts_with('\u{feff}');
     let body = text.trim_start_matches('\u{feff}');
     let crlf = body.contains("\r\n");
-    Ok(FileContent { text: Some(body.replace("\r\n", "\n")), size, unreadable: None, crlf, bom, archived, compressed })
+    Ok(FileContent { text: Some(body.replace("\r\n", "\n")), size, unreadable: None, crlf, bom, archived, compressed, large })
 }
 
 pub fn write(root: &Path, relative: &str, text: &str, crlf: bool, bom: bool) -> Result<()> {
@@ -490,6 +525,28 @@ mod tests {
     }
 
     #[test]
+    fn asks_before_large_files_and_refuses_huge_ones() {
+        let root = std::env::temp_dir().join("packraven-limits-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("small.json"), "x".repeat(50)).unwrap();
+        std::fs::write(root.join("large.json"), "x".repeat(150)).unwrap();
+        std::fs::write(root.join("huge.json"), "x".repeat(250)).unwrap();
+        let limits = Limits { ask: 100, max: 200 };
+
+        let small = read(&root, "small.json", limits, false).unwrap();
+        assert!(small.text.is_some() && !small.large);
+
+        let asked = read(&root, "large.json", limits, false).unwrap();
+        assert!(asked.text.is_none() && asked.large);
+        let opened = read(&root, "large.json", limits, true).unwrap();
+        assert!(opened.text.is_some() && opened.large);
+
+        let huge = read(&root, "huge.json", limits, true).unwrap();
+        assert!(huge.text.is_none() && !huge.large);
+    }
+
+    #[test]
     fn reads_gzipped_logs_as_read_only_text() {
         let root = std::env::temp_dir().join("packraven-read-gz-test");
         let _ = std::fs::remove_dir_all(&root);
@@ -499,10 +556,10 @@ mod tests {
         std::fs::write(root.join("logs/old.log.gz"), encoder.finish().unwrap()).unwrap();
         std::fs::write(root.join("logs/fake.log.gz"), "not gzip").unwrap();
 
-        let content = read(&root, "logs/old.log.gz").unwrap();
+        let content = read(&root, "logs/old.log.gz", Limits::DEFAULT, false).unwrap();
         assert_eq!(content.text.as_deref(), Some("line one\nline two\n"));
         assert!(content.compressed && content.crlf);
-        assert!(read(&root, "logs/fake.log.gz").unwrap().unreadable.is_some());
+        assert!(read(&root, "logs/fake.log.gz", Limits::DEFAULT, false).unwrap().unreadable.is_some());
     }
 
     #[test]
@@ -541,7 +598,7 @@ mod tests {
         let dir = std::env::temp_dir().join("packraven-files-test");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.toml"), "\u{feff}a = 1\r\nb = 2\r\n").unwrap();
-        let content = read(&dir, "a.toml").unwrap();
+        let content = read(&dir, "a.toml", Limits::DEFAULT, false).unwrap();
         assert!(content.crlf && content.bom);
         assert_eq!(content.text.as_deref(), Some("a = 1\nb = 2\n"));
         write(&dir, "a.toml", "a = 3\nb = 2\n", content.crlf, content.bom).unwrap();

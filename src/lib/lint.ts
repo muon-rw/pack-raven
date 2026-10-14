@@ -1,5 +1,6 @@
-import type { Extension, Text } from '@codemirror/state'
-import { linter, lintGutter, type Diagnostic } from '@codemirror/lint'
+import { Facet, StateEffect, type Extension, type Text } from '@codemirror/state'
+import type { EditorView, ViewUpdate } from '@codemirror/view'
+import { forceLinting, linter, lintGutter, type Diagnostic } from '@codemirror/lint'
 import { createScanner, parseTree, printParseErrorCode, type Node, type ParseError } from 'jsonc-parser'
 import JSON5 from 'json5'
 import { parse as parseToml, TomlError } from 'smol-toml'
@@ -7,10 +8,43 @@ import { parseAllDocuments } from 'yaml'
 
 type Check = (doc: Text) => Diagnostic[]
 
-export function lintFor(path: string): Extension {
+// Each check re-parses the whole file, so past this long a pass stalls typing noticeably. How
+// long a pass takes depends on the device as much as the file, so we measure it.
+const SLOW_CHECK_MS = 150
+
+const checkOnce = Facet.define<() => void>()
+const recheck = StateEffect.define<null>()
+
+/**
+ * Returns a linter for the file type that turns itself off, and calls `onPaused`, once a single
+ * check runs slow. After that it only checks when you run {@link checkNow}.
+ */
+export function lintFor(path: string, onPaused: () => void): Extension {
   const check = checkFor(path)
   if (!check) return []
-  return [linter((view) => check(view.state.doc), { delay: 300 }), lintGutter()]
+  let paused = false
+  let forced = false
+  const source = (view: EditorView) => {
+    if (paused && !forced) return []
+    forced = false
+    const started = performance.now()
+    const diagnostics = check(view.state.doc)
+    if (!paused && performance.now() - started > SLOW_CHECK_MS) {
+      paused = true
+      onPaused()
+    }
+    return diagnostics
+  }
+  const needsRefresh = (update: ViewUpdate) => update.transactions.some((tr) => tr.effects.some((e) => e.is(recheck)))
+  return [linter(source, { delay: 300, needsRefresh }), lintGutter(), checkOnce.of(() => (forced = true))]
+}
+
+/** Checks the file once, even when checking as you type has paused. */
+// forceLinting only hurries a check that's already scheduled, so we schedule one first.
+export function checkNow(view: EditorView) {
+  for (const allow of view.state.facet(checkOnce)) allow()
+  view.dispatch({ effects: recheck.of(null) })
+  forceLinting(view)
 }
 
 function checkFor(path: string): Check | null {

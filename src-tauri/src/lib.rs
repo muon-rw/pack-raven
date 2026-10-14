@@ -20,6 +20,7 @@ mod gitops;
 mod http;
 mod jobs;
 mod launch;
+mod logs;
 mod modrinth;
 mod modsync;
 mod nbt;
@@ -205,6 +206,7 @@ pub fn run() {
             file_commands::default_app,
             file_commands::read_bytes,
             file_commands::read_nbt,
+            file_commands::read_log,
             file_commands::decompile_class,
             file_commands::extract_archive,
             file_commands::compress_paths,

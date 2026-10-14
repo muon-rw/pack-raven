@@ -48,7 +48,9 @@
   async function save() {
     if (!settings) return
     try {
-      await api.saveSettings({ ...settings, java: settings.java?.trim() || null })
+      const editorAskMb = Math.max(1, Math.round(settings.editorAskMb || 50))
+      const editorMaxMb = Math.max(editorAskMb, Math.round(settings.editorMaxMb || 100))
+      await api.saveSettings({ ...settings, java: settings.java?.trim() || null, editorAskMb, editorMaxMb })
       await load()
       onchange()
       messageFailed = false
@@ -140,6 +142,20 @@
         <input value={settings.java ?? ''} oninput={(e) => (settings!.java = e.currentTarget.value)} aria-describedby="java-hint" />
       </label>
       <p class="muted hint" id="java-hint">Leave empty to use the Java from the CurseForge profile.</p>
+    </section>
+
+    <section>
+      <h3>Editor</h3>
+      <label>
+        Ask before opening files larger than (MB)
+        <input type="number" min="1" step="1" bind:value={settings.editorAskMb} aria-describedby="editor-ask-hint" />
+      </label>
+      <p class="muted hint" id="editor-ask-hint">Past this size, you can open a file in a simplified editor, without checking or folding, so typing stays responsive.</p>
+      <label>
+        Never open files larger than (MB)
+        <input type="number" min="1" step="1" bind:value={settings.editorMaxMb} aria-describedby="editor-max-hint" />
+      </label>
+      <p class="muted hint" id="editor-max-hint">Larger files can run the editor out of memory, so we offer your default app for them instead.</p>
     </section>
 
     <div class="actions">
