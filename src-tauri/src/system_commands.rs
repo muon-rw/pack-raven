@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::image::Image;
+use tauri::{AppHandle, Manager, State};
 
 use crate::commands::AppState;
 use crate::credentials::{self, Credential, CredentialStatus};
@@ -99,4 +100,26 @@ pub fn credential_clear(credential: Credential) -> CmdResult<()> {
 #[tauri::command]
 pub fn env_var_names() -> Vec<String> {
     credentials::env_names()
+}
+
+const LIGHT_WINDOW_ICON: &[u8] = include_bytes!("../icons/light/icon.png");
+const LIGHT_TRAY_ICON: &[u8] = include_bytes!("../icons/light/32x32.png");
+
+/// Swaps the window and tray icons to match the app theme. The bundled icon is the dark one.
+#[tauri::command]
+pub fn set_icon_theme(app: AppHandle, dark: bool) -> CmdResult<()> {
+    let bundled = app.default_window_icon().cloned().ok_or("packraven has no bundled icon")?;
+    let (window_icon, tray_icon) = if dark {
+        (bundled.clone(), bundled)
+    } else {
+        let light = |bytes| Image::from_bytes(bytes).map_err(|e| e.to_string());
+        (light(LIGHT_WINDOW_ICON)?, light(LIGHT_TRAY_ICON)?)
+    };
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_icon(window_icon).map_err(|e| e.to_string())?;
+    }
+    if let Some(tray) = app.tray_by_id(crate::TRAY_ID) {
+        tray.set_icon(Some(tray_icon)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }

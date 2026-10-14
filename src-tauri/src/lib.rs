@@ -48,6 +48,7 @@ use commands::AppState;
 use settings::Settings;
 
 const STARTED_HIDDEN_ARG: &str = "--hidden";
+pub(crate) const TRAY_ID: &str = "main";
 
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -119,7 +120,7 @@ pub fn run() {
             let show = MenuItem::with_id(app, "show", "Show packraven", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id(TRAY_ID)
                 .icon(app.default_window_icon().cloned().expect("bundled icon"))
                 .tooltip("packraven")
                 .menu(&menu)
@@ -222,6 +223,7 @@ pub fn run() {
             system_commands::credential_use_env,
             system_commands::credential_clear,
             system_commands::env_var_names,
+            system_commands::set_icon_theme,
             discord_commands::get_webhook,
             discord_commands::set_webhook,
             discord_commands::discord_test,

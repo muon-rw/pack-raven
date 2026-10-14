@@ -224,6 +224,7 @@ export const api = {
   credentialUseEnv: (credential: Credential, name: string) => invoke<void>('credential_use_env', { credential, name }),
   credentialClear: (credential: Credential) => invoke<void>('credential_clear', { credential }),
   envVarNames: () => invoke<string[]>('env_var_names'),
+  setIconTheme: (dark: boolean) => invoke<void>('set_icon_theme', { dark }),
   getWebhook: () => invoke<string | null>('get_webhook'),
   setWebhook: (url: string) => invoke<void>('set_webhook', { url }),
   discordTest: () => invoke<void>('discord_test'),
