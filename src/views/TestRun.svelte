@@ -2,7 +2,7 @@
   import Notice from '../components/Notice.svelte'
   import { api, errorText, type Overview } from '../lib/api'
   import { job, serverMods, testState } from '../lib/jobs.svelte'
-  import LogView from '../components/LogView.svelte'
+  import JobLog from '../components/JobLog.svelte'
   import Tip from '../components/Tip.svelte'
 
   let { overview, onservermods }: { overview: Overview | null; onservermods: () => void } = $props()
@@ -128,7 +128,7 @@
           </Tip>
         </div>
       </div>
-      <LogView lines={serverLines} label="Server log" empty="Start the server to see its log." />
+      <JobLog lines={serverLines} label="Server log" empty="Start the server to see its log." />
       <form class="console" onsubmit={(e) => { e.preventDefault(); sendCommand() }}>
         <input bind:value={command} placeholder="op Dev" disabled={!serverRunning} aria-label="Server command" aria-describedby="console-hint" />
         <Tip tip={whyNoSend}><button type="submit" disabled={!!whyNoSend}>Send</button></Tip>
@@ -154,7 +154,7 @@
           </Tip>
         </div>
       </div>
-      <LogView lines={job('client').lines} label="Client log" empty="The client log will appear here after you launch it." />
+      <JobLog lines={job('client').lines} label="Client log" empty="The client log will appear here after you launch it." />
       <p class="hint muted">
         {clientRunning
           ? 'Running offline as the test username.'

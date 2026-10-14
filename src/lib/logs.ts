@@ -9,10 +9,14 @@ export interface Head {
   message: string
 }
 
+/** Where a line came from: a log file or a process's stdout, its stderr, or packraven itself. */
+export type Stream = 'out' | 'err' | 'info'
+
 export interface Entry {
   start: number
   level: Level
   head: Head | null
+  stream: Stream
 }
 
 // Minecraft and the loaders write "[time] [thread/LEVEL]", then optionally "[logger/MARKER]" (Forge
@@ -58,21 +62,28 @@ export class LogModel {
     this.longest = 0
   }
 
-  append(text: string) {
+  // A running game's output mixes in lines without a header: packraven's own messages, which
+  // stand alone, and bare stderr, which we warn about, along with the stack trace after it.
+  append(text: string, stream: Stream = 'out') {
     const added = text.split('\n')
     if (added[added.length - 1] === '') added.pop()
     for (const raw of added) {
       const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw
       const head = parseHead(line)
-      if (head || !this.entries.length) {
-        const level = head ? LEVELS[head.level] : 'none'
-        this.entries.push({ start: this.lines.length, level, head })
-        this.counts[level]++
-      }
+      const previous = this.entries[this.entries.length - 1]
+      if (head) this.startEntry(LEVELS[head.level], head, stream)
+      else if (stream === 'info') this.startEntry('none', null, stream)
+      else if (stream === 'err' && previous?.stream !== 'err') this.startEntry('warn', null, stream)
+      else if (!previous) this.startEntry('none', null, stream)
       this.lineEntry.push(this.entries.length - 1)
       this.lines.push(line)
       this.longest = Math.max(this.longest, line.length)
     }
+  }
+
+  private startEntry(level: Level, head: Head | null, stream: Stream) {
+    this.entries.push({ start: this.lines.length, level, head, stream })
+    this.counts[level]++
   }
 
   /** Returns the index one past the entry's last line. */
