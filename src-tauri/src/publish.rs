@@ -9,9 +9,9 @@ use crate::curseforge;
 use crate::export;
 use crate::git;
 use crate::jobs::Log;
-use crate::pack::{Pack, CHANGELOG, CHANGELOG_ARCHIVE, CONFIG_FILE};
+use crate::pack::{Pack, CHANGELOG, CHANGELOG_ARCHIVE, CONFIG_FILE, LOCKFILE};
 use crate::sides::{self, MetadataCache};
-use crate::sync;
+use crate::modsync;
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -59,12 +59,16 @@ pub fn preflight(pack: &Pack, version: &str) -> Vec<String> {
     } else if git::run(&pack.dir, &["rev-parse", "-q", "--verify", &format!("refs/tags/v{version}")]).is_ok() {
         problems.push(format!("You already released {version} (tag v{version} exists)."));
     }
-    match sync::status(pack) {
-        Ok(status) if !status.missing.is_empty() || !status.unlocked.is_empty() => {
-            problems.push("Your mods folder has changes that aren't committed yet. Commit or pull first.".into())
-        }
-        Err(error) => problems.push(format!("Couldn't compare the mods folder with the last commit: {error:#}")),
+    match modsync::folder_changes(&pack.dir, &pack.lock) {
+        Ok(changes) if !changes.is_empty() => problems.push(
+            "Your mods folder doesn't match the mod list. In Changes, update the mod list or restore the mods, then commit mods.lock.json.".into(),
+        ),
+        Err(error) => problems.push(format!("Couldn't compare the mods folder with the mod list: {error:#}")),
         _ => {}
+    }
+    // The release commit only stages its own files, so we make sure the tag records the mod list that ships.
+    if git::changed_files(&pack.dir).iter().any(|path| path == LOCKFILE) {
+        problems.push("mods.lock.json has changes you haven't committed. Commit it in Git first, so the release tag records the mods that ship.".into());
     }
     match export::unallowed_override_jars(pack) {
         Ok(jars) if !jars.is_empty() => problems.push(format!(
@@ -103,7 +107,7 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
     let mut cache = MetadataCache::load(&cache_path);
     let sides = sides::classify(&pack, &mut cache).await?;
     let baseline_path = pack_data.join(changelog::BASELINE_FILE);
-    let diff = changelog::mod_diff(&pack, &mut cache, &baseline_path).await?;
+    let diff = changelog::mod_diff(&pack, &pack.lock, &mut cache, &baseline_path).await?;
     cache.save(&cache_path)?;
     export::server_pack(&pack, &sides, &version, &out_dir, &java, &data_dir, &log).await?;
     let server_zip = export::zip_server_pack(&pack, &version, &out_dir, &log).await?;

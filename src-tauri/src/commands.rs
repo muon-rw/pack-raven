@@ -16,7 +16,7 @@ use crate::pack::{Pack, PackConfig};
 use crate::publish::{self, PublishContext, PublishOptions};
 use crate::settings::Settings;
 use crate::sides::{self, MetadataCache, ModSide};
-use crate::sync;
+use crate::modsync::{self, FolderChanges};
 use crate::testrun::{self, TestRun};
 
 pub struct AppState {
@@ -106,8 +106,7 @@ pub struct Overview {
     loader: Option<String>,
     lock_count: usize,
     addons: AddonCounts,
-    missing: Vec<String>,
-    unlocked: Vec<String>,
+    folder: FolderChanges,
     branch: Option<String>,
     ahead: u32,
     behind: u32,
@@ -152,7 +151,7 @@ fn addon_counts(pack: &Pack) -> AddonCounts {
 #[tauri::command(async)]
 pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
     let pack = state.pack().map_err(err)?;
-    let sync = sync::status(&pack).map_err(err)?;
+    let folder = modsync::folder_changes(&pack.dir, &pack.lock).map_err(err)?;
     let (ahead, behind) = git::ahead_behind(&pack.dir).unwrap_or((0, 0));
     Ok(Overview {
         name: pack.name(),
@@ -161,8 +160,7 @@ pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
         loader: pack.lock.loader.clone(),
         lock_count: pack.lock.files.len(),
         addons: addon_counts(&pack),
-        missing: sync.missing,
-        unlocked: sync.unlocked,
+        folder,
         branch: git::branch(&pack.dir),
         ahead,
         behind,
@@ -215,11 +213,31 @@ pub struct ChangelogPreview {
 #[tauri::command]
 pub async fn changelog_preview(state: State<'_, AppState>) -> CmdResult<ChangelogPreview> {
     let pack = state.pack().map_err(err)?;
+    // We diff the mods folder rather than the mod list, so the preview already shows changes you
+    // haven't recorded yet. If the folder can't be read as a lock, we fall back to the list.
+    let folder = modsync::folder_lock(&pack.dir).await.unwrap_or_else(|_| pack.lock.clone());
     let mut cache = MetadataCache::load(&state.cache_path());
-    let diff = changelog::mod_diff(&pack, &mut cache, &state.pack_data().join(changelog::BASELINE_FILE)).await.map_err(err)?;
+    let diff = changelog::mod_diff(&pack, &folder, &mut cache, &state.pack_data().join(changelog::BASELINE_FILE)).await.map_err(err)?;
     cache.save(&state.cache_path()).map_err(err)?;
     let markdown = changelog::render(&changelog::read_notes(&pack), &diff);
     Ok(ChangelogPreview { diff, markdown })
+}
+
+#[tauri::command]
+pub async fn update_mod_list(state: State<'_, AppState>) -> CmdResult<()> {
+    let dir = state.settings().instance_dir;
+    modsync::update_mod_list(&dir).await.map_err(err)
+}
+
+#[tauri::command]
+pub fn restore_mods(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+    let dir = state.settings().instance_dir;
+    // The restore future borrows lock entries across its download stream, which the compiler can't
+    // prove Send, so we drive it on a blocking thread the way the git hook's CLI does.
+    state.jobs.start(&app, "restore", move |log| async move {
+        tauri::async_runtime::spawn_blocking(move || tauri::async_runtime::block_on(modsync::restore(&dir, &log))).await??;
+        Ok("The mods folder matches the mod list again.".into())
+    })
 }
 
 #[tauri::command]

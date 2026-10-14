@@ -18,6 +18,7 @@ pub struct ModChange {
     pub url: Option<String>,
     pub from: Option<String>,
     pub to: Option<String>,
+    pub in_mod_list: bool,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -103,7 +104,7 @@ fn by_project(lock: &Lockfile) -> BTreeMap<u64, &LockEntry> {
     lock.files.iter().map(|e| (e.project_id, e)).collect()
 }
 
-pub async fn mod_diff(pack: &Pack, cache: &mut MetadataCache, baseline_path: &Path) -> Result<ModDiff> {
+pub async fn mod_diff(pack: &Pack, current: &Lockfile, cache: &mut MetadataCache, baseline_path: &Path) -> Result<ModDiff> {
     let baseline = load_baseline(baseline_path);
     let (since, previous) = match (baseline, git::last_release_tag(&pack.dir)) {
         (Some(baseline), _) => (baseline.label, baseline.lock),
@@ -115,7 +116,8 @@ pub async fn mod_diff(pack: &Pack, cache: &mut MetadataCache, baseline_path: &Pa
     };
     let is_baseline = baseline_path.exists();
     let old = by_project(&previous);
-    let new = by_project(&pack.lock);
+    let new = by_project(current);
+    let listed = by_project(&pack.lock);
     let ids: Vec<u64> = old.keys().chain(new.keys()).copied().collect();
     cache.ensure_names(&ids).await?;
     let changed_files: Vec<u64> = new
@@ -131,20 +133,21 @@ pub async fn mod_diff(pack: &Pack, cache: &mut MetadataCache, baseline_path: &Pa
     let display = |entry: &LockEntry| {
         file_names.get(&entry.file_id).cloned().unwrap_or_else(|| entry.path.rsplit('/').next().unwrap_or_default().to_string())
     };
-    let change = |id: u64, from: Option<String>, to: Option<String>| {
+    let change = |id: u64, from: Option<String>, to: Option<String>, in_mod_list: bool| {
         let name = cache.name(id);
-        ModChange { name: name.name, url: name.url, from, to }
+        ModChange { name: name.name, url: name.url, from, to, in_mod_list }
     };
     let mut diff = ModDiff { since: Some(since), baseline: is_baseline, ..Default::default() };
     for (id, entry) in &new {
+        let in_mod_list = listed.get(id).is_some_and(|l| l.file_id == entry.file_id);
         match old.get(id) {
-            None => diff.added.push(change(*id, None, None)),
-            Some(previous) if previous.file_id != entry.file_id => diff.updated.push(change(*id, Some(display(previous)), Some(display(entry)))),
+            None => diff.added.push(change(*id, None, None, in_mod_list)),
+            Some(previous) if previous.file_id != entry.file_id => diff.updated.push(change(*id, Some(display(previous)), Some(display(entry)), in_mod_list)),
             Some(_) => {}
         }
     }
     for id in old.keys().filter(|id| !new.contains_key(id)) {
-        diff.removed.push(change(*id, None, None));
+        diff.removed.push(change(*id, None, None, !listed.contains_key(id)));
     }
     for list in [&mut diff.added, &mut diff.updated, &mut diff.removed] {
         list.sort_by_key(|c| c.name.to_lowercase());

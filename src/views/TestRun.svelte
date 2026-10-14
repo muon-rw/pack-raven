@@ -8,9 +8,6 @@
 
   let { overview, onservermods }: { overview: Overview | null; onservermods: () => void } = $props()
 
-  const RECOPY_TIP =
-    "Before each start, packraven copies only the mods, configs and modloader files that changed since the last start, judging by each file's size and modified time. " +
-    'If the test server seems to run outdated files, tick this to recopy everything. It adds 10 to 60 seconds to every server start.'
 
   let join = $state(true)
   let clientJoins = $state(false)
@@ -85,9 +82,13 @@
       <p class="muted" role="status">{status}</p>
     </div>
     <div class="controls">
-      <label class="check">
-        <input type="checkbox" bind:checked={testOptions.recopyAll} disabled={serverRunning} aria-describedby="recopy-hint" /> Recopy all server files
-      </label>
+      <div class="recopy">
+        <input id="recopy" type="checkbox" bind:checked={testOptions.recopyAll} disabled={serverRunning} aria-describedby="recopy-hint" />
+        <label for="recopy">Recopy all server files, not just changes</label>
+        <p class="hint muted" id="recopy-hint">
+          {serverRunning ? 'Stop the test server to change this.' : 'Tick this to give each test server a clean slate. Each start then takes 10 to 60 seconds longer.'}
+        </p>
+      </div>
       <Tip tip={whyNoQuick}>
         {#snippet children(why)}
           <button
@@ -104,8 +105,6 @@
       </Tip>
     </div>
   </div>
-
-  <p class="hint muted recopy" id="recopy-hint">{serverRunning ? 'Stop the test server to change whether it recopies everything.' : RECOPY_TIP}</p>
 
   {#if serverRunning && serverMods.changedSinceTest}
     <Notice tone="warn">
@@ -193,8 +192,27 @@
     min-height: 480px;
   }
 
+  /* The hint sits in the label's column, so it lines up with the label text rather than the checkbox. */
   .recopy {
-    margin-top: -10px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 30ch);
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 2px;
+  }
+
+  .recopy input {
+    margin: 0;
+  }
+
+  .recopy label {
+    display: block;
+    color: var(--text);
+    font-size: var(--step-0);
+  }
+
+  .recopy .hint {
+    grid-column: 2;
   }
 
   .head {
@@ -211,7 +229,7 @@
 
   .controls {
     display: flex;
-    align-items: center;
+    align-items: start;
     gap: 18px;
     flex-wrap: wrap;
     justify-content: end;

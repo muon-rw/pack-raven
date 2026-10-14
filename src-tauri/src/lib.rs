@@ -33,7 +33,6 @@ mod publish;
 mod settings;
 mod setup;
 mod sides;
-mod sync;
 mod system_commands;
 mod testrun;
 mod watcher;
@@ -162,6 +161,8 @@ pub fn run() {
             commands::changelog_preview,
             commands::set_compare_baseline,
             commands::clear_compare_baseline,
+            commands::update_mod_list,
+            commands::restore_mods,
             commands::server_sides,
             commands::set_side_override,
             commands::publish_preflight,

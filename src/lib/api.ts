@@ -27,8 +27,7 @@ export interface Overview {
   loader: string | null
   lockCount: number
   addons: { mods: number; resourcePacks: number; shaderPacks: number; dataPacks: number; other: number }
-  missing: string[]
-  unlocked: string[]
+  folder: FolderChanges
   branch: string | null
   ahead: number
   behind: number
@@ -43,11 +42,18 @@ export interface Overview {
   hooks: HooksState
 }
 
+export interface FolderChanges {
+  updated: { from: string; to: string }[]
+  added: string[]
+  missing: string[]
+}
+
 export interface ModChange {
   name: string
   url: string | null
   from: string | null
   to: string | null
+  inModList: boolean
 }
 
 export interface ModDiff {
@@ -292,6 +298,8 @@ export const api = {
   changelogPreview: () => invoke<{ diff: ModDiff; markdown: string }>('changelog_preview'),
   setCompareBaseline: (zip: string) => invoke<void>('set_compare_baseline', { zip }),
   clearCompareBaseline: () => invoke<void>('clear_compare_baseline'),
+  updateModList: () => invoke<void>('update_mod_list'),
+  restoreMods: () => invoke<void>('restore_mods'),
   serverSides: () => invoke<ModSide[]>('server_sides'),
   setSideOverride: (projectId: number, mode: Override) => invoke<void>('set_side_override', { projectId, mode }),
   publishPreflight: (version: string) => invoke<string[]>('publish_preflight', { version }),

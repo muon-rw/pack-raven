@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { modSyncSummary } from '../lib/modsync'
+  import { folderChangeCount, modListSummary } from '../lib/modsync'
   import Notice from '../components/Notice.svelte'
   import { onMount } from 'svelte'
-  import { open } from '@tauri-apps/plugin-dialog'
+  import { ask, open } from '@tauri-apps/plugin-dialog'
+  import { job, onJobEnd } from '../lib/jobs.svelte'
   import { api, errorText, type ModDiff, type Overview } from '../lib/api'
   import { shortcut } from '../lib/platform'
   import { nav } from '../lib/nav.svelte'
   import RenderedChangelog from '../components/RenderedChangelog.svelte'
+  import LinkedText from '../components/LinkedText.svelte'
 
-  let { overview, onpublish }: { overview: Overview | null; onpublish: () => void } = $props()
+  let { overview, onpublish, onchange }: { overview: Overview | null; onpublish: () => void; onchange: () => void } = $props()
 
   let notes = $state('')
   let savedNotes = $state('')
@@ -58,6 +60,52 @@
       diffError = errorText(error)
     }
   }
+
+  let modListBusy = $state(false)
+  let modListResult = $state<{ ok: boolean; text: string } | null>(null)
+
+  async function updateModList() {
+    modListBusy = true
+    try {
+      await api.updateModList()
+      modListResult = { ok: true, text: 'Updated mods.lock.json. Stage and commit it in Git when you are ready.' }
+      onchange()
+      loadDiff()
+    } catch (error) {
+      modListResult = { ok: false, text: `Couldn't update the mod list: ${errorText(error)}` }
+    } finally {
+      modListBusy = false
+    }
+  }
+
+  async function restoreMods() {
+    if (!overview) return
+    const { updated, added, missing } = overview.folder
+    const setAside = updated.length + added.length
+    const confirmed = await ask(
+      [
+        `packraven downloads the ${updated.length + missing.length === 1 ? 'mod' : 'mods'} the mod list records and moves ${setAside === 1 ? 'the 1 file' : `the ${setAside} files`} it doesn't record into its cache.`,
+        updated.length ? `This undoes ${updated.length === 1 ? 'the update' : `the ${updated.length} updates`} in your mods folder.` : null,
+      ]
+        .filter(Boolean)
+        .join(' '),
+      { title: 'Restore mods', kind: 'warning', okLabel: 'Restore mods', cancelLabel: 'Cancel' },
+    )
+    if (!confirmed) return
+    modListResult = null
+    try {
+      await api.restoreMods()
+    } catch (error) {
+      modListResult = { ok: false, text: `Couldn't restore the mods: ${errorText(error)}` }
+    }
+  }
+
+  onJobEnd('restore', (phase) => {
+    modListResult = phase === 'done' ? { ok: true, text: job('restore').message ?? 'Restored the mods.' } : { ok: false, text: job('restore').message ?? "Couldn't restore the mods." }
+    loadDiff()
+  })
+
+  const fileName = (path: string) => path.slice(path.lastIndexOf('/') + 1)
 
   async function stopComparing() {
     await api.clearCompareBaseline().catch((error) => (diffError = errorText(error)))
@@ -116,13 +164,16 @@
   }
 
   let changeCount = $derived(diff ? diff.added.length + diff.updated.length + diff.removed.length : 0)
-  let outOfSync = $derived(overview ? overview.missing.length + overview.unlocked.length : 0)
+  let outOfSync = $derived(overview ? folderChangeCount(overview.folder) : 0)
+  let restoring = $derived(job('restore').phase === 'running')
+  let unlisted = $derived(diff ? [...diff.added, ...diff.updated, ...diff.removed].filter((c) => !c.inModList).length : 0)
   let archivedNote = $derived(
     overview?.lastTag ? `packraven archived the notes for ${overview.lastTag} to changelogs/${overview.lastTag.replace(/^v/, '')}.md when you published it.` : null,
   )
   let readiness = $derived(
     [
-      overview ? modSyncSummary(overview) : null,
+      // While the notice below shows the folder's differences, the header doesn't repeat them.
+      overview && !outOfSync ? modListSummary(overview.folder) : null,
       diff?.since ? `${changeCount || 'No'} mod ${changeCount === 1 ? 'change' : 'changes'} since ${diff.since}` : null,
       overview?.devJars.length ? `${overview.devJars.length} local dev ${overview.devJars.length === 1 ? 'build' : 'builds'} excluded` : null,
     ]
@@ -164,22 +215,39 @@
   {/if}
 
   {#if overview && outOfSync}
+    {@const folder = overview.folder}
     <Notice tone="warn">
-      <p>Your mods folder has changes that aren't committed yet. Commit to save them, or pull to get back the committed set.</p>
-      <details>
-        <summary>Show {outOfSync} {outOfSync === 1 ? 'file' : 'files'}</summary>
-        {#if overview.unlocked.length}
-          <p class="muted">Not committed yet:</p>
+      <div class="mod-list-notice">
+        <p>
+          <strong>{modListSummary(folder)}.</strong> The mod list (<span class="file">mods.lock.json</span>) decides which mods actually ship when releasing,
+          and what collaborators will download when they pull.
+        </p>
+        <details>
+          <summary>Show the {outOfSync === 1 ? 'file' : `${outOfSync} files`}</summary>
           <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-          <ul tabindex="0" aria-label="Files not committed yet">{#each overview.unlocked as path (path)}<li class="file">{path}</li>{/each}</ul>
-        {/if}
-        {#if overview.missing.length}
-          <p class="muted">Missing or changed (packraven downloads these when you pull):</p>
-          <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-          <ul tabindex="0" aria-label="Files missing or changed on disk">{#each overview.missing as path (path)}<li class="file">{path}</li>{/each}</ul>
-        {/if}
-      </details>
+          <ul class="folder-files" tabindex="0" aria-label="Mods folder changes">
+            {#each folder.updated as change (change.to)}
+              <li><span class="kind">Updated</span><span class="file">{fileName(change.to)}</span>{#if change.from !== change.to}<span class="muted file">was {fileName(change.from)}</span>{/if}</li>
+            {/each}
+            {#each folder.added as path (path)}<li><span class="kind">New</span><span class="file">{fileName(path)}</span></li>{/each}
+            {#each folder.missing as path (path)}<li><span class="kind">Missing</span><span class="file">{fileName(path)}</span></li>{/each}
+          </ul>
+        </details>
+        <div class="actions">
+          <button class:busy={modListBusy} disabled={modListBusy || restoring} onclick={updateModList}>{modListBusy ? 'Updating' : 'Update mod list'}</button>
+          <button class="quiet" class:busy={restoring} disabled={modListBusy || restoring} onclick={restoreMods}>{restoring ? 'Restoring' : 'Restore mods'}</button>
+        </div>
+        <p class="muted small">
+          Update the mod list to keep the folder as it is; Git then shows mods.lock.json for you to commit. Restore mods to put the folder back the
+          way the list records it.
+        </p>
+      </div>
     </Notice>
+  {/if}
+  {#if modListResult}
+    <p class:muted={modListResult.ok} class:failed={!modListResult.ok} role="status">
+      <LinkedText text={modListResult.text} />
+    </p>
   {/if}
   {#if overview?.devJars.length}
     <Notice tone="warn">
@@ -230,34 +298,48 @@
 
     <div class="column">
       <div class="row">
-        <h3>Mod changes{diff?.since ? ` since ${diff.since}` : ''}</h3>
+        <h3>{diff?.since ? `Changes since ${diff.since}` : 'Changes since the last release'}</h3>
         <button onclick={loadDiff} disabled={loadingDiff}>{loadingDiff ? 'Checking' : 'Refresh'}</button>
       </div>
       <p class="muted">
-        packraven appends these to the release notes when you publish.
-        {#if diff?.baseline}<button class="link" onclick={stopComparing}>Stop comparing with {diff.since}</button>{/if}
+        {#if diff?.baseline}
+          Compared with the export you chose. <button class="link" onclick={stopComparing}>Compare with the last release instead</button>
+        {:else if diff?.since}
+          The changelog lists these mods after your notes. <button class="link" onclick={compareWithZip}>Compare with an older export</button>
+        {:else}
+          The changelog lists these mods after your notes.
+        {/if}
       </p>
       {#if diffError}
         <Notice tone="error"><p>{diffError}</p></Notice>
       {:else if diff && !diff.since}
         <p class="muted">
-          No previous release tags; nothing to compare against. You can
-          <button class="link" onclick={compareWithZip}>compare changes against an old version</button>.
+          No release yet, so there's nothing to compare with. To list changes for the first release, you can
+          <button class="link" onclick={compareWithZip}>compare with an older export</button>.
         </p>
       {:else if diff && !changeCount}
         <p class="muted">No mods changed since {diff.since}.</p>
       {:else if diff}
+        {#if unlisted}
+          <p class="muted small">
+            {unlisted === 1 ? '1 change marked Not in mod list is' : `${unlisted} changes marked Not in mod list are`} in your mods folder only. Update the
+            mod list and commit it before you publish.
+          </p>
+        {/if}
         {#each [['Added', diff.added, 'ok'], ['Updated', diff.updated, 'change'], ['Removed', diff.removed, 'fail']] as const as [title, list, tone] (title)}
           {#if list.length}
-            <h4>{title} <span class="chip {tone}">{list.length}</span></h4>
-            <ul class="mod-list">
-              {#each list as change (change.name)}
-                <li>
-                  {change.name}
-                  {#if change.from}<span class="muted file">{change.from} to {change.to}</span>{/if}
-                </li>
-              {/each}
-            </ul>
+            <section class="change-group" aria-label="{title} mods">
+              <h4>{title} <span class="chip {tone}">{list.length}</span></h4>
+              <ul class="release-changes">
+                {#each list as change (change.name)}
+                  <li>
+                    {change.name}
+                    {#if change.from}<span class="muted file">{change.from} to {change.to}</span>{/if}
+                    {#if !change.inModList}<span class="chip pending">Not in mod list</span>{/if}
+                  </li>
+                {/each}
+              </ul>
+            </section>
           {/if}
         {/each}
       {/if}
@@ -435,8 +517,13 @@
     gap: 12px;
   }
 
+  .change-group {
+    display: grid;
+    gap: 4px;
+  }
+
   h4 {
-    margin: 8px 0 0;
+    margin: 0;
     font-size: var(--step-0);
   }
 
@@ -445,10 +532,55 @@
     padding-left: 18px;
   }
 
-  .mod-list li {
+  .change-group ul {
+    margin: 0;
+  }
+
+  .release-changes li {
     display: flex;
     flex-wrap: wrap;
+    align-items: baseline;
     gap: 2px 10px;
     padding: 2px 0;
+  }
+
+  .release-changes .chip {
+    font-size: var(--step--2);
+    font-weight: 400;
+  }
+
+  .mod-list-notice {
+    display: grid;
+    gap: 10px;
+  }
+
+  .mod-list-notice .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .folder-files {
+    display: grid;
+    gap: 2px;
+    max-height: 220px;
+    overflow: auto;
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .folder-files li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 10px;
+  }
+
+  .kind {
+    flex: none;
+    width: 7ch;
+    color: var(--muted);
+    font-size: var(--step--1);
   }
 </style>

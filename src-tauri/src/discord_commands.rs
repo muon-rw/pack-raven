@@ -68,7 +68,7 @@ pub async fn discohook_link(state: State<'_, AppState>, version: String) -> CmdR
 pub async fn discohook_preview(state: State<'_, AppState>, version: String) -> CmdResult<String> {
     let pack = Pack::open(&state.settings().instance_dir).map_err(err)?;
     let mut cache = MetadataCache::load(&state.cache_path());
-    let diff = changelog::mod_diff(&pack, &mut cache, &state.pack_data().join(changelog::BASELINE_FILE)).await.map_err(err)?;
+    let diff = changelog::mod_diff(&pack, &pack.lock, &mut cache, &state.pack_data().join(changelog::BASELINE_FILE)).await.map_err(err)?;
     let project = discord::project(pack.config.curseforge.project_id, &pack.config.author).await;
     let announcement = discord::Announcement {
         name: pack.name(),

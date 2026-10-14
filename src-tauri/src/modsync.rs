@@ -70,7 +70,7 @@ impl Repo {
         }
     }
 
-    fn write_lock(&self, lock: &mut Lockfile) -> Result<()> {
+    fn write_lock(&self, lock: &mut Lockfile, stage: bool) -> Result<()> {
         lock.files.sort_by_key(|e| e.path.to_lowercase());
         let mut text = String::from("{\n");
         for (key, value) in [("minecraft", &lock.minecraft), ("loader", &lock.loader)] {
@@ -85,7 +85,9 @@ impl Repo {
         }
         text += "  ]\n}\n";
         std::fs::write(self.root.join(LOCKFILE), text)?;
-        git::run(&self.root, &["add", LOCKFILE])?;
+        if stage {
+            git::run(&self.root, &["add", LOCKFILE])?;
+        }
         Ok(())
     }
 }
@@ -292,7 +294,80 @@ pub async fn lock(dir: &Path, log: &Log) -> Result<()> {
         }
         bail!("{} file(s) are not on CurseForge", unknown.len());
     }
-    repo.write_lock(&mut lock)
+    repo.write_lock(&mut lock, true)
+}
+
+// Unlike the pre-commit hook's lock, we leave mods.lock.json unstaged, so you review and stage it in Git.
+pub async fn update_mod_list(dir: &Path) -> Result<()> {
+    let repo = Repo::open(dir)?;
+    let (mut lock, unknown) = build_lock(&repo).await?;
+    match unknown.len() {
+        0 => repo.write_lock(&mut lock, false),
+        1 => bail!("{} isn't on CurseForge, so the mod list can't record it. Add it to git directly, or remove it.", unknown[0]),
+        n => bail!("{n} files aren't on CurseForge, so the mod list can't record them. Add them to git directly, or remove them: {}", unknown.join(", ")),
+    }
+}
+
+pub async fn folder_lock(dir: &Path) -> Result<Lockfile> {
+    Ok(build_lock(&Repo::open(dir)?).await?.0)
+}
+
+#[derive(Serialize)]
+pub struct FolderUpdate {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Serialize, Default)]
+pub struct FolderChanges {
+    pub updated: Vec<FolderUpdate>,
+    pub added: Vec<String>,
+    pub missing: Vec<String>,
+}
+
+impl FolderChanges {
+    pub fn is_empty(&self) -> bool {
+        self.updated.is_empty() && self.added.is_empty() && self.missing.is_empty()
+    }
+}
+
+// The shell polls this, so we compare sizes first and only hash the files that differ. We pair
+// those by CurseForge project, so an update reads as one change rather than a new file plus a
+// missing one.
+pub fn folder_changes(dir: &Path, lock: &Lockfile) -> Result<FolderChanges> {
+    let on_disk: HashMap<String, u64> =
+        managed_files(dir)?.into_iter().filter_map(|path| std::fs::metadata(dir.join(&path)).ok().map(|m| (path, m.len()))).collect();
+    let listed: HashSet<&str> = lock.files.iter().map(|e| e.path.as_str()).collect();
+    let mut changes = FolderChanges::default();
+    let mut gone: Vec<&LockEntry> = Vec::new();
+    for entry in lock.files.iter().filter(|e| on_disk.get(&e.path) != Some(&e.size)) {
+        if on_disk.contains_key(&entry.path) {
+            changes.updated.push(FolderUpdate { from: entry.path.clone(), to: entry.path.clone() });
+        } else {
+            gone.push(entry);
+        }
+    }
+    let mut unlisted: Vec<String> = on_disk.into_keys().filter(|p| !listed.contains(p.as_str())).collect();
+    unlisted.sort();
+    if !unlisted.is_empty() && !gone.is_empty() {
+        let repo = Repo::open(dir)?;
+        let mut hashes = HashCache::load(&repo);
+        let instance = read_instance(&repo.root);
+        let mut gone_by_project: HashMap<u64, String> = gone.iter().map(|e| (e.project_id, e.path.clone())).collect();
+        for path in std::mem::take(&mut unlisted) {
+            let project = instance.by_sha1.get(&hashes.sha1(&repo.root, &path)?).map(|source| source.0);
+            match project.and_then(|id| gone_by_project.remove(&id)) {
+                Some(from) => changes.updated.push(FolderUpdate { from, to: path }),
+                None => unlisted.push(path),
+            }
+        }
+        hashes.save()?;
+        gone.retain(|e| gone_by_project.contains_key(&e.project_id));
+    }
+    changes.added = unlisted;
+    changes.missing = gone.into_iter().map(|e| e.path.clone()).collect();
+    changes.updated.sort_by_key(|u| u.to.to_lowercase());
+    Ok(changes)
 }
 
 pub async fn adopt(dir: &Path, log: &Log) -> Result<Vec<String>> {
@@ -302,7 +377,7 @@ pub async fn adopt(dir: &Path, log: &Log) -> Result<Vec<String>> {
         git::run(&repo.root, &["add", "-f", "--", path])?;
         log.info(format!("modsync: not on CurseForge, committing directly: {path}"));
     }
-    repo.write_lock(&mut lock)?;
+    repo.write_lock(&mut lock, true)?;
     Ok(unknown)
 }
 

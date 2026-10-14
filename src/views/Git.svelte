@@ -337,7 +337,7 @@
       {#if status?.unstaged.length}
         <ul class="changes">{#each status.unstaged as change (change.path)}{@render changeRow(change, false)}{/each}</ul>
       {:else if status}
-        <p class="muted small empty">No unstaged changes. Edit configs or change mods in CurseForge, and they'll show up here.</p>
+        <p class="muted small empty">No unstaged changes. Config edits show up here. Mod changes show up as mods.lock.json once you update the mod list in Changes.</p>
       {/if}
     </section>
 

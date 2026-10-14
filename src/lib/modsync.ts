@@ -1,11 +1,16 @@
-import type { Overview } from './api'
+import type { FolderChanges } from './api'
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+export function folderChangeCount(folder: FolderChanges): number {
+  return folder.updated.length + folder.added.length + folder.missing.length
+}
 
-export function modSyncSummary(overview: Overview): string {
+// "The mod list" is mods.lock.json. These counts compare the mods folder with it, never with a
+// release, so we keep "since v1.2.0" wording for the release diff alone.
+export function modListSummary(folder: FolderChanges): string {
   const parts = [
-    overview.unlocked.length ? `${plural(overview.unlocked.length, 'mod change', 'mod changes')} to commit` : null,
-    overview.missing.length ? `${plural(overview.missing.length, 'mod', 'mods')} missing, pull to restore` : null,
+    folder.updated.length ? `${folder.updated.length} updated` : null,
+    folder.added.length ? `${folder.added.length} new` : null,
+    folder.missing.length ? `${folder.missing.length} missing` : null,
   ].filter(Boolean)
-  return parts.length ? parts.join(', ') : 'Mods match the last commit'
+  return parts.length ? `Mods folder differs from the mod list: ${parts.join(', ')}` : 'Mods folder matches the mod list'
 }

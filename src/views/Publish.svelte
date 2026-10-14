@@ -6,6 +6,7 @@
   import { api, errorText, type Overview, type PackConfig } from '../lib/api'
   import { job, onJobEnd } from '../lib/jobs.svelte'
   import RenderedChangelog from '../components/RenderedChangelog.svelte'
+  import { folderChangeCount } from '../lib/modsync'
   import { bumpVersion, parseVersion, type Bump } from '../lib/version'
   import JobLog from '../components/JobLog.svelte'
   import LinkedText from '../components/LinkedText.svelte'
@@ -85,7 +86,7 @@
   }
 
   let trimmed = $derived(version.trim())
-  let outOfSync = $derived(overview ? overview.missing.length + overview.unlocked.length : 0)
+  let outOfSync = $derived(overview ? folderChangeCount(overview.folder) : 0)
 
   $effect(() => {
     const wanted = trimmed

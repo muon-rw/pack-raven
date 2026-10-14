@@ -23,7 +23,7 @@
   import PackSwitcher from './components/PackSwitcher.svelte'
   import RavenMark from './components/RavenMark.svelte'
   import ThemeToggle from './components/ThemeToggle.svelte'
-  import { modSyncSummary } from './lib/modsync'
+  import { folderChangeCount, modListSummary } from './lib/modsync'
   import { shortcut } from './lib/platform'
 
   type View = 'changes' | 'test' | 'mods' | 'files' | 'git' | 'publish' | 'releases' | 'pack' | 'settings' | 'add'
@@ -153,7 +153,7 @@
       : [],
   )
 
-  let outOfSync = $derived(overview ? overview.missing.length + overview.unlocked.length : 0)
+  let outOfSync = $derived(overview ? folderChangeCount(overview.folder) : 0)
 
   let testStatus = $derived(
     testState.players.length
@@ -176,7 +176,7 @@
           id: 'changes',
           title: 'Changes',
           key: '1',
-          status: !overview ? 'Instance not found' : outOfSync ? modSyncSummary(overview) : undefined,
+          status: !overview ? 'Instance not found' : outOfSync ? modListSummary(overview.folder) : undefined,
           tone: !overview ? 'bad' : outOfSync ? 'warn' : 'idle',
         },
         {
@@ -363,7 +363,7 @@
             <p><button onclick={() => (view = 'settings')}>Open App settings</button></p>
           </Notice>
         {:else if view === 'changes'}
-          <Changes {overview} onpublish={() => (view = 'publish')} />
+          <Changes {overview} onpublish={() => (view = 'publish')} onchange={refresh} />
         {:else if view === 'mods'}
           <ServerMods />
         {:else if view === 'test'}
