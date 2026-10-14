@@ -15,9 +15,12 @@ export interface Tab {
   disk: string | null
   problems: Problems
   preview: boolean
+  archived: boolean
+  compressed: boolean
 }
 
-export const workspace = $state({ tabs: [] as Tab[], active: null as string | null, pack: null as string | null, error: null as string | null })
+// blocked counts attempts to edit a read-only tab, so the view can say why nothing happened.
+export const workspace = $state({ tabs: [] as Tab[], active: null as string | null, pack: null as string | null, error: null as string | null, blocked: 0 })
 
 export const fs = $state({ seq: 0, dirs: [] as string[] })
 
@@ -55,7 +58,7 @@ export function updateDirty(path: string, state: EditorState) {
   if (current.dirty) current.preview = false
 }
 
-async function editorState(path: string, text: string) {
+async function editorState(path: string, text: string, readOnly: boolean) {
   const { createState } = await import('./editor')
   return createState(
     path,
@@ -66,6 +69,8 @@ async function editorState(path: string, text: string) {
       const current = tab(path)
       if (current) current.problems = problems
     },
+    readOnly,
+    () => workspace.blocked++,
   )
 }
 
@@ -80,7 +85,7 @@ export async function open(path: string, { pinned = true } = {}) {
   if (!tab(path)) {
     const content = await api.readFile(path)
     const text = content.text ?? ''
-    const state = content.text === null ? null : await editorState(path, text)
+    const state = content.text === null ? null : await editorState(path, text, content.archived || content.compressed)
     // A double-click opens the same file three times at once, so another call may have
     // added the tab while we were reading.
     if (!tab(path)) addTab(path, content, text, state, pinned)
@@ -101,11 +106,21 @@ function addTab(path: string, content: FileContent, text: string, state: EditorS
     disk: null,
     problems: { errors: 0, warnings: 0 },
     preview: !pinned,
+    archived: content.archived,
+    compressed: content.compressed,
     state,
   }
   const replaced = pinned ? -1 : workspace.tabs.findIndex((t) => t.preview)
   if (replaced >= 0) workspace.tabs[replaced] = opened
   else workspace.tabs.push(opened)
+}
+
+/** Shows read-only text in a tab that has no text of its own, like a decompiled class. */
+export async function showSource(path: string, text: string) {
+  const current = tab(path)
+  if (!current || current.state) return
+  const state = await editorState(path, text, true)
+  Object.assign(current, { saved: text, dirty: false, unreadable: null, state })
 }
 
 export async function save(path = workspace.active) {
@@ -138,7 +153,7 @@ export async function reload(path: string) {
     conflict: null,
     disk: null,
     problems: { errors: 0, warnings: 0 },
-    state: content.text === null ? null : await editorState(path, text),
+    state: content.text === null ? null : await editorState(path, text, content.archived || content.compressed),
   })
 }
 
@@ -182,7 +197,7 @@ export async function moved(pairs: [string, string][]) {
   for (const current of [...workspace.tabs]) {
     const to = destination(current.path)
     if (!to) continue
-    const state = current.state ? await editorState(to, current.state.doc.toString()) : null
+    const state = current.state ? await editorState(to, current.state.doc.toString(), current.archived || current.compressed) : null
     const wasActive = workspace.active === current.path
     current.path = to
     current.state = state

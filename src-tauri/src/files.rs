@@ -17,6 +17,10 @@ pub struct Entry {
     pub is_dir: bool,
     pub size: u64,
     pub ignored: bool,
+    /// A jar or zip you can expand like a folder.
+    pub archive: bool,
+    /// Inside a jar or zip, so read-only.
+    pub archived: bool,
 }
 
 #[derive(Serialize)]
@@ -27,6 +31,9 @@ pub struct FileContent {
     pub unreadable: Option<String>,
     pub crlf: bool,
     pub bom: bool,
+    pub archived: bool,
+    /// Decompressed from a .gz file, so read-only.
+    pub compressed: bool,
 }
 
 pub fn resolve(root: &Path, relative: &str) -> Result<PathBuf> {
@@ -58,6 +65,9 @@ fn ignored(root: &Path, paths: &[String]) -> HashSet<String> {
 
 pub fn list(root: &Path, relative: &str) -> Result<Vec<Entry>> {
     let dir = resolve(root, relative)?;
+    if let Some((file, inner)) = crate::archive::split(root, relative) {
+        return crate::archive::list(&file, &inner, relative);
+    }
     let prefix = if relative.is_empty() { String::new() } else { format!("{}/", relative.trim_end_matches('/')) };
     // A folder you just deleted or moved can still be expanded in the tree for a moment.
     let listing = match std::fs::read_dir(&dir) {
@@ -70,7 +80,8 @@ pub fn list(root: &Path, relative: &str) -> Result<Vec<Entry>> {
         .filter_map(|e| {
             let metadata = e.metadata().ok()?;
             let name = e.file_name().to_string_lossy().into_owned();
-            Some(Entry { path: format!("{prefix}{name}"), name, is_dir: metadata.is_dir(), size: metadata.len(), ignored: false })
+            let is_dir = metadata.is_dir();
+            Some(Entry { path: format!("{prefix}{name}"), archive: !is_dir && crate::archive::is_archive(&name), archived: false, name, is_dir, size: metadata.len(), ignored: false })
         })
         .collect();
     let queries: Vec<String> = entries.iter().map(|e| if e.is_dir { format!("{}/", e.path) } else { e.path.clone() }).collect();
@@ -84,12 +95,31 @@ pub fn list(root: &Path, relative: &str) -> Result<Vec<Entry>> {
 
 pub fn read(root: &Path, relative: &str) -> Result<FileContent> {
     let path = resolve(root, relative)?;
-    let size = std::fs::metadata(&path)?.len();
-    let unreadable = |reason: &str| FileContent { text: None, size, unreadable: Some(reason.to_string()), crlf: false, bom: false };
+    let inside = crate::archive::split(root, relative).filter(|(_, inner)| !inner.is_empty());
+    let archived = inside.is_some();
+    let size = match &inside {
+        Some((file, inner)) => crate::archive::size(file, inner)?,
+        None => std::fs::metadata(&path)?.len(),
+    };
+    let compressed = crate::archive::is_gzip(relative);
+    let unreadable = |reason: &str| FileContent { text: None, size, unreadable: Some(reason.to_string()), crlf: false, bom: false, archived, compressed };
     if size > MAX_EDITABLE_BYTES {
         return Ok(unreadable("This file is too large to edit here."));
     }
-    let bytes = std::fs::read(&path)?;
+    let bytes = match &inside {
+        Some((file, inner)) => crate::archive::read(file, inner, MAX_EDITABLE_BYTES)?,
+        None => std::fs::read(&path)?,
+    };
+    // Minecraft gzips old logs, so we show them decompressed.
+    let bytes = if compressed {
+        match crate::archive::gunzip(&bytes, MAX_EDITABLE_BYTES) {
+            Ok(Some(data)) => data,
+            Ok(None) => return Ok(unreadable("This file is too large to show once decompressed.")),
+            Err(_) => return Ok(unreadable("This file ends in .gz but isn't valid gzip, so we can't decompress it.")),
+        }
+    } else {
+        bytes
+    };
     if bytes.iter().take(8000).any(|b| *b == 0) {
         return Ok(unreadable("This is a binary file, so you can't edit it as text."));
     }
@@ -99,11 +129,15 @@ pub fn read(root: &Path, relative: &str) -> Result<FileContent> {
     let bom = text.starts_with('\u{feff}');
     let body = text.trim_start_matches('\u{feff}');
     let crlf = body.contains("\r\n");
-    Ok(FileContent { text: Some(body.replace("\r\n", "\n")), size, unreadable: None, crlf, bom })
+    Ok(FileContent { text: Some(body.replace("\r\n", "\n")), size, unreadable: None, crlf, bom, archived, compressed })
 }
 
 pub fn write(root: &Path, relative: &str, text: &str, crlf: bool, bom: bool) -> Result<()> {
     let path = resolve(root, relative)?;
+    // We show these files decompressed, so writing the text back would break them.
+    if crate::archive::is_gzip(relative) || crate::archive::split(root, relative).is_some_and(|(_, inner)| !inner.is_empty()) {
+        bail!("{relative} is read-only here; extract it to edit a copy");
+    }
     let mut body = if crlf { text.replace("\r\n", "\n").replace('\n', "\r\n") } else { text.to_string() };
     if bom {
         body.insert(0, '\u{feff}');
@@ -114,7 +148,7 @@ pub fn write(root: &Path, relative: &str, text: &str, crlf: bool, bom: bool) -> 
     Ok(())
 }
 
-fn resolve_entry(root: &Path, relative: &str) -> Result<PathBuf> {
+pub(crate) fn resolve_entry(root: &Path, relative: &str) -> Result<PathBuf> {
     if relative.trim_matches('/').is_empty() {
         bail!("pick a file or folder inside the pack folder");
     }
@@ -141,6 +175,18 @@ pub fn create_dir(root: &Path, relative: &str) -> Result<()> {
 pub fn trash(root: &Path, relatives: &[String]) -> Result<Option<Vec<trash::TrashItem>>> {
     let paths = relatives.iter().map(|r| resolve_entry(root, r)).collect::<Result<Vec<_>>>()?;
     crate::history::trash(&paths)
+}
+
+/// Reads a file's raw bytes for a viewer, from the pack folder or from inside an archive.
+pub fn bytes(root: &Path, relative: &str, limit: u64) -> Result<Vec<u8>> {
+    if let Some((file, inner)) = crate::archive::split(root, relative).filter(|(_, inner)| !inner.is_empty()) {
+        return crate::archive::read(&file, &inner, limit);
+    }
+    let path = resolve_entry(root, relative)?;
+    if std::fs::metadata(&path)?.len() > limit {
+        bail!("{relative} is too large to open here");
+    }
+    Ok(std::fs::read(&path)?)
 }
 
 pub fn absolute_paths(root: &Path, relatives: &[String]) -> Result<Vec<String>> {
@@ -193,7 +239,7 @@ pub fn path_text(root: &Path, relatives: &[String], absolute: bool) -> Result<St
 
 // Like Explorer and Finder, we never overwrite on paste. We name a clashing copy
 // "name copy.ext", then "name copy 2.ext", and so on.
-fn free_name(dir: &Path, name: &str) -> PathBuf {
+pub(crate) fn free_name(dir: &Path, name: &str) -> PathBuf {
     let candidate = dir.join(name);
     if !candidate.exists() {
         return candidate;
@@ -441,6 +487,22 @@ mod tests {
         assert_eq!(entries.len(), 3000);
         assert!(entries.iter().all(|e| e.ignored));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reads_gzipped_logs_as_read_only_text() {
+        let root = std::env::temp_dir().join("packraven-read-gz-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("logs")).unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, b"line one\r\nline two\r\n").unwrap();
+        std::fs::write(root.join("logs/old.log.gz"), encoder.finish().unwrap()).unwrap();
+        std::fs::write(root.join("logs/fake.log.gz"), "not gzip").unwrap();
+
+        let content = read(&root, "logs/old.log.gz").unwrap();
+        assert_eq!(content.text.as_deref(), Some("line one\nline two\n"));
+        assert!(content.compressed && content.crlf);
+        assert!(read(&root, "logs/fake.log.gz").unwrap().unreadable.is_some());
     }
 
     #[test]

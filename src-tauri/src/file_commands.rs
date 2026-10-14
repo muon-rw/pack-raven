@@ -2,7 +2,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
-use tauri::{AppHandle, State, Window};
+use tauri::path::BaseDirectory;
+use tauri::{AppHandle, Manager, State, Window};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::commands::AppState;
@@ -78,6 +79,70 @@ pub fn create_dir(state: State<'_, AppState>, path: String) -> CmdResult<()> {
     files::create_dir(&root, &path).map_err(err)?;
     record_created(&state, &root, "New folder", &path);
     Ok(())
+}
+
+const MAX_VIEWED_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_NBT_BYTES: u64 = 64 * 1024 * 1024;
+
+fn relative_to(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/")
+}
+
+#[tauri::command]
+pub async fn read_bytes(state: State<'_, AppState>, path: String) -> CmdResult<tauri::ipc::Response> {
+    let root = state.settings().instance_dir;
+    let bytes = tauri::async_runtime::spawn_blocking(move || files::bytes(&root, &path, MAX_VIEWED_BYTES)).await.map_err(|e| e.to_string())?.map_err(err)?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+pub async fn read_nbt(state: State<'_, AppState>, path: String) -> CmdResult<crate::nbt::Document> {
+    let root = state.settings().instance_dir;
+    tauri::async_runtime::spawn_blocking(move || crate::nbt::parse(&files::bytes(&root, &path, MAX_NBT_BYTES)?)).await.map_err(|e| e.to_string())?.map_err(err)
+}
+
+#[tauri::command]
+pub async fn decompile_class(app: AppHandle, state: State<'_, AppState>, path: String) -> CmdResult<String> {
+    let settings = state.settings();
+    let (archive, inner) = crate::archive::split(&settings.instance_dir, &path).filter(|(_, inner)| !inner.is_empty()).ok_or("Only classes inside a jar can be decompiled.")?;
+    let vineflower = app.path().resolve("vineflower.jar", BaseDirectory::Resource).map_err(|e| e.to_string())?;
+    let java = crate::decompile::java(&settings);
+    tauri::async_runtime::spawn_blocking(move || crate::decompile::decompile(&java, &vineflower, &archive, &inner)).await.map_err(|e| e.to_string())?.map_err(err)
+}
+
+#[tauri::command]
+pub async fn extract_archive(state: State<'_, AppState>, path: String) -> CmdResult<String> {
+    let root = state.settings().instance_dir;
+    if crate::archive::split(&root, &path).is_some_and(|(_, inner)| !inner.is_empty()) {
+        return Err("Extract the archive this one is inside first.".into());
+    }
+    let source = files::resolve_entry(&root, &path).map_err(err)?;
+    let target = tauri::async_runtime::spawn_blocking(move || crate::archive::extract(&source)).await.map_err(|e| e.to_string())?.map_err(err)?;
+    let label = format!("Extract {}", history::describe(std::slice::from_ref(&path)));
+    state.history.lock().unwrap().record(&root, label, Some(Action::Trash(vec![target.clone()])));
+    Ok(relative_to(&root, &target))
+}
+
+#[tauri::command]
+pub async fn compress_paths(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<String> {
+    let root = state.settings().instance_dir;
+    let sources = paths.iter().map(|p| files::resolve_entry(&root, p)).collect::<anyhow::Result<Vec<_>>>().map_err(err)?;
+    let dir = sources.first().and_then(|s| s.parent()).ok_or("Pick something to compress.")?.to_path_buf();
+    let label = format!("Compress {}", history::describe(&sources));
+    let target = tauri::async_runtime::spawn_blocking(move || crate::archive::compress(&sources, &dir)).await.map_err(|e| e.to_string())?.map_err(err)?;
+    state.history.lock().unwrap().record(&root, label, Some(Action::Trash(vec![target.clone()])));
+    Ok(relative_to(&root, &target))
+}
+
+// The webview streams video and audio from the asset protocol, which can seek, so we allow
+// each file you open there rather than the whole disk.
+#[tauri::command]
+pub fn media_path(app: AppHandle, state: State<'_, AppState>, path: String) -> CmdResult<String> {
+    // Settings can store the pack folder with forward slashes, so we use the platform's own
+    // form for both the scope and the URL to keep them matching.
+    let absolute = files::path_text(&state.settings().instance_dir, &[path], true).map_err(err)?;
+    app.asset_protocol_scope().allow_file(&absolute).map_err(|e| e.to_string())?;
+    Ok(absolute)
 }
 
 fn record_created(state: &AppState, root: &Path, what: &str, path: &str) {

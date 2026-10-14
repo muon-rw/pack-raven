@@ -7,11 +7,15 @@
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
   import { api, errorText, type GitStatus } from '../lib/api'
   import { drag } from '../lib/drag.svelte'
-  import { workspace, activeTab, open, pin, save, close, reload, resetFor, bindView, fs, useDiskVersion, keepMine, canReopen, reopenClosed, type Tab } from '../lib/workspace.svelte'
+  import { workspace, activeTab, open, pin, save, close, reload, resetFor, bindView, fs, useDiskVersion, keepMine, canReopen, reopenClosed, showSource, type Tab } from '../lib/workspace.svelte'
   import { commandKey, fileManager, isWindows, shortcut, trashName } from '../lib/platform'
   import { nav } from '../lib/nav.svelte'
   import FileTree from '../components/FileTree.svelte'
   import FileSearchResults from '../components/FileSearchResults.svelte'
+  import ImageView from '../components/ImageView.svelte'
+  import MediaView from '../components/MediaView.svelte'
+  import NbtView from '../components/NbtView.svelte'
+  import { isGzip, outerArchive, viewerFor } from '../lib/viewers'
   import ContextMenu from '../components/ContextMenu.svelte'
   import type { MenuItem } from '../lib/menu'
   import Notice from '../components/Notice.svelte'
@@ -78,6 +82,7 @@
 
   $effect(() => {
     const path = workspace.active
+    void activeHasText
     const current = untrack(() => workspace.tabs.find((t) => t.path === path))
     if (!host) return
     if (!current?.state) {
@@ -194,6 +199,7 @@
   }
 
   async function remove(paths: string[]) {
+    paths = tree.writable(paths)
     if (!paths.length) return
     const what = paths.length === 1 ? name(paths[0]) : `${paths.length} items`
     const confirmed = await ask(`Move ${what} to the ${trashName}?`, {
@@ -350,6 +356,45 @@
   }
 
   let current = $derived(workspace.tabs.find((t) => t.path === workspace.active))
+  // A boolean, so the editor effect reruns when a tab gains text, not on every keystroke.
+  let activeHasText = $derived(!!current?.state)
+  let readOnly = $derived(!!current && (current.archived || current.compressed))
+  let viewer = $derived(current && !current.state ? viewerFor(current.path) : null)
+  let viewerError = $state<{ path: string; message: string } | null>(null)
+  let failure = $derived(viewerError && viewerError.path === current?.path ? viewerError.message : null)
+  const decompiling = new Set<string>()
+
+  // We decompile a class as soon as you open it, since there's nothing else to show for it.
+  $effect(() => {
+    const path = current?.path
+    if (!path || viewer !== 'class' || !current?.archived || failure || decompiling.has(path)) return
+    decompiling.add(path)
+    api
+      .decompileClass(path)
+      .then((source) => showSource(path, source))
+      .catch((e) => (viewerError = { path, message: `We couldn't decompile this class. ${errorText(e)}` }))
+      .finally(() => decompiling.delete(path))
+  })
+
+  let blockedNotice = $state(false)
+  let blockedTimer = 0
+  let blockedSeen = workspace.blocked
+
+  $effect(() => {
+    if (workspace.blocked === blockedSeen) return
+    blockedSeen = workspace.blocked
+    blockedNotice = true
+    clearTimeout(blockedTimer)
+    blockedTimer = setTimeout(() => (blockedNotice = false), 3000)
+  })
+
+  function retryViewer() {
+    viewerError = null
+  }
+
+  function showViewerFailure(path: string, message: string) {
+    viewerError = { path, message }
+  }
   let extension = $derived.by(() => {
     const name = current ? current.path.slice(current.path.lastIndexOf('/') + 1) : ''
     const dot = name.lastIndexOf('.')
@@ -459,14 +504,24 @@
           {#if problems}
             <button class="link problems {problems.tone}" title="Show problems (Ctrl+Shift+M)" onclick={showProblems}>{problems.text}</button>
           {/if}
-          <button class="link" onclick={() => reveal(current!.path)}>Show in folder</button>
+          {#if readOnly}<span class="read-only" class:flash={blockedNotice}>Read-only</span>{/if}
+          <button class="link" onclick={() => reveal(outerArchive(current!.path))}>{current.archived ? 'Show the archive in folder' : 'Show in folder'}</button>
           <button class="link" onclick={() => reloadTab(current!)}>Reload</button>
-          {#if current.state}
+          {#if current.state && !readOnly}
             <button class="primary save" disabled={!current.dirty} onclick={() => save(current!.path).then(loadChanges)}>
               {current.dirty ? 'Save' : 'Saved'} <kbd>Ctrl S</kbd>
             </button>
           {/if}
         </span>
+        {#if readOnly && blockedNotice}
+          <p class="blocked-note" role="status">
+            {#if current.archived}
+              This file is inside {name(outerArchive(current.path))}, so you can't change it here. Extract the archive to edit its files.
+            {:else}
+              We show this file decompressed, so you can't change it here. Extract it to edit a copy.
+            {/if}
+          </p>
+        {/if}
       </div>
     {/if}
 
@@ -490,10 +545,24 @@
 
     <div class="host" bind:this={host} class:hidden={!current?.state}></div>
 
-    {#if current && !current.state}
+    {#if current && !current.state && !failure && viewer === 'image'}
+      <ImageView path={current.path} archived={current.archived} />
+    {:else if current && !current.state && !failure && (viewer === 'video' || viewer === 'audio')}
+      <MediaView path={current.path} archived={current.archived} kind={viewer} />
+    {:else if current && !current.state && !failure && viewer === 'nbt'}
+      <NbtView path={current.path} onfail={(message) => showViewerFailure(current!.path, `We couldn't read this as NBT. ${message}`)} />
+    {:else if current && !current.state && !failure && viewer === 'class' && current.archived}
+      <div class="placeholder"><p>Decompiling with Vineflower…</p></div>
+    {:else if current && !current.state}
       <div class="placeholder">
-        <p>{current.unreadable}</p>
-        <p><button onclick={() => openWithDefaultApp(current!.path)}>Open in default app</button></p>
+        <p>{failure ?? current.unreadable}</p>
+        <p class="buttons">
+          {#if failure}<button onclick={retryViewer}>Try again</button>{/if}
+          {#if (viewer === 'archive' || viewer === 'compressed') && !current.archived}<button onclick={() => tree.extract(current!.path)}>Extract here</button>{/if}
+          {#if !current.archived}<button onclick={() => openWithDefaultApp(current!.path)}>Open in default app</button>{/if}
+        </p>
+        {#if viewer === 'archive'}<p class="muted small">Expand it in the file tree to browse what's inside.</p>{/if}
+        {#if !current.archived}
         <p class="muted small">
           {#if !extension}
             This file has no extension{isWindows ? ', so Windows will ask which app to use' : ''}.
@@ -505,6 +574,7 @@
             <span class="file">.{extension}</span> file
           {/if}
         </p>
+        {/if}
       </div>
     {:else if !current}
       <div class="placeholder">
@@ -745,6 +815,7 @@
   }
 
   .toolbar {
+    position: relative;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -820,6 +891,55 @@
 
   .host :global(.cm-editor) {
     height: 100%;
+  }
+
+  .read-only {
+    padding: 1px 8px;
+    font-size: var(--step--1);
+    color: var(--ochre-ink);
+    border: 1px solid transparent;
+    border-radius: var(--radius-control);
+  }
+
+  .read-only.flash {
+    background: var(--warn-fill);
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+    animation: nudge 0.3s ease;
+  }
+
+  @keyframes nudge {
+    25% {
+      transform: translateX(-3px);
+    }
+    75% {
+      transform: translateX(3px);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .read-only.flash {
+      animation: none;
+    }
+  }
+
+  .blocked-note {
+    position: absolute;
+    z-index: 5;
+    top: calc(100% + 6px);
+    right: 10px;
+    max-width: min(420px, 90%);
+    padding: 6px 10px;
+    font-size: var(--step--1);
+    background: var(--surface);
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+    border-radius: var(--radius-control);
+    box-shadow: 0 6px 16px var(--shadow);
+  }
+
+  .buttons {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
   }
 
   .placeholder {

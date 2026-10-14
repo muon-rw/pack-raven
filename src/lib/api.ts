@@ -155,6 +155,8 @@ export interface DirEntry {
   isDir: boolean
   size: number
   ignored: boolean
+  archive: boolean
+  archived: boolean
 }
 
 export interface HistoryOutcome {
@@ -175,6 +177,22 @@ export interface FileContent {
   unreadable: string | null
   crlf: boolean
   bom: boolean
+  archived: boolean
+  compressed: boolean
+}
+
+export type NbtTag =
+  | { type: 'byte' | 'short' | 'int' | 'float' | 'double'; value: number }
+  | { type: 'long' | 'string'; value: string }
+  | { type: 'byteArray' | 'intArray'; value: { length: number; items: number[] } }
+  | { type: 'longArray'; value: { length: number; items: string[] } }
+  | { type: 'list'; value: { itemType: string; items: NbtTag[] } }
+  | { type: 'compound'; value: [string, NbtTag][] }
+
+export interface NbtDocument {
+  compression: 'gzip' | 'zlib' | 'none'
+  rootName: string
+  root: NbtTag
 }
 
 export interface DefenderView {
@@ -228,6 +246,12 @@ export const api = {
   openWithDefaultApp: (path: string) => invoke<void>('open_with_default_app', { path }),
   defaultApp: (extension: string) => invoke<string | null>('default_app', { extension }),
   copyPaths: (paths: string[], absolute: boolean) => invoke<void>('copy_paths', { paths, absolute }),
+  readBytes: (path: string) => invoke<ArrayBuffer>('read_bytes', { path }),
+  readNbt: (path: string) => invoke<NbtDocument>('read_nbt', { path }),
+  decompileClass: (path: string) => invoke<string>('decompile_class', { path }),
+  extractArchive: (path: string) => invoke<string>('extract_archive', { path }),
+  compressPaths: (paths: string[]) => invoke<string>('compress_paths', { paths }),
+  mediaPath: (path: string) => invoke<string>('media_path', { path }),
   indexFiles: () => invoke<{ paths: string[]; truncated: boolean }>('index_files'),
   importPaths: (dir: string, sources: string[]) => invoke<Pasted>('import_paths', { dir, sources }),
   dragOut: (paths: string[]) => invoke<void>('drag_out', { paths }),

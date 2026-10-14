@@ -1,9 +1,11 @@
 mod announcer;
+mod archive;
 mod associations;
 mod changelog;
 mod commands;
 mod credentials;
 mod curseforge;
+mod decompile;
 mod defender;
 mod discord;
 mod discord_commands;
@@ -20,6 +22,7 @@ mod jobs;
 mod launch;
 mod modrinth;
 mod modsync;
+mod nbt;
 mod os_drag;
 mod pack;
 mod pack_commands;
@@ -199,6 +202,12 @@ pub fn run() {
             file_commands::copy_paths,
             file_commands::open_with_default_app,
             file_commands::default_app,
+            file_commands::read_bytes,
+            file_commands::read_nbt,
+            file_commands::decompile_class,
+            file_commands::extract_archive,
+            file_commands::compress_paths,
+            file_commands::media_path,
             file_commands::import_paths,
             file_commands::drag_out,
             file_commands::file_history,

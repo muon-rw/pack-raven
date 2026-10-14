@@ -8,6 +8,7 @@
   import { drag } from '../lib/drag.svelte'
   import { gitMenu } from '../lib/gitActions'
   import { commandKey, fileManager, isMac, shortcut } from '../lib/platform'
+  import { isGzip, outerArchive } from '../lib/viewers'
   import ContextMenu from './ContextMenu.svelte'
   import type { MenuItem } from '../lib/menu'
 
@@ -133,7 +134,7 @@
       if (creating === dir) out.push({ draft: true, depth })
       for (const entry of children.get(dir) ?? []) {
         out.push({ entry, depth, parent: dir })
-        if (entry.isDir && expanded.has(entry.path)) walk(entry.path, depth + 1)
+        if (expandable(entry) && expanded.has(entry.path)) walk(entry.path, depth + 1)
       }
     }
     walk('', 0)
@@ -141,6 +142,7 @@
   })
 
   let rows = $derived(lines.filter((line): line is Row => !('draft' in line)))
+  let entries = $derived(new Map(rows.map((r) => [r.entry.path, r.entry])))
 
   let changes = $derived.by(() => {
     const map = new Map<string, string>()
@@ -170,13 +172,30 @@
     return path.slice(path.lastIndexOf('/') + 1)
   }
 
+  function expandable(entry: DirEntry) {
+    return entry.isDir || entry.archive
+  }
+
+  function readOnly(paths: string[]) {
+    return paths.some((p) => entries.get(p)?.archived)
+  }
+
+  function explainReadOnly(path: string) {
+    report(`Files inside ${nameOf(outerArchive(path))} are read-only. Extract it to change them.`, 'note')
+  }
+
+  /** Returns the paths you can change, leaving out entries inside jars and zips. */
+  export function writable(paths: string[]) {
+    return paths.filter((p) => !entries.get(p)?.archived)
+  }
+
   function targetDir(row: Row | null) {
     if (!row) return ''
     return row.entry.isDir ? row.entry.path : row.parent
   }
 
   function toggle(entry: DirEntry, open = !expanded.has(entry.path)) {
-    if (!entry.isDir) return
+    if (!expandable(entry)) return
     if (open) expandDir(entry.path)
     else expanded.delete(entry.path)
   }
@@ -227,7 +246,7 @@
 
   function activate(row: Row) {
     focused = row.entry.path
-    if (row.entry.isDir) toggle(row.entry)
+    if (expandable(row.entry)) toggle(row.entry)
     else onopen(row.entry.path, false)
   }
 
@@ -293,17 +312,21 @@
     if (commandKey(event) && key === 'a') {
       for (const r of rows) selection.add(r.entry.path)
     } else if (commandKey(event) && (key === 'c' || key === 'x')) {
-      copy(selectedPaths(), key === 'x')
+      if (readOnly(selectedPaths())) explainReadOnly(row.entry.path)
+      else copy(selectedPaths(), key === 'x')
     } else if (commandKey(event) && (key === 'y' || (key === 'z' && event.shiftKey))) {
       stepHistory(true)
     } else if (commandKey(event) && key === 'z') {
       stepHistory(false)
     } else if (commandKey(event) && key === 'v') {
-      paste(targetDir(row))
+      if (row.entry.archived) explainReadOnly(row.entry.path)
+      else paste(targetDir(row))
     } else if (event.key === 'F2') {
-      startRename(row.entry.path)
+      if (row.entry.archived) explainReadOnly(row.entry.path)
+      else startRename(row.entry.path)
     } else if (event.key === 'Delete' || (isMac && event.metaKey && event.key === 'Backspace')) {
-      ondelete(selectedPaths())
+      if (readOnly(selectedPaths())) explainReadOnly(row.entry.path)
+      else ondelete(selectedPaths())
     } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
       const rect = (event.target as HTMLElement).getBoundingClientRect()
       openMenu(rect.left + 24, rect.bottom, row)
@@ -316,10 +339,10 @@
     } else if (event.key === 'End') {
       move(rows.length - 1)
     } else if (event.key === 'ArrowRight') {
-      if (row.entry.isDir && !expanded.has(row.entry.path)) toggle(row.entry, true)
-      else if (row.entry.isDir) move(index + 1)
+      if (expandable(row.entry) && !expanded.has(row.entry.path)) toggle(row.entry, true)
+      else if (expandable(row.entry)) move(index + 1)
     } else if (event.key === 'ArrowLeft') {
-      if (row.entry.isDir && expanded.has(row.entry.path)) toggle(row.entry, false)
+      if (expandable(row.entry) && expanded.has(row.entry.path)) toggle(row.entry, false)
       else if (row.parent) move(rows.findIndex((r) => r.entry.path === row.parent))
     } else if (event.key === '*' && row.entry.isDir) {
       expandAll(row.entry.path)
@@ -350,6 +373,10 @@
   }
 
   async function openMenu(x: number, y: number, row: Row | null) {
+    if (row?.entry.archived) {
+      menu = { x, y, items: archivedMenu(selectedPaths()) }
+      return
+    }
     const history = await api.fileHistory().catch(() => null)
     const dir = targetDir(row)
     const paths = row ? selectedPaths() : []
@@ -380,6 +407,9 @@
         { label: 'Paste', shortcut: shortcut('Ctrl+V'), run: () => paste(dir) },
         ...(paths.length === 1 ? [{ label: 'Rename', shortcut: 'F2', run: () => startRename(paths[0]) }] : []),
         'separator',
+        ...(single && (single.archive || (!single.isDir && isGzip(single.path))) ? [{ label: 'Extract here', run: () => extract(single.path) }] : []),
+        ...(paths.length && !single?.archive ? [{ label: paths.length > 1 ? `Compress ${paths.length} items to .zip` : 'Compress to .zip', run: () => compress(paths) }] : []),
+        'separator',
         ...(paths.length
           ? [
               { label: paths.length > 1 ? 'Copy paths' : 'Copy path', run: () => copyPaths(paths, true) },
@@ -396,6 +426,48 @@
         'separator',
         ...(paths.length ? [{ label: `Delete${count}`, shortcut: shortcut('Delete'), danger: true, run: () => ondelete(paths) }] : []),
       ],
+    }
+  }
+
+  // Entries inside a jar or zip are read-only, so their menu only offers ways to look at them.
+  function archivedMenu(paths: string[]): MenuItem[] {
+    const single = paths.length === 1 ? entries.get(paths[0]) : undefined
+    const inside = (path: string) => path.slice(outerArchive(path).length + 1)
+    return [
+      ...(single && !single.isDir && !single.archive ? [{ label: 'Open', run: () => onopen(single.path, true) }] : []),
+      'separator',
+      { label: paths.length > 1 ? 'Copy paths inside the archive' : 'Copy path inside the archive', run: () => copyPaths(paths.map(inside), false) },
+      'separator',
+      ...(single?.isDir ? [{ label: 'Expand all', shortcut: '*', run: () => expandAll(single.path) }] : []),
+      ...(single && expandable(single) ? [{ label: 'Collapse all', run: () => collapseAll(single.path) }] : []),
+      'separator',
+      { label: `Show the archive in ${fileManager}`, run: () => reveal(outerArchive(paths[0])) },
+    ]
+  }
+
+  export async function extract(path: string) {
+    message = null
+    try {
+      const folder = await api.extractArchive(path)
+      await load(parentOf(folder))
+      await show(folder)
+    } catch (e) {
+      report(errorText(e))
+    }
+  }
+
+  async function compress(paths: string[]) {
+    message = null
+    const slow = setTimeout(() => report('Compressing…', 'note'), SLOW_IMPORT)
+    try {
+      const zip = await api.compressPaths(paths)
+      await load(parentOf(zip))
+      message = null
+      await show(zip)
+    } catch (e) {
+      report(errorText(e))
+    } finally {
+      clearTimeout(slow)
     }
   }
 
@@ -644,6 +716,11 @@
     if (!press) return
     if (!drag.paths.length) {
       if (Math.hypot(event.clientX - press.x, event.clientY - press.y) < DRAG_THRESHOLD) return
+      if (press.row.entry.archived) {
+        explainReadOnly(press.row.entry.path)
+        press = null
+        return
+      }
       startDrag(press)
     }
     if (event.clientX < 0 || event.clientY < 0 || event.clientX >= innerWidth || event.clientY >= innerHeight) dragOut()
@@ -689,9 +766,9 @@
     const inTree = !drag.overTrash && !!under && tree.contains(under)
     const path = inTree ? under!.closest<HTMLElement>('[data-path]')?.dataset.path : undefined
     const row = path ? (rows.find((r) => r.entry.path === path) ?? null) : null
-    const dir = inTree ? targetDir(row) : null
+    const dir = inTree && !row?.entry.archived ? targetDir(row) : null
     dropDir = dir !== null && (!internal || canMoveInto(dir)) ? dir : null
-    expandAfterHover(row?.entry.isDir && !expanded.has(row.entry.path) ? row.entry.path : null)
+    expandAfterHover(row?.entry.isDir && !row.entry.archived && !expanded.has(row.entry.path) ? row.entry.path : null)
   }
 
   function expandAfterHover(path: string | null) {
@@ -797,13 +874,15 @@
       <div
         role="treeitem"
         aria-level={row.depth + 1}
-        aria-expanded={row.entry.isDir ? expanded.has(row.entry.path) : undefined}
+        aria-expanded={expandable(row.entry) ? expanded.has(row.entry.path) : undefined}
         aria-selected={selection.has(row.entry.path)}
         tabindex={row.entry.path === (focused ?? rows[0]?.entry.path) ? 0 : -1}
         data-path={row.entry.path}
         class="row"
         class:selected={selection.has(row.entry.path)}
         class:ignored={row.entry.ignored}
+        class:archived={row.entry.archived}
+        title={row.entry.archived ? `Inside ${nameOf(outerArchive(row.entry.path))}, read-only` : undefined}
         class:cut={cutPaths.includes(row.entry.path)}
         class:editing={renaming}
         class:drop={dropDir !== null && dropDir === row.entry.path}
@@ -816,7 +895,7 @@
         onfocus={() => (focused = row.entry.path)}
       >
         <span class="twisty" aria-hidden="true">
-          {#if row.entry.isDir}
+          {#if expandable(row.entry)}
             <svg viewBox="0 0 12 12" class:open={expanded.has(row.entry.path)}><path d="M4.5 3l3 3-3 3" /></svg>
           {/if}
         </span>
@@ -902,6 +981,15 @@
 
   .tree.dragging .row {
     cursor: grabbing;
+  }
+
+  /* Entries inside a jar or zip take a warm tint, since you can look but not change them. */
+  .row.archived:not(.selected):not(:hover) {
+    background: color-mix(in srgb, var(--ochre) 14%, transparent);
+  }
+
+  .row.archived .name {
+    color: var(--ochre-ink);
   }
 
   .row.cut .name {

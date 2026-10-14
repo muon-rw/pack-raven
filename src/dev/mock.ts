@@ -67,7 +67,7 @@ type MockEntry = { name: string; path: string; isDir: boolean; size: number; ign
 function addEntry(path: string, isDir: boolean) {
   const index = path.lastIndexOf('/')
   const dir = index < 0 ? '' : path.slice(0, index)
-  const list = (fx.dirs[dir] ??= []) as MockEntry[]
+  const list = (fx.dirs[dir] ??= listDir(dir)) as MockEntry[]
   if (list.some((e) => e.path === path)) throw `${path} already exists`
   list.push({ name: path.slice(index + 1), path, isDir, size: 0, ignored: false })
   list.sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name))
@@ -89,6 +89,110 @@ function moveEntry(from: string, to: string) {
     fx.dirs[to + dir.slice(from.length)] = (fx.dirs[dir] as MockEntry[]).map((e) => ({ ...e, path: to + e.path.slice(from.length) }))
     if (dir !== to) delete fx.dirs[dir]
   }
+}
+
+// A pretend mod jar, so you can try archive browsing, the image viewer and decompiling.
+const jar: Record<string, [string, boolean][]> = {
+  '': [['assets', true], ['com', true], ['META-INF', true], ['fabric.mod.json', false]],
+  assets: [['example', true]],
+  'assets/example': [['lang', true], ['textures', true]],
+  'assets/example/lang': [['en_us.json', false]],
+  'assets/example/textures': [['block', true]],
+  'assets/example/textures/block': [['fire.png', false], ['fire.png.mcmeta', false], ['stone.png', false]],
+  com: [['example', true]],
+  'com/example': [['ExampleMod$Inner.class', false], ['ExampleMod.class', false]],
+  'META-INF': [['MANIFEST.MF', false]],
+}
+
+function splitArchive(path: string) {
+  const parts = path.split('/')
+  const end = parts.findIndex((p) => /\.(jar|zip)$/i.test(p))
+  return end < 0 ? null : { archive: parts.slice(0, end + 1).join('/'), inner: parts.slice(end + 1).join('/') }
+}
+
+function listDir(path: string) {
+  const inside = splitArchive(path)
+  if (inside) {
+    return (jar[inside.inner] ?? []).map(([name, isDir]) => ({ name, path: `${path}/${name}`, isDir, size: 1024, ignored: false, archive: false, archived: true }))
+  }
+  const fallback: Record<string, MockEntry[]> = {
+    mods: [{ name: 'example-mod.jar', path: 'mods/example-mod.jar', isDir: false, size: 40960, ignored: false }],
+    logs: [
+      { name: '2026-10-13-1.log.gz', path: 'logs/2026-10-13-1.log.gz', isDir: false, size: 812, ignored: true },
+      { name: 'latest.log', path: 'logs/latest.log', isDir: false, size: 4096, ignored: true },
+    ],
+  }
+  const listed = (fx.dirs[path] as MockEntry[] | undefined) ?? fallback[path] ?? []
+  return listed.map((e) => ({ ...e, archive: !e.isDir && /\.(jar|zip)$/i.test(e.name), archived: false }))
+}
+
+function readFile(path: string) {
+  const archived = !!splitArchive(path)?.inner
+  if (path.endsWith('.gz')) {
+    const log = '[12:00:00] [main/INFO] [net.minecraft.server.Main/]: Starting server\n[12:00:01] [main/WARN] [mixin/]: Reference map not found\n'
+    return { text: log, size: 120, unreadable: null, crlf: false, bom: false, archived: false, compressed: true }
+  }
+  const binary = { text: null, size: 2048, unreadable: "This is a binary file, so packraven can't edit it.", crlf: false, bom: false, archived }
+  if (path.endsWith('fire.png.mcmeta')) return { text: '{ "animation": { "frametime": 4, "interpolate": true } }', size: 60, unreadable: null, crlf: false, bom: false, archived }
+  if (path.endsWith('.mcmeta') && archived) throw `${path} isn't in the archive`
+  if (/\.(png|jar|zip|nbt|dat|class|ogg|mp4)$/.test(path)) return binary
+  return (fx.files[path] as object | undefined) ?? { text: `// ${path}\n`, size: 0, unreadable: null, crlf: false, bom: false, archived }
+}
+
+// Draws a 16 px texture, or for fire.png a strip of four frames, as a PNG data URL.
+function mockImage(path: string) {
+  const canvas = document.createElement('canvas')
+  const frames = path.includes('fire') ? 4 : 1
+  canvas.width = 16
+  canvas.height = 16 * frames
+  const context = canvas.getContext('2d')!
+  const colors = ['#d9480f', '#f08c00', '#fcc419', '#e8590c']
+  for (let f = 0; f < frames; f++) {
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        if (frames === 1) context.fillStyle = (x + y) % 4 < 2 ? '#868e96' : '#495057'
+        else context.fillStyle = (x * 7 + y * 3 + f * 5) % 6 < 3 ? colors[f] : 'transparent'
+        context.fillRect(x, f * 16 + y, 1, 1)
+      }
+    }
+  }
+  return canvas.toDataURL('image/png')
+}
+
+function dataUrlBytes(url: string) {
+  return Uint8Array.from(atob(url.split(',')[1]), (c) => c.charCodeAt(0)).buffer
+}
+
+const sampleNbt = {
+  compression: 'gzip',
+  rootName: '',
+  root: {
+    type: 'compound',
+    value: [
+      [
+        'servers',
+        {
+          type: 'list',
+          value: {
+            itemType: 'compound',
+            items: [
+              {
+                type: 'compound',
+                value: [
+                  ['name', { type: 'string', value: 'Raven Test Server' }],
+                  ['ip', { type: 'string', value: 'localhost:25565' }],
+                  ['acceptTextures', { type: 'byte', value: 1 }],
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      ['DataVersion', { type: 'int', value: 3955 }],
+      ['Seed', { type: 'long', value: '-1234567890123456789' }],
+      ['Heights', { type: 'longArray', value: { length: 600, items: ['0', '1', '2'] } }],
+    ],
+  },
 }
 
 const callbacks = new Map<number, (message: unknown) => void>()
@@ -133,12 +237,31 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   defender_status: () => ({ active: true, exclusionsReadable: false, missing: [], prompt: false }),
   git_overview: () => ({ status: { ...fx.status, staged, unstaged }, commits: fx.commits }),
   git_diff: (a) => diffFor(String(a.path), Boolean(a.staged)),
-  list_dir: (a) => fx.dirs[String(a.path)] ?? [],
-  read_file: (a) =>
-    fx.files[String(a.path)] ??
-    (/\.(png|jar|zip|nbt|dat)$/.test(String(a.path))
-      ? { text: null, size: 2048, unreadable: "This is a binary file, so packraven can't edit it.", crlf: false, bom: false }
-      : { text: `// ${a.path}\n`, size: 0, unreadable: null, crlf: false, bom: false }),
+  list_dir: (a) => listDir(String(a.path)),
+  read_file: (a) => readFile(String(a.path)),
+  read_bytes: (a) => dataUrlBytes(mockImage(String(a.path))),
+  read_nbt: () => sampleNbt,
+  media_path: (a) => `${pack.dir}/${a.path}`,
+  decompile_class: (a) =>
+    new Promise((resolve) =>
+      setTimeout(() => resolve(`package com.example;\n\n// Decompiled from ${a.path}\npublic class ExampleMod {\n    public static final String ID = "example";\n\n    static class Inner {\n    }\n}\n`), 600),
+    ),
+  extract_archive: (a) => {
+    if (String(a.path).endsWith('.gz')) {
+      const file = String(a.path).slice(0, -3)
+      addEntry(file, false)
+      return file
+    }
+    const folder = String(a.path).replace(/\.(jar|zip)$/i, '')
+    addEntry(folder, true)
+    return folder
+  },
+  compress_paths: (a) => {
+    const first = (a.paths as string[])[0]
+    const zip = `${first.replace(/\.[^./]+$/, '')}.zip`
+    addEntry(zip, false)
+    return zip
+  },
   absolute_path: (a) => `${pack.dir}/${a.path}`,
   create_file: (a) => addEntry(String(a.path), false),
   create_dir: (a) => addEntry(String(a.path), true),
@@ -203,7 +326,7 @@ export function installMock() {
       return callbackId
     },
     unregisterCallback: () => {},
-    convertFileSrc: (path: string) => path,
+    convertFileSrc: (path: string) => (/\.(png|jpe?g|gif|webp)$/i.test(path) ? mockImage(path) : path),
     invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
       const handler = handlers[cmd]
       if (handler) return handler(args)

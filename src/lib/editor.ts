@@ -10,6 +10,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { yaml } from '@codemirror/lang-yaml'
 import { toml } from '@codemirror/legacy-modes/mode/toml'
 import { properties } from '@codemirror/legacy-modes/mode/properties'
+import { java } from '@codemirror/legacy-modes/mode/clike'
 import { tags } from '@lezer/highlight'
 import { forEachDiagnostic, lintKeymap } from '@codemirror/lint'
 import { lintFor } from './lint'
@@ -100,6 +101,22 @@ const theme = EditorView.theme({
   '.cm-panel.cm-panel-lint ul:focus [aria-selected]': { backgroundColor: 'var(--highlight)', color: 'var(--text)' },
 })
 
+// CodeMirror ignores typing in a read-only editor without a sign, so we report each attempt
+// for the view to explain.
+function blockedEdits(onBlocked: () => void) {
+  const editKeys = new Set(['Backspace', 'Delete', 'Enter', 'Tab'])
+  return EditorView.domEventHandlers({
+    keydown: (event) => {
+      const command = event.ctrlKey || event.metaKey
+      const typing = event.key.length === 1 && !command && !event.altKey
+      const editing = editKeys.has(event.key) || (command && ['v', 'x'].includes(event.key.toLowerCase()))
+      if (typing || editing) onBlocked()
+      return false
+    },
+    drop: () => (onBlocked(), false),
+  })
+}
+
 // CodeMirror's default panel labels are lowercase shorthand like "all" and "regexp".
 const phrases = EditorState.phrases.of({
   next: 'Next',
@@ -139,6 +156,10 @@ function language(path: string): Extension {
       return javascript({ typescript: ext === 'ts' })
     case 'md':
       return markdown()
+    // We show decompiled Java source for class files.
+    case 'class':
+    case 'java':
+      return StreamLanguage.define(java)
     default:
       return []
   }
@@ -164,6 +185,8 @@ export function createState(
   onChange: (state: EditorState) => void,
   onSave: () => void,
   onProblems: (problems: Problems) => void,
+  readOnly = false,
+  onBlocked: () => void = () => {},
 ): EditorState {
   let reported = ''
   return EditorState.create({
@@ -187,6 +210,8 @@ export function createState(
       syntaxHighlighting(highlight),
       language(path),
       lintFor(path),
+      EditorState.readOnly.of(readOnly),
+      readOnly ? blockedEdits(onBlocked) : [],
       theme,
       phrases,
       keymap.of([
