@@ -1,7 +1,7 @@
 import type { EditorState, TransactionSpec } from '@codemirror/state'
 import type { Problems } from './editor'
 import { listen } from '@tauri-apps/api/event'
-import { api } from './api'
+import { api, type FileContent } from './api'
 
 export interface Tab {
   path: string
@@ -73,30 +73,35 @@ export function pin(path: string) {
 // Like VS Code, a preview tab shows a file until you open another one in its place. Editing
 // the file or opening it with pinned set keeps it open.
 export async function open(path: string, { pinned = true } = {}) {
-  const existing = tab(path)
-  if (existing) {
-    if (pinned) existing.preview = false
-  } else {
+  if (!tab(path)) {
     const content = await api.readFile(path)
     const text = content.text ?? ''
-    const opened: Tab = {
-      path,
-      saved: text,
-      dirty: false,
-      crlf: content.crlf,
-      bom: content.bom,
-      unreadable: content.unreadable,
-      conflict: null,
-      disk: null,
-      problems: { errors: 0, warnings: 0 },
-      preview: !pinned,
-      state: content.text === null ? null : await editorState(path, text),
-    }
-    const replaced = pinned ? -1 : workspace.tabs.findIndex((t) => t.preview)
-    if (replaced >= 0) workspace.tabs[replaced] = opened
-    else workspace.tabs.push(opened)
+    const state = content.text === null ? null : await editorState(path, text)
+    // A double-click opens the same file three times at once, so another call may have
+    // added the tab while we were reading.
+    if (!tab(path)) addTab(path, content, text, state, pinned)
   }
+  if (pinned) pin(path)
   workspace.active = path
+}
+
+function addTab(path: string, content: FileContent, text: string, state: EditorState | null, pinned: boolean) {
+  const opened: Tab = {
+    path,
+    saved: text,
+    dirty: false,
+    crlf: content.crlf,
+    bom: content.bom,
+    unreadable: content.unreadable,
+    conflict: null,
+    disk: null,
+    problems: { errors: 0, warnings: 0 },
+    preview: !pinned,
+    state,
+  }
+  const replaced = pinned ? -1 : workspace.tabs.findIndex((t) => t.preview)
+  if (replaced >= 0) workspace.tabs[replaced] = opened
+  else workspace.tabs.push(opened)
 }
 
 export async function save(path = workspace.active) {
