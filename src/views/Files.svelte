@@ -16,6 +16,8 @@
   import MediaView from '../components/MediaView.svelte'
   import NbtView from '../components/NbtView.svelte'
   import LogViewer from '../components/LogViewer.svelte'
+  import MarkdownPreview from '../components/MarkdownPreview.svelte'
+  import { SvelteMap } from 'svelte/reactivity'
   import { isGzip, outerArchive, viewerFor } from '../lib/viewers'
   import ContextMenu from '../components/ContextMenu.svelte'
   import type { MenuItem } from '../lib/menu'
@@ -94,7 +96,10 @@
     }
     const state = untrack(() => current.state!)
     if (view) view.setState(state)
-    else view = new EditorView({ state, parent: host })
+    else {
+      view = new EditorView({ state, parent: host })
+      view.scrollDOM.addEventListener('scroll', onEditorScroll)
+    }
     const editor = view
     bindView(path, (spec) => editor.dispatch(spec))
     if (focusEditor) view.focus()
@@ -277,7 +282,10 @@
     if (!(event.ctrlKey || event.metaKey)) return
     const current = activeTab()
     const key = event.key.toLowerCase()
-    if (key === 's' && current) {
+    if (key === 'v' && event.shiftKey && isMarkdown) {
+      event.preventDefault()
+      setMarkdownMode(MARKDOWN_MODES[(MARKDOWN_MODES.findIndex((m) => m.id === markdownMode) + 1) % MARKDOWN_MODES.length].id)
+    } else if (key === 's' && current) {
       event.preventDefault()
       save(current.path).then(loadChanges)
     } else if (key === 'w' && current) {
@@ -364,6 +372,11 @@
   // A boolean, so the editor effect reruns when a tab gains text, not on every keystroke.
   let activeHasText = $derived(!!current?.state)
   let readOnly = $derived(!!current && (current.archived || current.compressed))
+  let isMarkdown = $derived(!!current?.state && !current.large && /\.(md|markdown)$/i.test(current.path))
+  let markdownMode = $derived.by((): MarkdownMode => {
+    if (!isMarkdown || !current) return 'code'
+    return tabModes.get(current.path) ?? (readOnly ? 'preview' : (rememberedMode ?? (editorWidth >= SPLIT_MIN_WIDTH ? 'split' : 'code')))
+  })
   let viewer = $derived(current && !current.state ? viewerFor(current.path) : null)
   let viewerError = $state<{ path: string; message: string } | null>(null)
   let logViewer: LogViewer | undefined = $state()
@@ -407,6 +420,74 @@
   async function checkNow() {
     const lint = await import('../lib/lint')
     if (view) lint.checkNow(view)
+  }
+
+  type MarkdownMode = 'code' | 'split' | 'preview'
+  const MARKDOWN_MODES: { id: MarkdownMode; label: string }[] = [
+    { id: 'code', label: 'Code' },
+    { id: 'split', label: 'Split' },
+    { id: 'preview', label: 'Preview' },
+  ]
+  const MARKDOWN_MODE_KEY = 'packraven.markdownMode'
+  const SPLIT_MIN_WIDTH = 800
+  const PREVIEW_DELAY_MS = 200
+
+  let editorWidth = $state(0)
+  let preview: MarkdownPreview | undefined = $state()
+  let previewDoc = $state<{ path: string; text: string } | null>(null)
+  let editorScrollIgnoredUntil = 0
+  // Your choice carries to the next Markdown file you edit, and a tab keeps the mode you picked
+  // for it. Files you can't edit open as a preview, since there's nothing to edit.
+  let rememberedMode = $state<MarkdownMode | null>(readStoredMode())
+  const tabModes = new SvelteMap<string, MarkdownMode>()
+
+  function readStoredMode(): MarkdownMode | null {
+    try {
+      const stored = localStorage.getItem(MARKDOWN_MODE_KEY)
+      return MARKDOWN_MODES.some((m) => m.id === stored) ? (stored as MarkdownMode) : null
+    } catch {
+      return null
+    }
+  }
+
+  function setMarkdownMode(mode: MarkdownMode) {
+    if (!current) return
+    tabModes.set(current.path, mode)
+    if (readOnly) return
+    rememberedMode = mode
+    try {
+      localStorage.setItem(MARKDOWN_MODE_KEY, mode)
+    } catch {
+      // Without storage, the choice lasts until you close packraven.
+    }
+  }
+
+  // Rendering on every keystroke would stall typing in a long file, so the preview waits for a
+  // pause. Switching files shows the new one at once.
+  $effect(() => {
+    const state = current?.state
+    const path = current?.path
+    if (!isMarkdown || !state || !path || markdownMode === 'code') return
+    const wait = untrack(() => previewDoc?.path === path) ? PREVIEW_DELAY_MS : 0
+    const timer = setTimeout(() => (previewDoc = { path, text: state.doc.toString() }), wait)
+    return () => clearTimeout(timer)
+  })
+
+  function onEditorScroll() {
+    if (markdownMode !== 'split' || !view || !preview || performance.now() < editorScrollIgnoredUntil) return
+    const top = view.scrollDOM.scrollTop
+    const block = view.lineBlockAtHeight(top)
+    const line = view.state.doc.lineAt(block.from).number - 1 + (block.height ? (top - block.top) / block.height : 0)
+    preview.scrollToLine(line)
+  }
+
+  function scrollEditorToLine(line: number) {
+    if (!view) return
+    const doc = view.state.doc
+    const number = Math.min(doc.lines, Math.max(1, Math.floor(line) + 1))
+    const block = view.lineBlockAt(doc.line(number).from)
+    editorScrollIgnoredUntil = performance.now() + 120
+    view.scrollDOM.scrollTop = block.top + (line % 1) * block.height
   }
 
   function retryViewer() {
@@ -487,7 +568,7 @@
     <FileTree bind:this={tree} hidden={searching} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} onremoved={closeRemoved} ongitchange={loadChanges} />
   </aside>
 
-  <section class="editor">
+  <section class="editor" bind:clientWidth={editorWidth}>
     {#if workspace.tabs.length}
       <div class="tabs" role="tablist" aria-label="Open files" tabindex="-1" onwheel={scrollTabs} oncontextmenu={(e) => onTabContextMenu(e, null)}>
         {#each workspace.tabs as tab, index (tab.path)}
@@ -522,6 +603,13 @@
       <div class="toolbar">
         <span class="file path" title={current.path}>{current.path}</span>
         <span class="actions">
+          {#if isMarkdown}
+            <span class="modes" role="group" aria-label="Markdown view">
+              {#each MARKDOWN_MODES as mode (mode.id)}
+                <button class="mode" aria-pressed={markdownMode === mode.id} title="{mode.label} ({shortcut('Ctrl+Shift+V')} switches)" onclick={() => setMarkdownMode(mode.id)}>{mode.label}</button>
+              {/each}
+            </span>
+          {/if}
           {#if problems}
             <button class="link problems {problems.tone}" title="Show problems (Ctrl+Shift+M)" onclick={showProblems}>{problems.text}</button>
           {/if}
@@ -572,7 +660,18 @@
     {#if workspace.error}<div class="pad"><Notice tone="error"><p>{workspace.error}</p></Notice></div>{/if}
     {#if openError}<div class="pad"><Notice tone="error"><p>{openError}</p></Notice></div>{/if}
 
-    <div class="host" bind:this={host} class:hidden={!current?.state}></div>
+    <div class="panes" class:hidden={!current?.state} class:split={markdownMode === 'split'}>
+      <div class="host" bind:this={host} class:hidden={markdownMode === 'preview'}></div>
+      {#if current && isMarkdown && markdownMode !== 'code' && previewDoc?.path === current.path}
+        <MarkdownPreview
+          bind:this={preview}
+          source={previewDoc.text}
+          path={current.path}
+          onopenpath={(path) => openFile(path, true)}
+          onscrollline={markdownMode === 'split' ? scrollEditorToLine : undefined}
+        />
+      {/if}
+    </div>
 
     {#if current && viewer === 'log'}
       {#key current.path}<LogViewer bind:this={logViewer} path={current.path} />{/key}
@@ -912,9 +1011,47 @@
     gap: 4px;
   }
 
-  .host {
+  .panes {
     flex: 1;
     min-height: 0;
+    display: flex;
+  }
+
+  .panes.hidden {
+    display: none;
+  }
+
+  .host {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .panes.split > .host {
+    border-right: 1px solid var(--line);
+  }
+
+  .modes {
+    display: flex;
+    padding: 2px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-control);
+  }
+
+  .mode {
+    padding: 1px 10px;
+    font-weight: 400;
+    font-size: var(--step--1);
+    color: var(--muted);
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .mode[aria-pressed='true'] {
+    color: var(--text);
+    background: var(--field);
+    border-color: var(--line-strong);
   }
 
   .host.hidden {

@@ -47,6 +47,11 @@
     ],
     "resources": {
       "resources/vineflower.jar": "vineflower.jar"
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
     }
   }
 }

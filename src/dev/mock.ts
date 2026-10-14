@@ -93,7 +93,7 @@ function moveEntry(from: string, to: string) {
 
 // A pretend mod jar, so you can try archive browsing, the image viewer and decompiling.
 const jar: Record<string, [string, boolean][]> = {
-  '': [['assets', true], ['com', true], ['META-INF', true], ['fabric.mod.json', false]],
+  '': [['assets', true], ['com', true], ['META-INF', true], ['fabric.mod.json', false], ['README.md', false]],
   assets: [['example', true]],
   'assets/example': [['lang', true], ['textures', true]],
   'assets/example/lang': [['en_us.json', false]],
@@ -124,11 +124,50 @@ function listDir(path: string) {
   }
   const listed = [...((fx.dirs[path] as MockEntry[] | undefined) ?? fallback[path] ?? [])]
   if (path === '' && !listed.some((e) => e.name === 'huge-recipes.json')) listed.push({ name: 'huge-recipes.json', path: 'huge-recipes.json', isDir: false, size: 72e6, ignored: false })
+  if (path === '' && !listed.some((e) => e.name === 'README.md')) listed.push({ name: 'README.md', path: 'README.md', isDir: false, size: 2048, ignored: false })
   return listed.map((e) => ({ ...e, archive: !e.isDir && /\.(jar|zip)$/i.test(e.name), archived: false }))
 }
 
+// Exercises headings, tables, task lists, raw HTML, relative images and every kind of link.
+const sampleReadme = [
+  '<p align="center"><img src="mods/example-mod.jar/assets/example/textures/block/stone.png" width="64" alt="Pack icon"></p>',
+  '',
+  "# Raven's High Fantasy",
+  '',
+  'A **fantasy** pack with _dragons_, dungeons and `kubejs` tweaks. See [Installing](#installing) or the [config notes](config/apotheosis/apotheosis.cfg).',
+  '',
+  '![Fire](mods/example-mod.jar/assets/example/textures/block/fire.png) ![Badge](https://img.shields.io/badge/minecraft-1.21.1-green)',
+  '',
+  '## Installing',
+  '',
+  '1. Install the CurseForge app',
+  '2. Import the pack',
+  '   - Give it **8 GB** of memory',
+  '',
+  '## Roadmap',
+  '',
+  '- [x] Dragons',
+  '- [ ] More dungeons',
+  '',
+  '| Mod | Version |',
+  '| --- | --- |',
+  '| Apotheosis | 8.1.2 |',
+  '| Iron\'s Spells | 3.4.0 |',
+  '',
+  '> Report bugs on [GitHub](https://github.com/muon-rw/Ravens-High-Fantasy/issues).',
+  '',
+  '<script>alert("no")</script>',
+  '',
+  '```js',
+  "ServerEvents.recipes(event => event.remove({ id: 'minecraft:stick' }))",
+  '```',
+  '',
+  ...Array.from({ length: 40 }, (_, i) => `Filler paragraph ${i + 1} so the preview scrolls.\n`),
+].join('\n')
+
 function readFile(path: string) {
   const archived = !!splitArchive(path)?.inner
+  if (path.endsWith('README.md')) return { text: sampleReadme, size: sampleReadme.length, unreadable: null, crlf: false, bom: false, archived, compressed: false, large: false }
   if (path.endsWith('.gz')) {
     const log = '[12:00:00] [main/INFO] [net.minecraft.server.Main/]: Starting server\n[12:00:01] [main/WARN] [mixin/]: Reference map not found\n'
     return { text: log, size: 120, unreadable: null, crlf: false, bom: false, archived: false, compressed: true }
