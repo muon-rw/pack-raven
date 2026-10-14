@@ -497,17 +497,17 @@
     border-radius: 999px;
   }
 
-  .filter[aria-pressed='true'] {
+  .filter[aria-pressed='true']:not(:disabled) {
     color: var(--text);
     background: var(--surface);
     border-color: var(--line-strong);
   }
 
-  .filter.error[aria-pressed='true'] .count {
+  .filter.error[aria-pressed='true']:not(:disabled) .count {
     color: var(--fail);
   }
 
-  .filter.warn[aria-pressed='true'] .count {
+  .filter.warn[aria-pressed='true']:not(:disabled) .count {
     color: var(--warn);
   }
 

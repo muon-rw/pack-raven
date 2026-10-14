@@ -198,7 +198,7 @@
     font-family: var(--font-log);
     font-size: 0.88em;
     background: var(--surface);
-    border-radius: 4px;
+    border-radius: var(--radius-small);
   }
 
   .markdown :global(pre) {
@@ -266,6 +266,6 @@
     font-size: 0.85em;
     border: 1px solid var(--line-strong);
     border-bottom-width: 2px;
-    border-radius: 4px;
+    border-radius: var(--radius-small);
   }
 </style>

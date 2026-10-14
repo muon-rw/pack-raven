@@ -351,10 +351,13 @@
           </Notice>
         </div>
       {/if}
+      <!-- Setup activates the new pack before it reports done, so we keep Add pack outside the key
+           block. Otherwise the switch would remount it and drop the setup result. -->
+      {#if view === 'add'}
+        <AddPack first={!packs?.packs.length} onadded={() => { view = 'changes'; refresh() }} />
+      {:else}
       {#key packs?.active}
-        {#if view === 'add'}
-          <AddPack first={!packs?.packs.length} onadded={() => { view = 'changes'; refresh() }} />
-        {:else if loadError && view !== 'settings'}
+        {#if loadError && view !== 'settings'}
           <Notice tone="error">
             <p>{loadError}</p>
             <p><button onclick={() => (view = 'settings')}>Open App settings</button></p>
@@ -381,6 +384,7 @@
           <SettingsView onchange={refresh} />
         {/if}
       {/key}
+      {/if}
     </section>
   </main>
 </div>
