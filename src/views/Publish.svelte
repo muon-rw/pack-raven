@@ -7,6 +7,7 @@
   import { job } from '../lib/jobs.svelte'
   import { renderMarkdown } from '../lib/markdown'
   import LogView from '../components/LogView.svelte'
+  import LinkedText from '../components/LinkedText.svelte'
 
   let {
     overview,
@@ -171,9 +172,9 @@
     </Notice>
   {/if}
   {#each [publishJob, serverJob, clientJob] as failed, index (index)}
-    {#if failed.phase === 'failed'}<Notice tone="error"><p>{failed.message}</p></Notice>{/if}
+    {#if failed.phase === 'failed'}<Notice tone="error"><p><LinkedText text={failed.message ?? ''} /></p></Notice>{/if}
   {/each}
-  {#if error}<Notice tone="error"><p>{error}</p></Notice>{/if}
+  {#if error}<Notice tone="error"><p><LinkedText text={error} /></p></Notice>{/if}
 
   <div class="columns">
     <section class="review" aria-labelledby="changelog-title">

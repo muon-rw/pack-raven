@@ -45,12 +45,24 @@
     if (typeof chosen === 'string' && settings) settings.installDir = chosen
   }
 
+  const JAVA_SLOTS = [
+    { major: '17', versions: 'Minecraft 1.18 to 1.20.4 (Java 17)' },
+    { major: '21', versions: 'Minecraft 1.20.5 to 1.21 (Java 21)' },
+    { major: '25', versions: 'Minecraft 26.1 and later (Java 25)' },
+  ]
+
+  async function pickJava(major: string) {
+    const chosen = await open({ title: `Choose a Java ${major} executable`, defaultPath: settings?.javaByMajor[major] || undefined })
+    if (typeof chosen === 'string' && settings) settings.javaByMajor[major] = chosen
+  }
+
   async function save() {
     if (!settings) return
     try {
       const editorAskMb = Math.max(1, Math.round(settings.editorAskMb || 50))
       const editorMaxMb = Math.max(editorAskMb, Math.round(settings.editorMaxMb || 100))
-      await api.saveSettings({ ...settings, java: settings.java?.trim() || null, editorAskMb, editorMaxMb })
+      const javaByMajor = Object.fromEntries(Object.entries(settings.javaByMajor).map(([major, java]) => [major, java.trim()]).filter(([, java]) => java))
+      await api.saveSettings({ ...settings, javaByMajor, editorAskMb, editorMaxMb })
       await load()
       onchange()
       messageFailed = false
@@ -137,17 +149,35 @@
         <label>CurseForge Install folder <input bind:value={settings.installDir} /></label>
         <button type="button" onclick={pickInstall}>Choose</button>
       </div>
-      <label>
-        Java 21 executable
-        <input value={settings.java ?? ''} oninput={(e) => (settings!.java = e.currentTarget.value)} aria-describedby="java-hint" />
-      </label>
-      <p class="muted hint" id="java-hint">Leave empty to use the Java from the CurseForge profile.</p>
+    </section>
+
+    <section>
+      <h3>Java</h3>
+      <p class="muted">
+        Optional overrides for java versions; leave a field empty to use CurseForge's installed java version. You are not blocked from setting
+        newer than official, but potentially compatible versions (like setting Java 25 for all versions), but they may cause issues. A pack's own
+        Java override under Pack Settings takes precedence over these.
+      </p>
+      {#each JAVA_SLOTS as slot (slot.major)}
+        <div class="path">
+          <label>
+            {slot.versions}
+            <input
+              value={settings.javaByMajor[slot.major] ?? ''}
+              oninput={(e) => (settings!.javaByMajor[slot.major] = e.currentTarget.value)}
+              placeholder="CurseForge's Java {slot.major}"
+            />
+          </label>
+          <button type="button" onclick={() => pickJava(slot.major)}>Choose</button>
+        </div>
+      {/each}
     </section>
 
     <section>
       <h3>Editor</h3>
       <label>
         Ask before opening files larger than (MB)
+        
         <input type="number" min="1" step="1" bind:value={settings.editorAskMb} aria-describedby="editor-ask-hint" />
       </label>
       <p class="muted hint" id="editor-ask-hint">Past this size, you can open a file in a simplified editor, without checking or folding, so typing stays responsive.</p>

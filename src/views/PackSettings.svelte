@@ -1,7 +1,7 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
   import { onMount } from 'svelte'
-  import { ask } from '@tauri-apps/plugin-dialog'
+  import { ask, open } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type PackConfig } from '../lib/api'
 
   let { dir, name, onchange, onremoved }: { dir: string; name: string; onchange: () => void; onremoved: () => void } = $props()
@@ -9,6 +9,7 @@
   let config: PackConfig | null = $state(null)
   let configError: string | null = $state(null)
   let webhook = $state('')
+  let packJava = $state('')
   let message: string | null = $state(null)
   let messageFailed = $state(false)
   let discordMessage = $state<string | null>(null)
@@ -20,6 +21,7 @@
     try {
       config = await api.getPackConfig()
       webhook = (await api.getWebhook()) ?? ''
+      packJava = (await api.getPackJava()) ?? ''
       configError = null
     } catch (error) {
       config = null
@@ -34,6 +36,7 @@
     try {
       await api.savePackConfig(config)
       await api.setWebhook(webhook)
+      await api.setPackJava(packJava.trim() || null)
       await load()
       onchange()
       messageFailed = false
@@ -42,6 +45,11 @@
       messageFailed = true
       message = `Couldn't save: ${errorText(error)}`
     }
+  }
+
+  async function pickJava() {
+    const chosen = await open({ title: `Choose a Java executable for ${name}`, defaultPath: packJava || undefined })
+    if (typeof chosen === 'string') packJava = chosen
   }
 
   async function testWebhook() {
@@ -80,7 +88,7 @@
 <div class="settings">
   <header>
     <h2>Pack settings</h2>
-    <p class="muted">For {name} only. packraven stores these in <span class="file">packraven.toml</span> in the pack repo, except the webhook.</p>
+    <p class="muted">For {name} only. packraven stores these in <span class="file">packraven.toml</span> in the pack repo, except the Java and the webhook.</p>
   </header>
 
   {#if configError}
@@ -113,8 +121,24 @@
         <h3>Server and test run</h3>
         <div class="grid">
           <label>Server memory <input bind:value={config.server.memory} placeholder="4G" title="Java heap size, such as 4G or 6144M" /></label>
+          <label>
+            Server pack GraalVM
+            <input
+              bind:value={config.server.graalvm}
+              placeholder="Automatic"
+              title="The GraalVM version the server pack's run scripts download on first start: 21 for the latest GraalVM 21, or 21.0.7 to pin a release. Leave empty for GraalVM 21, or GraalVM 25 for Minecraft 26.1 and later."
+            />
+          </label>
           <label>Test username <input bind:value={config.test.username} /></label>
           <label>Test server port <input type="number" bind:value={config.test.port} /></label>
+        </div>
+        <div class="field">
+          <label for="pack-java">Java</label>
+          <div class="inline">
+            <input id="pack-java" bind:value={packJava} placeholder="The Java from App settings" aria-describedby="pack-java-hint" />
+            <button type="button" onclick={pickJava}>Choose</button>
+          </div>
+          <p class="hint" id="pack-java-hint">Overrides the Java under App settings for this pack's test runs and server builds. packraven saves it only on this machine, never in the pack repo.</p>
         </div>
       </section>
 

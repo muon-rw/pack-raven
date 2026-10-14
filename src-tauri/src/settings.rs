@@ -13,7 +13,10 @@ pub struct Settings {
     pub instance_dir: PathBuf,
     pub packs: Vec<PathBuf>,
     pub install_dir: PathBuf,
-    pub java: Option<PathBuf>,
+    #[serde(rename = "java", skip_serializing)]
+    pub legacy_java: Option<PathBuf>,
+    pub java_by_major: BTreeMap<u32, PathBuf>,
+    pub pack_java: BTreeMap<String, PathBuf>,
     pub defender_excluded: Vec<PathBuf>,
     pub defender_dismissed: bool,
     pub discord_webhooks: BTreeMap<String, String>,
@@ -34,13 +37,17 @@ fn curseforge_root() -> PathBuf {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { instance_dir: PathBuf::new(), packs: Vec::new(), install_dir: curseforge_root().join("Install"), java: None, defender_excluded: Vec::new(), defender_dismissed: false, discord_webhooks: BTreeMap::new(), editor_ask_mb: (crate::files::Limits::DEFAULT.ask / 1_000_000) as u32, editor_max_mb: (crate::files::Limits::DEFAULT.max / 1_000_000) as u32 }
+        Self { instance_dir: PathBuf::new(), packs: Vec::new(), install_dir: curseforge_root().join("Install"), legacy_java: None, java_by_major: BTreeMap::new(), pack_java: BTreeMap::new(), defender_excluded: Vec::new(), defender_dismissed: false, discord_webhooks: BTreeMap::new(), editor_ask_mb: (crate::files::Limits::DEFAULT.ask / 1_000_000) as u32, editor_max_mb: (crate::files::Limits::DEFAULT.max / 1_000_000) as u32 }
     }
 }
 
 impl Settings {
     pub fn load(path: &PathBuf) -> Self {
         let mut settings: Self = std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+        // packraven only ran NeoForge 1.21 packs when it had a single Java setting.
+        if let Some(java) = settings.legacy_java.take() {
+            settings.java_by_major.entry(21).or_insert(java);
+        }
         if settings.packs.is_empty() && settings.instance_dir.join(LOCKFILE).exists() {
             settings.packs.push(settings.instance_dir.clone());
         }
@@ -60,16 +67,27 @@ impl Settings {
     }
 
     pub fn webhook(&self, pack: &Path) -> Option<String> {
-        self.discord_webhooks.get(&webhook_key(pack)).filter(|w| !w.is_empty()).cloned()
+        self.discord_webhooks.get(&pack_key(pack)).filter(|w| !w.is_empty()).cloned()
     }
 
     pub fn set_webhook(&mut self, pack: &Path, url: &str) {
         let url = url.trim();
         if url.is_empty() {
-            self.discord_webhooks.remove(&webhook_key(pack));
+            self.discord_webhooks.remove(&pack_key(pack));
         } else {
-            self.discord_webhooks.insert(webhook_key(pack), url.to_string());
+            self.discord_webhooks.insert(pack_key(pack), url.to_string());
         }
+    }
+
+    pub fn pack_java(&self, pack: &Path) -> Option<&PathBuf> {
+        self.pack_java.get(&pack_key(pack))
+    }
+
+    pub fn set_pack_java(&mut self, pack: &Path, java: Option<PathBuf>) {
+        match java {
+            Some(java) => self.pack_java.insert(pack_key(pack), java),
+            None => self.pack_java.remove(&pack_key(pack)),
+        };
     }
 
     pub fn instances_root(&self) -> PathBuf {
@@ -91,6 +109,6 @@ impl Settings {
     }
 }
 
-fn webhook_key(pack: &Path) -> String {
+fn pack_key(pack: &Path) -> String {
     pack.to_string_lossy().trim_end_matches(['\\', '/']).replace('\\', "/").to_lowercase()
 }

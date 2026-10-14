@@ -1,13 +1,17 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
   import { api, errorText, type Overview } from '../lib/api'
-  import { job, serverMods, testState } from '../lib/jobs.svelte'
+  import { job, serverMods, testOptions, testState } from '../lib/jobs.svelte'
   import JobLog from '../components/JobLog.svelte'
   import Tip from '../components/Tip.svelte'
+  import LinkedText from '../components/LinkedText.svelte'
 
   let { overview, onservermods }: { overview: Overview | null; onservermods: () => void } = $props()
 
-  let rebuild = $state(serverMods.changedSinceBuild)
+  const RECOPY_TIP =
+    "Before each start, packraven copies only the mods, configs and modloader files that changed since the last start, judging by each file's size and modified time. " +
+    'If the test server seems to run outdated files, tick this to recopy everything. It adds 10 to 60 seconds to every server start.'
+
   let join = $state(true)
   let clientJoins = $state(false)
   let command = $state('')
@@ -15,8 +19,8 @@
 
   function startTest(connect: boolean) {
     return run(async () => {
-      await api.startTest(rebuild, connect)
-      if (rebuild) serverMods.changedSinceBuild = false
+      await api.startTest(testOptions.recopyAll, connect)
+      serverMods.changedSinceTest = false
     })
   }
 
@@ -81,8 +85,8 @@
       <p class="muted">{status}</p>
     </div>
     <div class="controls">
-      <label class="check" title={serverRunning ? 'Stop the test server to change this' : undefined}>
-        <input type="checkbox" bind:checked={rebuild} disabled={serverRunning} /> Rebuild server pack first
+      <label class="check" title={serverRunning ? 'Stop the test server to change this' : RECOPY_TIP}>
+        <input type="checkbox" bind:checked={testOptions.recopyAll} disabled={serverRunning} /> Recopy all server files
       </label>
       <Tip tip={whyNoQuick ?? 'Start the server, then launch the client and join it'}>
         <button
@@ -97,20 +101,14 @@
     </div>
   </div>
 
-  {#if serverMods.changedSinceBuild}
+  {#if serverRunning && serverMods.changedSinceTest}
     <Notice tone="warn">
-      <p>
-        You changed server mod overrides since packraven last built the server pack.
-        {serverRunning
-          ? 'Stop the test server, then start it again with Rebuild server pack first ticked to use them.'
-          : rebuild
-            ? 'Rebuild server pack first is ticked, so the next start uses them.'
-            : 'Tick Rebuild server pack first so the next start uses them.'}
-      </p>
+      <p>You changed server mod overrides after the test server started. Stop it and start it again to use them.</p>
     </Notice>
   {/if}
-  {#if error}<Notice tone="error"><p>{error}</p></Notice>{/if}
-  {#if job('test').phase === 'failed'}<Notice tone="error"><p>{job('test').message}</p></Notice>{/if}
+  {#if error}<Notice tone="error"><p><LinkedText text={error} /></p></Notice>{/if}
+  {#if job('test').phase === 'failed'}<Notice tone="error"><p><LinkedText text={job('test').message ?? ''} /></p></Notice>{/if}
+  {#if job('client').phase === 'failed'}<Notice tone="error"><p>Couldn't launch the client: <LinkedText text={job('client').message ?? ''} /></p></Notice>{/if}
 
   <div class="logs">
     <div class="pane">

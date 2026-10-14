@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
@@ -8,14 +9,16 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{oneshot, watch};
 
-use crate::export::{copy_dir, local_dev_jars};
+use crate::export::{local_dev_jars, server_args};
 use crate::jobs::Log;
 use crate::launch;
+use crate::mirror::{mirror, FilePlan, MirrorReport, Planned};
 use crate::pack::Pack;
 use crate::process::{spawn_watched, LineHook};
 use crate::settings::Settings;
 
-const KEPT_ON_RESYNC: [&str; 4] = ["world", "logs", "crash-reports", "usercache.json"];
+// Fabric keeps its remapped mods in .fabric, and rebuilding that cache slows every start.
+const KEPT_ON_RESYNC: [&str; 5] = ["world", "logs", "crash-reports", "usercache.json", ".fabric"];
 
 #[derive(Default)]
 pub struct Managed {
@@ -45,6 +48,27 @@ pub struct TestRun {
     pub client: Mutex<Option<Arc<Managed>>>,
 }
 
+impl TestRun {
+    pub fn running(&self) -> bool {
+        self.server.lock().unwrap().is_some() || self.client.lock().unwrap().is_some()
+    }
+
+    pub async fn kill_all(&self) {
+        for slot in [&self.server, &self.client] {
+            if let Some(process) = slot.lock().unwrap().as_ref() {
+                process.kill();
+            }
+        }
+        // supervise() clears each slot only after the process exits, so we wait for that.
+        for _ in 0..100 {
+            if !self.running() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct TestEvent {
@@ -71,54 +95,31 @@ async fn supervise(mut child: Child, managed: Arc<Managed>, slot: &Mutex<Option<
     result
 }
 
-pub fn sync_server_dir(built: &Path, test_dir: &Path) -> Result<()> {
-    if test_dir.exists() {
-        for entry in std::fs::read_dir(test_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if KEPT_ON_RESYNC.contains(&name.as_str()) {
-                continue;
-            }
-            let removed = if entry.file_type()?.is_dir() { std::fs::remove_dir_all(entry.path()) } else { std::fs::remove_file(entry.path()) };
-            removed.with_context(|| format!("couldn't clear {name} in the test server folder. Is a server from an earlier run still open?"))?;
-        }
+pub fn sync_server_dir(mut plan: FilePlan, pack: &Pack, test_dir: &Path, recopy_all: bool, log: &Log) -> Result<MirrorReport> {
+    let dev_jars = local_dev_jars(pack);
+    for jar in &dev_jars {
+        plan.insert(format!("mods/{jar}"), Planned::Copy(pack.dir.join("mods").join(jar)));
     }
-    copy_dir(built, test_dir)
+    if !dev_jars.is_empty() {
+        log.info(format!("Adding local dev builds: {}", dev_jars.join(", ")));
+    }
+    plan.insert("eula.txt".into(), Planned::Write("eula=true\n".into()));
+    if let Some(Planned::Write(properties)) = plan.get_mut("server.properties") {
+        *properties = test_properties(properties, pack.config.test.port);
+    }
+    mirror(test_dir, &plan, &KEPT_ON_RESYNC, recopy_all).context("couldn't update the test server folder. Is a server from an earlier run still open?")
 }
 
-pub fn add_dev_jars(pack: &Pack, test_dir: &Path) -> Result<Vec<String>> {
-    let jars = local_dev_jars(pack);
-    for jar in &jars {
-        std::fs::copy(pack.dir.join("mods").join(jar), test_dir.join("mods").join(jar))?;
-    }
-    Ok(jars)
-}
-
-fn configure(test_dir: &Path, port: u16) -> Result<()> {
-    std::fs::write(test_dir.join("eula.txt"), "eula=true\n")?;
-    let path = test_dir.join("server.properties");
-    let mut lines: Vec<String> = std::fs::read_to_string(&path)
-        .unwrap_or_default()
-        .lines()
-        .filter(|l| !l.starts_with("online-mode=") && !l.starts_with("server-port="))
-        .map(String::from)
-        .collect();
+fn test_properties(text: &str, port: u16) -> String {
+    let mut lines: Vec<String> = text.lines().filter(|l| !l.starts_with("online-mode=") && !l.starts_with("server-port=")).map(String::from).collect();
     lines.push("online-mode=false".into());
     lines.push(format!("server-port={port}"));
-    std::fs::write(&path, lines.join("\n") + "\n")?;
-    Ok(())
+    lines.join("\n") + "\n"
 }
 
 pub async fn run_server(app: AppHandle, run: Arc<TestRun>, pack: &Pack, java: PathBuf, test_dir: PathBuf, ready: watch::Sender<bool>, log: Log) -> Result<String> {
-    configure(&test_dir, pack.config.test.port)?;
-    let args_file = if cfg!(windows) { "win_args.txt" } else { "unix_args.txt" };
-    let neoforge = pack.lock.neoforge_version()?;
     let mut command = Command::new(&java);
-    command
-        .current_dir(&test_dir)
-        .arg("@user_jvm_args.txt")
-        .arg(format!("@libraries/net/neoforged/neoforge/{neoforge}/{args_file}"))
-        .arg("nogui");
+    command.current_dir(&test_dir).args(server_args(pack, &test_dir)?);
     let hook_app = app.clone();
     let hook: LineHook = Arc::new(move |line: &str| {
         if line.contains("Done (") && line.contains(")! For help") {

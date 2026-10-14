@@ -21,7 +21,8 @@ let nextId = 0
 
 export const jobs: Record<string, JobRecord> = $state({})
 export const testState = $state({ serverReady: false, players: [] as string[] })
-export const serverMods = $state({ changedSinceBuild: false })
+export const serverMods = $state({ changedSinceBuild: false, changedSinceTest: false })
+export const testOptions = $state({ recopyAll: false })
 
 const idle = new JobRecord()
 const pending = new Map<string, LogLine[]>()

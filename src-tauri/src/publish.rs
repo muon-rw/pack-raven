@@ -109,7 +109,7 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
     let server_zip = export::zip_server_pack(&pack, &version, &out_dir, &log).await?;
     let notes = changelog::render(&changelog::read_notes(&pack), &diff);
 
-    let game_versions = curseforge::game_version_ids(pack.lock.minecraft()?, "NeoForge").await?;
+    let game_versions = curseforge::game_version_ids(pack.lock.minecraft()?, pack.lock.mod_loader()?.name()).await?;
     let release_type = pack.config.curseforge.release_type.clone();
     log.info(format!("Uploading {}", client_zip.display()));
     let file_id = curseforge::upload(

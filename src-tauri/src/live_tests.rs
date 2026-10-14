@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tokio::io::{AsyncWriteExt, BufReader};
@@ -95,28 +95,14 @@ fn client_command() {
     assert!(missing.is_empty(), "missing classpath entries: {missing:?}");
 }
 
-#[tokio::test]
-#[ignore]
-async fn server_pack_boots() {
-    let (settings, pack) = pack();
-    let log = Log::console("server-pack");
-    let java = launch::java(&settings).unwrap();
-    let mut cache = MetadataCache::load(&scratch().join("metadata-cache.json"));
-    let sides = sides::classify(&pack, &mut cache).await.unwrap();
-    let out = scratch().join("build");
-    export::server_pack(&pack, &sides, "test", &out, &java, &scratch(), &log).await.unwrap();
-    let zip = export::zip_server_pack(&pack, "test", &out, &log).await.unwrap();
-    println!("zip {} ({} MB)", zip.display(), std::fs::metadata(&zip).unwrap().len() / 1_000_000);
+async fn boots(java: &Path, pack: &Pack, dir: &Path) -> bool {
+    let mut command = Command::new(java);
+    command.current_dir(dir).args(export::server_args(pack, dir).unwrap());
+    boots_with(command).await
+}
 
-    let dir = out.join("server");
-    std::fs::write(dir.join("eula.txt"), "eula=true\n").unwrap();
-    let neoforge = pack.lock.neoforge_version().unwrap();
-    let args_file = if cfg!(windows) { "win_args.txt" } else { "unix_args.txt" };
-    let mut child = Command::new(&java)
-        .current_dir(&dir)
-        .arg("@user_jvm_args.txt")
-        .arg(format!("@libraries/net/neoforged/neoforge/{neoforge}/{args_file}"))
-        .arg("nogui")
+async fn boots_with(mut command: Command) -> bool {
+    let mut child = command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .kill_on_drop(true)
@@ -125,7 +111,7 @@ async fn server_pack_boots() {
     let mut reader = BufReader::new(child.stdout.take().unwrap());
     let started = tokio::time::timeout(Duration::from_secs(900), async {
         while let Some(line) = crate::process::read_line_lossy(&mut reader).await {
-            if line.contains("ERROR") || line.contains("Exception") || line.contains("Done (") {
+            if line.contains("ERROR") || line.contains("Exception") || line.contains("Done (") || line.contains("GraalVM") || line.contains("Starting the server") {
                 println!("{line}");
             }
             if line.contains("Done (") {
@@ -143,7 +129,84 @@ async fn server_pack_boots() {
     }
     let _ = tokio::time::timeout(Duration::from_secs(120), child.wait()).await;
     let _ = child.kill().await;
-    assert!(started, "server did not finish starting");
+    started
+}
+
+#[tokio::test]
+#[ignore]
+async fn server_pack_boots() {
+    let (settings, pack) = pack();
+    let log = Log::console("server-pack");
+    let java = launch::java(&settings).unwrap();
+    let mut cache = MetadataCache::load(&scratch().join("metadata-cache.json"));
+    let sides = sides::classify(&pack, &mut cache).await.unwrap();
+    let out = scratch().join("build");
+    export::server_pack(&pack, &sides, "test", &out, &java, &scratch(), &log).await.unwrap();
+    let zip = export::zip_server_pack(&pack, "test", &out, &log).await.unwrap();
+    println!("zip {} ({} MB)", zip.display(), std::fs::metadata(&zip).unwrap().len() / 1_000_000);
+
+    let dir = out.join("server");
+    std::fs::write(dir.join("eula.txt"), "eula=true\n").unwrap();
+    assert!(boots(&java, &pack, &dir).await, "server did not finish starting");
+}
+
+async fn modless_pack(source: &Path) -> PathBuf {
+    let name = source.file_name().unwrap().to_string_lossy();
+    let dir = scratch().join(format!("modless-{name}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("mods")).unwrap();
+    std::fs::copy(source.join("minecraftinstance.json"), dir.join("minecraftinstance.json")).unwrap();
+    let options = crate::setup::SetupOptions { remote: None, author: "test".into(), project_id: 0, untrack_binaries: true, commit: Some(crate::setup::FirstCommit { message: String::new(), author: None }) };
+    crate::setup::setup(dir.clone(), options, Log::console("setup")).await.unwrap();
+    dir
+}
+
+/// Boots a modless test server for each instance in PACKRAVEN_LOADER_INSTANCES, a comma-separated
+/// list of CurseForge instance names, through the same sync a test run uses.
+#[tokio::test]
+#[ignore]
+async fn loader_test_servers_boot() {
+    let names = std::env::var("PACKRAVEN_LOADER_INSTANCES").unwrap_or_else(|_| "MMC4Forge,MMC2Fab".into());
+    for name in names.split(',') {
+        let source = Settings::default().instances_root().join(name);
+        let pack = Pack::open(&modless_pack(&source).await).unwrap();
+        // The source instance's CurseForge profile picks the Java version its Minecraft needs.
+        let java = launch::java(&Settings { instance_dir: source, ..Settings::default() }).unwrap();
+        let log = Log::console(name);
+        let test_dir = scratch().join(format!("test-server-{name}"));
+        let _ = std::fs::remove_dir_all(&test_dir);
+        let plan = export::server_plan(&pack, &[], "test", &java, &scratch(), &log).await.unwrap();
+        println!("{name}: {}", crate::testrun::sync_server_dir(plan, &pack, &test_dir, false, &log).unwrap());
+        assert!(boots(&java, &pack, &test_dir).await, "{name} server did not finish starting");
+
+        let plan = export::server_plan(&pack, &[], "test", &java, &scratch(), &log).await.unwrap();
+        println!("{name} resync: {}", crate::testrun::sync_server_dir(plan, &pack, &test_dir, false, &log).unwrap());
+    }
+}
+
+/// Boots a modless server pack through its own run scripts: run.bat here, and run.sh in WSL
+/// when it's installed. Each script downloads GraalVM on its first start.
+#[tokio::test]
+#[ignore]
+async fn server_pack_scripts_boot() {
+    let name = std::env::var("PACKRAVEN_SCRIPT_INSTANCE").unwrap_or_else(|_| "MMC4Forge".into());
+    let source = Settings::default().instances_root().join(&name);
+    let pack = Pack::open(&modless_pack(&source).await).unwrap();
+    let java = launch::java(&Settings { instance_dir: source, ..Settings::default() }).unwrap();
+    let out = scratch().join(format!("scripts-{name}"));
+    let dir = export::server_pack(&pack, &[], "test", &out, &java, &scratch(), &Log::console(&name)).await.unwrap();
+    std::fs::write(dir.join("eula.txt"), "eula=true\n").unwrap();
+
+    let mut bat = Command::new("cmd");
+    bat.current_dir(&dir).args(["/c", ".\\run.bat"]);
+    assert!(boots_with(bat).await, "run.bat didn't start the server");
+
+    if std::process::Command::new("wsl").args(["-e", "true"]).status().is_ok_and(|s| s.success()) {
+        let _ = std::fs::remove_dir_all(dir.join("world"));
+        let mut sh = Command::new("wsl");
+        sh.current_dir(&dir).args(["-e", "sh", "./run.sh"]);
+        assert!(boots_with(sh).await, "run.sh didn't start the server");
+    }
 }
 
 #[test]

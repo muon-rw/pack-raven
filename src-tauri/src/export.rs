@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use serde::Deserialize;
 use serde_json::json;
 use tokio::process::Command;
 use walkdir::WalkDir;
@@ -14,10 +15,16 @@ use zip::{CompressionMethod, ZipWriter};
 use crate::git;
 use crate::http;
 use crate::jobs::Log;
-use crate::pack::{LockEntry, Pack};
+use crate::mirror::{mirror, FilePlan, Planned};
+use crate::pack::{LockEntry, ModLoader, Pack};
 use crate::sides::{ModSide, Side};
 
 const NEOFORGE_MAVEN: &str = "https://maven.neoforged.net/releases/net/neoforged/neoforge";
+const FORGE_MAVEN: &str = "https://maven.minecraftforge.net/net/minecraftforge/forge";
+const FABRIC_INSTALLERS: &str = "https://meta.fabricmc.net/v2/versions/installer";
+const FABRIC_LAUNCHER: &str = "fabric-server-launch.jar";
+const RUN_BAT: &str = include_str!("scripts/run.bat");
+const RUN_SH: &str = include_str!("scripts/run.sh");
 
 fn globs(patterns: &[String]) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
@@ -74,7 +81,7 @@ pub fn client_export(pack: &Pack, version: &str, out_dir: &Path, log: &Log) -> R
     let manifest = json!({
         "minecraft": {
             "version": pack.lock.minecraft()?,
-            "modLoaders": [{ "id": pack.lock.loader()?, "primary": true }],
+            "modLoaders": [{ "id": pack.lock.mod_loader()?.manifest_id(), "primary": true }],
             "recommendedRam": pack.config.export.recommended_ram_mb,
         },
         "manifestType": "minecraftModpack",
@@ -138,23 +145,49 @@ pub async fn ensure_cached(pack: &Pack, entry: &LockEntry) -> Result<PathBuf> {
     Ok(path)
 }
 
-async fn neoforge_server_base(version: &str, java: &Path, data_dir: &Path, log: &Log) -> Result<PathBuf> {
-    let base = data_dir.join("neoforge").join(format!("server-{version}"));
+#[derive(Deserialize)]
+struct FabricInstaller {
+    url: String,
+    stable: bool,
+}
+
+async fn fabric_installer_url() -> Result<String> {
+    let installers: Vec<FabricInstaller> = http::CLIENT.get(FABRIC_INSTALLERS).send().await?.error_for_status()?.json().await?;
+    installers.into_iter().find(|i| i.stable).map(|i| i.url).context("Fabric lists no stable installer")
+}
+
+async fn loader_server_base(pack: &Pack, java: &Path, data_dir: &Path, log: &Log) -> Result<PathBuf> {
+    let minecraft = pack.lock.minecraft()?;
+    let loader = pack.lock.mod_loader()?;
+    let folder = data_dir.join(loader.name().to_lowercase());
+    let name = match loader {
+        ModLoader::NeoForge(version) => format!("server-{version}"),
+        ModLoader::Forge(version) | ModLoader::Fabric(version) => format!("server-{minecraft}-{version}"),
+    };
+    let base = folder.join(&name);
     if base.join("libraries").exists() {
         return Ok(base);
     }
-    let installer = data_dir.join("neoforge").join(format!("neoforge-{version}-installer.jar"));
+    let (installer_url, args) = match loader {
+        ModLoader::NeoForge(version) => (format!("{NEOFORGE_MAVEN}/{version}/neoforge-{version}-installer.jar"), vec!["--installServer"]),
+        ModLoader::Forge(version) => (format!("{FORGE_MAVEN}/{minecraft}-{version}/forge-{minecraft}-{version}-installer.jar"), vec!["--installServer"]),
+        ModLoader::Fabric(version) => (fabric_installer_url().await?, vec!["server", "-mcversion", minecraft, "-loader", version, "-downloadMinecraft", "-dir"]),
+    };
+    let installer = folder.join(installer_url.rsplit('/').next().context("installer URL has no file name")?);
     if !installer.exists() {
-        log.info(format!("Downloading NeoForge {version} installer"));
-        http::download(&format!("{NEOFORGE_MAVEN}/{version}/neoforge-{version}-installer.jar"), &installer, None).await?;
+        log.info(format!("Downloading the {} installer", loader.name()));
+        http::download(&installer_url, &installer, None).await?;
     }
-    let staging = base.with_file_name(format!("server-{version}-staging"));
+    let staging = folder.join(format!("{name}-staging"));
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging)?;
-    log.info(format!("Installing NeoForge {version} server"));
+    log.info(format!("Installing the {} server for Minecraft {minecraft}", loader.name()));
     let mut command = Command::new(java);
-    command.current_dir(&staging).arg("-jar").arg(&installer).arg("--installServer").arg(&staging);
-    crate::process::run_logged(command, log).await.context("NeoForge server install failed")?;
+    command.current_dir(&staging).arg("-jar").arg(&installer).args(args).arg(&staging);
+    crate::process::run_logged(command, log).await.with_context(|| format!("{} server install failed", loader.name()))?;
+    if let ModLoader::Fabric(_) = loader {
+        unpack_vanilla_bundler(&staging, java, log).await?;
+    }
     for entry in std::fs::read_dir(&staging)? {
         let entry = entry?;
         if entry.file_name().to_string_lossy().ends_with(".log") {
@@ -165,24 +198,33 @@ async fn neoforge_server_base(version: &str, java: &Path, data_dir: &Path, log: 
     Ok(base)
 }
 
-pub fn copy_dir(source: &Path, dest: &Path) -> Result<()> {
-    for entry in WalkDir::new(source) {
-        let entry = entry?;
-        let target = dest.join(entry.path().strip_prefix(source)?);
-        if entry.file_type().is_dir() {
-            std::fs::create_dir_all(&target)?;
-        } else {
-            std::fs::copy(entry.path(), &target)?;
-        }
+// Since 1.18, vanilla's server.jar bundles its libraries and unpacks them on every start that
+// finds them missing. The NeoForge and Forge installers unpack them up front, but Fabric's
+// doesn't, so we do it here. Otherwise each test run's sync deletes them again.
+async fn unpack_vanilla_bundler(dir: &Path, java: &Path, log: &Log) -> Result<()> {
+    let bundled = File::open(dir.join("server.jar")).ok().and_then(|jar| zip::ZipArchive::new(jar).ok()).is_some_and(|mut jar| jar.by_name("META-INF/versions.list").is_ok());
+    if !bundled {
+        return Ok(());
     }
+    log.info("Unpacking the vanilla server's libraries");
+    let mut command = Command::new(java);
+    // Vanilla's data generator prints its usage and exits once the bundler has unpacked everything.
+    command.current_dir(dir).arg("-DbundlerMainClass=net.minecraft.data.Main").arg("-jar").arg("server.jar").arg("--help");
+    crate::process::run_logged(command, log).await.context("unpacking the vanilla server failed")?;
+    let _ = std::fs::remove_dir_all(dir.join("logs"));
     Ok(())
 }
 
-pub async fn server_pack(pack: &Pack, sides: &[ModSide], version: &str, out_dir: &Path, java: &Path, data_dir: &Path, log: &Log) -> Result<PathBuf> {
-    let dir = out_dir.join("server");
-    let _ = std::fs::remove_dir_all(&dir);
-    let base = neoforge_server_base(pack.lock.neoforge_version()?, java, data_dir, log).await?;
-    copy_dir(&base, &dir)?;
+pub async fn server_plan(pack: &Pack, sides: &[ModSide], version: &str, java: &Path, data_dir: &Path, log: &Log) -> Result<FilePlan> {
+    let base = loader_server_base(pack, java, data_dir, log).await?;
+    let mut plan = FilePlan::new();
+    for entry in WalkDir::new(&base) {
+        let entry = entry?;
+        if entry.file_type().is_file() {
+            let relative = entry.path().strip_prefix(&base)?.to_string_lossy().replace('\\', "/");
+            plan.insert(relative, Planned::Copy(entry.into_path()));
+        }
+    }
 
     let client_only: HashSet<&str> = sides.iter().filter(|m| m.side == Side::Client).map(|m| m.path.as_str()).collect();
     let server_files: Vec<&LockEntry> = pack
@@ -192,31 +234,87 @@ pub async fn server_pack(pack: &Pack, sides: &[ModSide], version: &str, out_dir:
         .filter(|e| !e.path.ends_with(".disabled") && !client_only.contains(e.path.as_str()))
         .filter(|e| e.path.starts_with("mods/") || e.path.starts_with("datapacks/"))
         .collect();
-    log.info(format!("Copying {} server files ({} client-only skipped)", server_files.len(), client_only.len()));
+    log.info(format!("Including {} server files ({} client-only skipped)", server_files.len(), client_only.len()));
     for entry in &server_files {
-        let cached = ensure_cached(pack, entry).await?;
-        let target = dir.join(&entry.path);
-        std::fs::create_dir_all(target.parent().context("lock path has no parent")?)?;
-        std::fs::copy(cached, target)?;
+        plan.insert(entry.path.clone(), Planned::Copy(ensure_cached(pack, entry).await?));
     }
 
     let overrides = override_files(pack, &pack.config.server.exclude)?;
-    for file in &overrides {
-        let target = dir.join(file);
-        std::fs::create_dir_all(target.parent().context("override path has no parent")?)?;
-        std::fs::copy(pack.dir.join(file), target)?;
+    log.info(format!("Including {} config and override files", overrides.len()));
+    for file in overrides {
+        let source = pack.dir.join(&file);
+        plan.insert(file, Planned::Copy(source));
     }
-    log.info(format!("Copied {} config and override files", overrides.len()));
 
     let mut properties = pack.config.server.properties.clone();
     properties.entry("motd".into()).or_insert_with(|| format!("{} {version}", pack.name()));
-    let text: String = properties.iter().map(|(k, v)| format!("{k}={v}\n")).collect();
-    std::fs::write(dir.join("server.properties"), text)?;
-    let jvm_args = dir.join("user_jvm_args.txt");
-    let mut existing = std::fs::read_to_string(&jvm_args).unwrap_or_default();
-    existing.push_str(&format!("\n-Xmx{}\n", pack.config.server.memory));
-    std::fs::write(&jvm_args, existing)?;
+    plan.insert("server.properties".into(), Planned::Write(properties.iter().map(|(k, v)| format!("{k}={v}\n")).collect()));
+    let jvm_args = std::fs::read_to_string(base.join("user_jvm_args.txt")).unwrap_or_default();
+    plan.insert("user_jvm_args.txt".into(), Planned::Write(format!("{jvm_args}\n-Xmx{}\n", pack.config.server.memory)));
+    // We replace the NeoForge and Forge installers' run scripts, which call whatever java is on
+    // PATH, and Fabric's installer writes none.
+    let graalvm = server_graalvm(pack)?;
+    let run_bat = start_script(RUN_BAT, &loader_launch(pack, true)?, graalvm.as_deref()).replace('\n', "\r\n");
+    plan.insert("run.bat".into(), Planned::Write(run_bat));
+    plan.insert("run.sh".into(), Planned::Write(start_script(RUN_SH, &loader_launch(pack, false)?, graalvm.as_deref())));
+    Ok(plan)
+}
 
+fn loader_launch(pack: &Pack, windows: bool) -> Result<String> {
+    let args_file = if windows { "win_args.txt" } else { "unix_args.txt" };
+    Ok(match pack.lock.mod_loader()? {
+        ModLoader::NeoForge(version) => format!("@libraries/net/neoforged/neoforge/{version}/{args_file}"),
+        ModLoader::Forge(version) => format!("@libraries/net/minecraftforge/forge/{}-{version}/{args_file}", pack.lock.minecraft()?),
+        ModLoader::Fabric(_) => format!("-jar {FABRIC_LAUNCHER}"),
+    })
+}
+
+pub fn server_args(pack: &Pack, dir: &Path) -> Result<Vec<String>> {
+    let launch = loader_launch(pack, cfg!(windows))?;
+    let launched_file = launch.trim_start_matches('@').trim_start_matches("-jar ");
+    if !dir.join(launched_file).exists() {
+        bail!("the {} installer didn't create {launched_file}, so packraven can't start this server", pack.lock.mod_loader()?.name());
+    }
+    Ok(["@user_jvm_args.txt"].into_iter().chain(launch.split(' ')).chain(["nogui"]).map(String::from).collect())
+}
+
+fn server_graalvm(pack: &Pack) -> Result<Option<String>> {
+    let configured = pack.config.server.graalvm.trim();
+    if configured.is_empty() {
+        // GraalVM 21 runs everything that needs Java 17, and faster than Java 17 does.
+        return Ok(match crate::launch::java_for_minecraft(pack.lock.minecraft()?).1 {
+            17 | 21 => Some("21".into()),
+            25 => Some("25".into()),
+            _ => None,
+        });
+    }
+    let parts: Vec<&str> = configured.split('.').collect();
+    let valid = parts.len() <= 3 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) && parts[0].parse::<u32>().is_ok_and(|major| major >= 17);
+    if !valid {
+        bail!("server.graalvm in packraven.toml must be a GraalVM version like 21 or 21.0.7, found {configured}");
+    }
+    Ok(Some(configured.to_string()))
+}
+
+fn graalvm_url_prefix(version: &str) -> String {
+    match version.split_once('.') {
+        Some((major, _)) => format!("https://download.oracle.com/graalvm/{major}/archive/graalvm-jdk-{version}_"),
+        None => format!("https://download.oracle.com/graalvm/{version}/latest/graalvm-jdk-{version}_"),
+    }
+}
+
+fn start_script(template: &str, launch: &str, graalvm: Option<&str>) -> String {
+    template
+        .replace("\r\n", "\n")
+        .replace("{{GRAALVM}}", graalvm.unwrap_or_default())
+        .replace("{{URL_PREFIX}}", &graalvm.map(graalvm_url_prefix).unwrap_or_default())
+        .replace("{{LAUNCH}}", launch)
+}
+
+pub async fn server_pack(pack: &Pack, sides: &[ModSide], version: &str, out_dir: &Path, java: &Path, data_dir: &Path, log: &Log) -> Result<PathBuf> {
+    let dir = out_dir.join("server");
+    let plan = server_plan(pack, sides, version, java, data_dir, log).await?;
+    log.info(mirror(&dir, &plan, &[], false)?.to_string());
     Ok(dir)
 }
 

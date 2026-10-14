@@ -18,7 +18,7 @@
   import { dirtyCount, startWatching } from './lib/workspace.svelte'
   import DefenderNotice from './components/DefenderNotice.svelte'
   import GitNotice from './components/GitNotice.svelte'
-  import { ask } from '@tauri-apps/plugin-dialog'
+  import { ask, message } from '@tauri-apps/plugin-dialog'
   import PackSwitcher from './components/PackSwitcher.svelte'
   import RavenMark from './components/RavenMark.svelte'
   import ThemeToggle from './components/ThemeToggle.svelte'
@@ -72,9 +72,26 @@
     refresh()
   })
 
+  function killWarning(server: boolean, client: boolean) {
+    if (server && client) return "The test server and client are still running. If you switch packs, packraven kills them, and the server doesn't save its world."
+    if (server) return "The test server is still running. If you switch packs, packraven kills it without saving its world."
+    return 'The test client is still running. If you switch packs, packraven kills it.'
+  }
+
   async function switchPack(dir: string) {
+    const leaving = dir !== packs?.active
+    const killTests = leaving && !!(overview?.serverRunning || overview?.clientRunning)
+    if (killTests) {
+      const confirmed = await ask(killWarning(!!overview?.serverRunning, !!overview?.clientRunning), {
+        title: 'Test still running',
+        kind: 'warning',
+        okLabel: 'Kill and switch',
+        cancelLabel: 'Keep running',
+      })
+      if (!confirmed) return
+    }
     const unsaved = dirtyCount()
-    if (unsaved && dir !== packs?.active) {
+    if (unsaved && leaving) {
       const confirmed = await ask(`${unsaved === 1 ? 'A file has' : `${unsaved} files have`} unsaved changes. If you switch packs, packraven closes ${unsaved === 1 ? 'it' : 'them'} without saving.`, {
         title: 'Unsaved changes',
         kind: 'warning',
@@ -84,13 +101,13 @@
       if (!confirmed) return
     }
     try {
-      await api.switchPack(dir)
+      await api.switchPack(dir, killTests)
       view = 'changes'
       hookMessage = null
       hooksDismissed = false
       await refresh()
     } catch (error) {
-      loadError = errorText(error)
+      await message(errorText(error), { title: "Couldn't switch packs", kind: 'error' })
     }
   }
 

@@ -52,7 +52,7 @@ const config = {
   author: 'muon-rw',
   curseforge: { project_id: 1234567, release_type: 'beta', manual_release: false },
   export: { exclude: [] },
-  server: { exclude: [], client_only: [], keep: [], memory: '6G', properties: {} },
+  server: { exclude: [], client_only: [], keep: [], memory: '6G', graalvm: '', properties: {} },
   test: { username: 'Dev', port: 25565, client_memory: '8G' },
   discord: { role_id: '112233445566778899', color: '#4d6b2f', announce_on_approval: true, title: '{project_name} - v{version}', show_author: true, header: '', footer: '[Install]({file_url})' },
 }
@@ -284,7 +284,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     clientRunning: false,
     hooks: 'current',
   }),
-  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', java: null, defenderExcluded: [], defenderDismissed: false, editorAskMb: 50, editorMaxMb: 100 }),
+  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: {}, defenderExcluded: [], defenderDismissed: false, editorAskMb: 50, editorMaxMb: 100 }),
   get_pack_config: () => config,
   get_webhook: () => 'https://discord.com/api/webhooks/0000/example',
   git_version: () => '2.56.0.windows.2',

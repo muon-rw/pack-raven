@@ -64,6 +64,7 @@ pub struct ServerConfig {
     pub client_only: Vec<u64>,
     pub keep: Vec<u64>,
     pub memory: String,
+    pub graalvm: String,
     pub properties: BTreeMap<String, String>,
 }
 
@@ -116,6 +117,7 @@ impl Default for ServerConfig {
             client_only: Vec::new(),
             keep: Vec::new(),
             memory: "6G".into(),
+            graalvm: String::new(),
             properties: [("allow-flight", "true"), ("max-tick-time", "60000"), ("difficulty", "normal")]
                 .into_iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -161,11 +163,42 @@ impl Lockfile {
         self.loader.as_deref().context("mods.lock.json has no loader; commit once so the git hooks regenerate it")
     }
 
-    pub fn neoforge_version(&self) -> Result<&str> {
+    pub fn mod_loader(&self) -> Result<ModLoader<'_>> {
         let loader = self.loader()?;
-        match loader.strip_prefix("neoforge-") {
-            Some(version) => Ok(version),
-            None => bail!("packraven only supports NeoForge packs, found {loader}"),
+        if let Some(version) = loader.strip_prefix("neoforge-") {
+            Ok(ModLoader::NeoForge(version))
+        } else if let Some(version) = loader.strip_prefix("forge-") {
+            Ok(ModLoader::Forge(version))
+        } else if let Some(versions) = loader.strip_prefix("fabric-") {
+            // CurseForge names Fabric profiles fabric-<loader>-<minecraft>.
+            Ok(ModLoader::Fabric(versions.split_once('-').map_or(versions, |(version, _)| version)))
+        } else {
+            bail!("packraven supports NeoForge, Forge and Fabric packs, found {loader}")
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ModLoader<'a> {
+    NeoForge(&'a str),
+    Forge(&'a str),
+    Fabric(&'a str),
+}
+
+impl ModLoader<'_> {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ModLoader::NeoForge(_) => "NeoForge",
+            ModLoader::Forge(_) => "Forge",
+            ModLoader::Fabric(_) => "Fabric",
+        }
+    }
+
+    pub fn manifest_id(&self) -> String {
+        match self {
+            ModLoader::NeoForge(version) => format!("neoforge-{version}"),
+            ModLoader::Forge(version) => format!("forge-{version}"),
+            ModLoader::Fabric(version) => format!("fabric-{version}"),
         }
     }
 }
@@ -236,4 +269,22 @@ impl Pack {
 
 fn bcc_pattern(key: &str) -> Regex {
     Regex::new(&format!(r#"(?m)^(\s*{key}\s*=\s*)"([^"]*)""#)).expect("valid regex")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lock(loader: &str) -> Lockfile {
+        Lockfile { minecraft: Some("1.21.1".into()), loader: Some(loader.into()), files: vec![] }
+    }
+
+    #[test]
+    fn parses_curseforge_loader_ids() {
+        assert_eq!(lock("neoforge-21.1.259").mod_loader().unwrap(), ModLoader::NeoForge("21.1.259"));
+        assert_eq!(lock("forge-47.4.13").mod_loader().unwrap(), ModLoader::Forge("47.4.13"));
+        assert_eq!(lock("fabric-0.19.2-1.21.1").mod_loader().unwrap(), ModLoader::Fabric("0.19.2"));
+        assert_eq!(lock("fabric-0.19.2-1.21.1").mod_loader().unwrap().manifest_id(), "fabric-0.19.2");
+        assert!(lock("quilt-0.26.0-1.21.1").mod_loader().is_err());
+    }
 }

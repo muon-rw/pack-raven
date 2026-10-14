@@ -21,6 +21,7 @@ mod http;
 mod jobs;
 mod launch;
 mod logs;
+mod mirror;
 mod modrinth;
 mod modsync;
 mod nbt;
@@ -180,6 +181,8 @@ pub fn run() {
             pack_commands::switch_pack,
             pack_commands::remove_pack,
             pack_commands::update_hooks,
+            pack_commands::get_pack_java,
+            pack_commands::set_pack_java,
             git_commands::git_overview,
             git_commands::git_diff,
             git_commands::git_stage,

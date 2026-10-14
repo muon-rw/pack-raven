@@ -4,6 +4,7 @@
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { api, errorText, type ModSide, type Override } from '../lib/api'
   import { serverMods } from '../lib/jobs.svelte'
+  import { commandKey, shortcut } from '../lib/platform'
 
   type Filter = 'excluded' | 'all' | 'overridden'
 
@@ -30,6 +31,7 @@
     try {
       await api.setSideOverride(mod.projectId, select.value as Override)
       serverMods.changedSinceBuild = true
+      serverMods.changedSinceTest = true
     } catch (error) {
       select.value = mod.override
       loadError = `Couldn't change the override for ${mod.name}: ${errorText(error)}`
@@ -45,7 +47,18 @@
       return !search || m.name.toLowerCase().includes(search.toLowerCase())
     }),
   )
+
+  let searchField: HTMLInputElement
+
+  function onKey(event: KeyboardEvent) {
+    if (event.key.toLowerCase() !== 'f' || event.shiftKey || !commandKey(event) || event.defaultPrevented) return
+    event.preventDefault()
+    searchField.focus()
+    searchField.select()
+  }
 </script>
+
+<svelte:window onkeydown={onKey} />
 
 <div class="server">
   <header class="head">
@@ -69,7 +82,7 @@
         <button aria-pressed={filter === id} class:on={filter === id} onclick={() => (filter = id)}>{label}</button>
       {/each}
     </div>
-    <input type="search" bind:value={search} placeholder="Find a mod" aria-label="Find a mod" />
+    <input type="search" bind:this={searchField} bind:value={search} placeholder="Find a mod" aria-label="Find a mod" title="Find a mod ({shortcut('Ctrl+F')})" />
   </div>
 
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->

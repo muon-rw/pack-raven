@@ -89,6 +89,9 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 
 #[tauri::command]
 pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {
+    if let Some((major, java)) = settings.java_by_major.iter().find(|(_, java)| !java.is_file()) {
+        return Err(format!("The Java {major} path, {}, isn't a file", java.display()));
+    }
     settings.save(&state.settings_path).map_err(err)?;
     *state.settings.lock().unwrap() = settings;
     Ok(())
@@ -231,10 +234,7 @@ pub fn clear_compare_baseline(state: State<'_, AppState>) -> CmdResult<()> {
 #[tauri::command]
 pub async fn server_sides(state: State<'_, AppState>) -> CmdResult<Vec<ModSide>> {
     let pack = state.pack().map_err(err)?;
-    let mut cache = MetadataCache::load(&state.cache_path());
-    let result = sides::classify(&pack, &mut cache).await.map_err(err)?;
-    cache.save(&state.cache_path()).map_err(err)?;
-    Ok(result)
+    classify_cached(&state.cache_path(), &pack).await.map_err(err)
 }
 
 #[tauri::command]
@@ -268,12 +268,17 @@ pub fn build_client_export(app: AppHandle, state: State<'_, AppState>) -> CmdRes
     })
 }
 
+async fn classify_cached(cache_path: &std::path::Path, pack: &Pack) -> Result<Vec<ModSide>> {
+    let mut cache = MetadataCache::load(cache_path);
+    let sides = sides::classify(pack, &mut cache).await?;
+    cache.save(cache_path)?;
+    Ok(sides)
+}
+
 async fn build_server(state_data: (PathBuf, PathBuf, PathBuf), pack: &Pack, java: &std::path::Path, log: &crate::jobs::Log) -> Result<PathBuf> {
     let (data_dir, pack_data, cache_path) = state_data;
     let version = pack.version().unwrap_or_else(|| "dev".into());
-    let mut cache = MetadataCache::load(&cache_path);
-    let sides = sides::classify(pack, &mut cache).await?;
-    cache.save(&cache_path)?;
+    let sides = classify_cached(&cache_path, pack).await?;
     export::server_pack(pack, &sides, &version, &pack_data.join("builds").join(&version), java, &data_dir, log).await
 }
 
@@ -291,14 +296,14 @@ pub fn build_server_pack(app: AppHandle, state: State<'_, AppState>) -> CmdResul
 }
 
 #[tauri::command]
-pub fn start_test(app: AppHandle, state: State<'_, AppState>, rebuild: bool, connect: bool) -> CmdResult<()> {
+pub fn start_test(app: AppHandle, state: State<'_, AppState>, recopy_all: bool, connect: bool) -> CmdResult<()> {
     if state.test.server.lock().unwrap().is_some() {
         return Err("the test server is already running".into());
     }
     let settings = state.settings();
     let pack = state.pack().map_err(err)?;
     let java = launch::java(&settings).map_err(err)?;
-    let data = (state.data_dir.clone(), state.pack_data(), state.cache_path());
+    let (data_dir, cache_path) = (state.data_dir.clone(), state.cache_path());
     let test_dir = state.pack_data().join("test-server");
     let natives = state.pack_data().join("natives");
     let jobs = state.jobs.clone();
@@ -306,16 +311,11 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, rebuild: bool, con
     let job_app = app.clone();
     state.jobs.start(&app, "test", move |log| async move {
         let version = pack.version().unwrap_or_else(|| "dev".into());
-        let built = data.1.join("builds").join(&version).join("server");
-        if rebuild || !built.exists() {
-            build_server(data, &pack, &java, &log).await?;
-        }
-        log.info("Syncing the test server folder");
-        testrun::sync_server_dir(&built, &test_dir)?;
-        let dev_jars = testrun::add_dev_jars(&pack, &test_dir)?;
-        if !dev_jars.is_empty() {
-            log.info(format!("Added local dev builds: {}", dev_jars.join(", ")));
-        }
+        let sides = classify_cached(&cache_path, &pack).await?;
+        let plan = export::server_plan(&pack, &sides, &version, &java, &data_dir, &log).await?;
+        log.info(if recopy_all { "Recopying every file in the test server folder" } else { "Syncing changed files to the test server folder" });
+        let report = testrun::sync_server_dir(plan, &pack, &test_dir, recopy_all, &log)?;
+        log.info(report.to_string());
         let (ready_tx, mut ready_rx) = watch::channel(false);
         let server_pack = Pack::open(&pack.dir)?;
         let (server_app, server_run) = (job_app.clone(), run.clone());

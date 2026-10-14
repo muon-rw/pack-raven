@@ -306,7 +306,7 @@
         bind:value={query}
         type="search"
         placeholder="Filter lines"
-        aria-label="Filter {label}"
+        aria-label="Filter {label.toLowerCase()}"
         title="Filter lines ({shortcut('Ctrl+F')})"
         spellcheck="false"
       />

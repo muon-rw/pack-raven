@@ -125,20 +125,74 @@ fn console_java(path: PathBuf) -> PathBuf {
 }
 
 pub fn java(settings: &Settings) -> Result<PathBuf> {
-    if let Some(java) = &settings.java {
+    if let Some(java) = settings.pack_java(&settings.instance_dir) {
+        return Ok(java.clone());
+    }
+    let (component, major) = required_java(settings);
+    if let Some(java) = settings.java_by_major.get(&major) {
         return Ok(java.clone());
     }
     if let Some(java) = launcher_profile(&settings.install_dir, &settings.instance_dir).java.filter(|p| p.exists()) {
         return Ok(console_java(java));
     }
     let platform = if cfg!(windows) { "windows-x64" } else if cfg!(target_arch = "aarch64") { "mac-os-arm64" } else { "mac-os" };
-    let runtime = settings.install_dir.join("runtime").join("java-runtime-delta").join(platform).join("java-runtime-delta");
+    let runtime = settings.install_dir.join("runtime").join(&component).join(platform).join(&component);
     let java = if cfg!(target_os = "macos") {
         runtime.join("jre.bundle").join("Contents").join("Home").join("bin").join("java")
     } else {
         runtime.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" })
     };
-    if java.exists() { Ok(java) } else { anyhow::bail!("no Java 21 found; set one in Settings") }
+    if java.exists() {
+        Ok(java)
+    } else {
+        anyhow::bail!("CurseForge hasn't installed Java {major} for this pack yet. Launch the pack once from CurseForge, or choose a Java {major} in App settings or a Java for this pack in Pack settings.")
+    }
+}
+
+fn required_java(settings: &Settings) -> (String, u32) {
+    let minecraft = std::fs::read_to_string(settings.instance_dir.join("minecraftinstance.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|instance| instance.get("gameVersion").and_then(Value::as_str).map(String::from))
+        .unwrap_or_default();
+    let declared = read_version(&settings.install_dir, &minecraft).ok().and_then(|version| {
+        let java = version.get("javaVersion")?;
+        Some((java.get("component")?.as_str()?.to_string(), u32::try_from(java.get("majorVersion")?.as_u64()?).ok()?))
+    });
+    // CurseForge only has the version file once someone launches the pack, so we fall back to what Mojang ships.
+    declared.unwrap_or_else(|| {
+        let (component, major) = java_for_minecraft(&minecraft);
+        (component.to_string(), major)
+    })
+}
+
+pub fn java_for_minecraft(minecraft: &str) -> (&'static str, u32) {
+    let numbers: Vec<u32> = minecraft.split('.').map_while(|part| part.parse().ok()).collect();
+    match numbers.as_slice() {
+        [1, minor, ..] if *minor < 17 => ("jre-legacy", 8),
+        [1, 17, ..] => ("java-runtime-alpha", 16),
+        [1, 18 | 19, ..] | [1, 20] => ("java-runtime-gamma", 17),
+        [1, 20, patch, ..] if *patch < 5 => ("java-runtime-gamma", 17),
+        [1, ..] => ("java-runtime-delta", 21),
+        _ => ("java-runtime-epsilon", 25),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn picks_mojangs_java_for_each_minecraft_version() {
+        assert_eq!(java_for_minecraft("1.16.5").1, 8);
+        assert_eq!(java_for_minecraft("1.17.1").1, 16);
+        assert_eq!(java_for_minecraft("1.20").1, 17);
+        assert_eq!(java_for_minecraft("1.20.1").1, 17);
+        assert_eq!(java_for_minecraft("1.20.4").1, 17);
+        assert_eq!(java_for_minecraft("1.20.5").1, 21);
+        assert_eq!(java_for_minecraft("1.21.1").1, 21);
+        assert_eq!(java_for_minecraft("26.1.2").1, 25);
+    }
 }
 
 pub fn client(settings: &Settings, pack: &Pack, username: &str, server: Option<&str>, natives_dir: &Path) -> Result<ClientLaunch> {

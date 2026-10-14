@@ -291,7 +291,9 @@
     } else if (key === 'w' && current) {
       event.preventDefault()
       closeTab(current)
-    } else if (key === 'p' && !event.shiftKey && commandKey(event)) {
+    } else if ((key === 'p' || (key === 'f' && !event.defaultPrevented)) && !event.shiftKey && commandKey(event)) {
+      // The editor and the log viewer handle their own Ctrl+F and mark it handled, so outside
+      // them Ctrl+F searches file names, like Ctrl+P.
       event.preventDefault()
       searchField.focus()
       searchField.select()

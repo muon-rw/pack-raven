@@ -53,8 +53,11 @@ pub fn setup_instance(app: AppHandle, state: State<'_, AppState>, dir: PathBuf, 
 }
 
 #[tauri::command]
-pub fn switch_pack(app: AppHandle, state: State<'_, AppState>, dir: PathBuf) -> CmdResult<()> {
-    if state.test.server.lock().unwrap().is_some() || state.test.client.lock().unwrap().is_some() {
+pub async fn switch_pack(app: AppHandle, state: State<'_, AppState>, dir: PathBuf, kill_tests: bool) -> CmdResult<()> {
+    if kill_tests {
+        state.test.kill_all().await;
+    }
+    if state.test.running() {
         return Err("Stop the test server and client before switching packs.".into());
     }
     state.update_settings(|s| s.activate(&dir)).map_err(err)?;
@@ -72,4 +75,23 @@ pub fn remove_pack(app: AppHandle, state: State<'_, AppState>, dir: PathBuf) -> 
 #[tauri::command]
 pub fn update_hooks(state: State<'_, AppState>) -> CmdResult<()> {
     setup::install_hooks(&state.settings().instance_dir).map_err(err)
+}
+
+#[tauri::command]
+pub fn get_pack_java(state: State<'_, AppState>) -> Option<PathBuf> {
+    let settings = state.settings();
+    settings.pack_java(&settings.instance_dir).cloned()
+}
+
+#[tauri::command]
+pub fn set_pack_java(state: State<'_, AppState>, java: Option<PathBuf>) -> CmdResult<()> {
+    if let Some(java) = java.as_ref().filter(|java| !java.is_file()) {
+        return Err(format!("{} isn't a file", java.display()));
+    }
+    state
+        .update_settings(|s| {
+            let pack = s.instance_dir.clone();
+            s.set_pack_java(&pack, java);
+        })
+        .map_err(err)
 }

@@ -4,7 +4,7 @@ export interface Settings {
   instanceDir: string
   packs: string[]
   installDir: string
-  java: string | null
+  javaByMajor: Record<string, string>
   defenderExcluded: string[]
   defenderDismissed: boolean
   editorAskMb: number
@@ -15,7 +15,7 @@ export interface PackConfig {
   author: string
   curseforge: { project_id: number; release_type: string; manual_release: boolean }
   export: { exclude: string[] }
-  server: { exclude: string[]; client_only: number[]; keep: number[]; memory: string; properties: Record<string, string> }
+  server: { exclude: string[]; client_only: number[]; keep: number[]; memory: string; graalvm: string; properties: Record<string, string> }
   test: { username: string; port: number; client_memory: string }
   discord: { role_id: string; color: string; announce_on_approval: boolean; title: string; show_author: boolean; header: string; footer: string }
 }
@@ -228,6 +228,8 @@ export const api = {
   credentialClear: (credential: Credential) => invoke<void>('credential_clear', { credential }),
   envVarNames: () => invoke<string[]>('env_var_names'),
   setIconTheme: (dark: boolean) => invoke<void>('set_icon_theme', { dark }),
+  getPackJava: () => invoke<string | null>('get_pack_java'),
+  setPackJava: (java: string | null) => invoke<void>('set_pack_java', { java }),
   getWebhook: () => invoke<string | null>('get_webhook'),
   setWebhook: (url: string) => invoke<void>('set_webhook', { url }),
   discordTest: () => invoke<void>('discord_test'),
@@ -277,7 +279,7 @@ export const api = {
   discoverInstances: (root?: string) => invoke<InstanceInfo[]>('discover_instances', { root: root ?? null }),
   inspectInstance: (dir: string) => invoke<InstanceInfo>('inspect_instance', { dir }),
   setupInstance: (dir: string, options: SetupOptions) => invoke<void>('setup_instance', { dir, options }),
-  switchPack: (dir: string) => invoke<void>('switch_pack', { dir }),
+  switchPack: (dir: string, killTests: boolean) => invoke<void>('switch_pack', { dir, killTests }),
   removePack: (dir: string) => invoke<void>('remove_pack', { dir }),
   updateHooks: () => invoke<void>('update_hooks'),
   getSettings: () => invoke<Settings>('get_settings'),
@@ -296,7 +298,7 @@ export const api = {
   publishPreflight: (version: string) => invoke<string[]>('publish_preflight', { version }),
   buildClientExport: () => invoke<void>('build_client_export'),
   buildServerPack: () => invoke<void>('build_server_pack'),
-  startTest: (rebuild: boolean, connect: boolean) => invoke<void>('start_test', { rebuild, connect }),
+  startTest: (recopyAll: boolean, connect: boolean) => invoke<void>('start_test', { recopyAll, connect }),
   startClient: (join: boolean) => invoke<void>('start_client', { join }),
   serverCommand: (line: string) => invoke<void>('server_command', { line }),
   killProcess: (which: 'server' | 'client') => invoke<void>('kill_process', { which }),
