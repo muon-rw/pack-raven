@@ -18,6 +18,7 @@ mod jobs;
 mod launch;
 mod modrinth;
 mod modsync;
+mod os_drag;
 mod pack;
 mod pack_commands;
 mod process;
@@ -191,6 +192,8 @@ pub fn run() {
             file_commands::rename_path,
             file_commands::move_paths,
             file_commands::open_pack_folder,
+            file_commands::import_paths,
+            file_commands::drag_out,
             system_commands::defender_status,
             system_commands::defender_exclude,
             system_commands::defender_dismiss,

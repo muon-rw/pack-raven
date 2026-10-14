@@ -1,8 +1,9 @@
 <script lang="ts">
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
-  import { tick, untrack } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
-  import { api, errorText, type DirEntry, type GitStatus } from '../lib/api'
+  import { getCurrentWebview, type DragDropEvent } from '@tauri-apps/api/webview'
+  import { api, errorText, type DirEntry, type GitStatus, type Pasted } from '../lib/api'
   import { fs, moved } from '../lib/workspace.svelte'
   import { drag } from '../lib/drag.svelte'
   import { gitMenu } from '../lib/gitActions'
@@ -29,6 +30,7 @@
   const DRAG_THRESHOLD = 5
   const EXPAND_DELAY = 600
   const SCROLL_EDGE = 28
+  const SLOW_IMPORT = 400
 
   const children = new SvelteMap<string, DirEntry[]>()
   const expanded = new SvelteSet<string>()
@@ -46,7 +48,9 @@
   let ghost = $state<{ x: number; y: number } | null>(null)
   let dropDir = $state<string | null>(null)
   let hover: { path: string; timer: number } | null = null
+  let pointerX = 0
   let pointerY = 0
+  let systemDrag = false
   let suppressClick = false
 
   type Row = { entry: DirEntry; depth: number; parent: string }
@@ -441,19 +445,68 @@
   async function paste(dir: string) {
     message = null
     try {
-      const { created, moved } = await api.pasteFiles(dir, cutPaths)
+      const pasted = await api.pasteFiles(dir, cutPaths)
       cutPaths = []
-      await expandDir(dir)
-      if (moved.length) await afterMove(moved)
-      else await load(dir)
-      selection.clear()
-      for (const path of created) selection.add(path)
-      anchor = created[0] ?? null
-      if (created[0]) focusRow(created[0])
+      await showPasted(dir, pasted)
     } catch (e) {
       report(errorText(e))
     }
   }
+
+  async function showPasted(dir: string, { created, moved }: Pasted) {
+    await expandDir(dir)
+    if (moved.length) await afterMove(moved)
+    else await load(dir)
+    selection.clear()
+    for (const path of created) selection.add(path)
+    anchor = created[0] ?? null
+    if (created[0]) focusRow(created[0])
+  }
+
+  async function importInto(dir: string, sources: string[]) {
+    message = null
+    const name = sources[0].split(/[\\/]/).pop()
+    const slow = setTimeout(() => report(sources.length === 1 ? `Adding ${name}…` : `Adding ${sources.length} items…`, 'note'), SLOW_IMPORT)
+    try {
+      await showPasted(dir, await api.importPaths(dir, sources))
+      message = null
+    } catch (e) {
+      report(errorText(e))
+    } finally {
+      clearTimeout(slow)
+    }
+  }
+
+  // Tauri reports drags from Explorer or Finder in physical pixels, so we convert them to CSS
+  // pixels before finding the folder under the pointer.
+  function onSystemDrag({ payload }: { payload: DragDropEvent }) {
+    if (payload.type === 'leave') {
+      endSystemDrag()
+      return
+    }
+    locate(payload.position.x / devicePixelRatio, payload.position.y / devicePixelRatio, false)
+    if (payload.type === 'drop') {
+      const dir = dropDir
+      endSystemDrag()
+      if (dir !== null && payload.paths.length) importInto(dir, payload.paths)
+    } else if (!systemDrag) {
+      systemDrag = true
+      requestAnimationFrame(autoScroll)
+    }
+  }
+
+  function endSystemDrag() {
+    systemDrag = false
+    dropDir = null
+    expandAfterHover(null)
+  }
+
+  onMount(() => {
+    const unlisten = getCurrentWebview().onDragDropEvent(onSystemDrag)
+    return () => {
+      unlisten.then((stop) => stop())
+    }
+  })
 
   async function reveal(path: string) {
     try {
@@ -476,7 +529,21 @@
       if (Math.hypot(event.clientX - press.x, event.clientY - press.y) < DRAG_THRESHOLD) return
       startDrag(press)
     }
-    trackDrag(event)
+    if (event.clientX < 0 || event.clientY < 0 || event.clientX >= innerWidth || event.clientY >= innerHeight) dragOut()
+    else trackDrag(event)
+  }
+
+  // Once you drag past the window's edge, we hand the drag to the OS, so you can drop the files
+  // into Explorer, Finder, Discord or anywhere else that takes files. The drop target decides
+  // whether to move or copy them, so we reload the tree afterwards.
+  function dragOut() {
+    const paths = drag.paths
+    press = null
+    endDrag()
+    api
+      .dragOut(paths)
+      .then(refresh)
+      .catch((e) => report(errorText(e)))
   }
 
   function startDrag({ row, target, pointerId }: NonNullable<typeof press>) {
@@ -491,15 +558,22 @@
   }
 
   function trackDrag(event: PointerEvent) {
-    pointerY = event.clientY
     ghost = { x: event.clientX, y: event.clientY }
-    const under = document.elementFromPoint(event.clientX, event.clientY)
-    drag.overTrash = !!under?.closest('[data-drop="trash"]')
+    locate(event.clientX, event.clientY, true)
+  }
+
+  // Files dragged in from the OS can't go in the trash, and the backend checks whether they
+  // can go where you drop them.
+  function locate(x: number, y: number, internal: boolean) {
+    pointerX = x
+    pointerY = y
+    const under = document.elementFromPoint(x, y)
+    drag.overTrash = internal && !!under?.closest('[data-drop="trash"]')
     const inTree = !drag.overTrash && !!under && tree.contains(under)
     const path = inTree ? under!.closest<HTMLElement>('[data-path]')?.dataset.path : undefined
     const row = path ? (rows.find((r) => r.entry.path === path) ?? null) : null
     const dir = inTree ? targetDir(row) : null
-    dropDir = dir !== null && canMoveInto(dir) ? dir : null
+    dropDir = dir !== null && (!internal || canMoveInto(dir)) ? dir : null
     expandAfterHover(row?.entry.isDir && !expanded.has(row.entry.path) ? row.entry.path : null)
   }
 
@@ -510,10 +584,11 @@
   }
 
   function autoScroll() {
-    if (!drag.paths.length) return
+    if (!drag.paths.length && !systemDrag) return
     const rect = tree.getBoundingClientRect()
-    if (pointerY < rect.top + SCROLL_EDGE) tree.scrollTop -= 8
-    else if (pointerY > rect.bottom - SCROLL_EDGE) tree.scrollTop += 8
+    const overColumn = pointerX >= rect.left && pointerX <= rect.right
+    if (overColumn && pointerY < rect.top + SCROLL_EDGE) tree.scrollTop -= 8
+    else if (overColumn && pointerY > rect.bottom - SCROLL_EDGE) tree.scrollTop += 8
     requestAnimationFrame(autoScroll)
   }
 

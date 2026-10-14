@@ -91,6 +91,15 @@ function moveEntry(from: string, to: string) {
   }
 }
 
+const callbacks = new Map<number, (message: unknown) => void>()
+const listeners: { event: string; handler: number }[] = []
+
+// Lets you fake backend events from the console, such as a file drag from Explorer:
+// __mockEmit('tauri://drag-over', { position: { x: 300, y: 200 } })
+function emit(event: string, payload: unknown) {
+  for (const l of listeners.filter((l) => l.event === event)) callbacks.get(l.handler)?.({ event, id: l.handler, payload })
+}
+
 const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   list_packs: () => ({ active: pack.dir, packs: [pack], instancesRoot: 'C:/Instances' }),
   overview: () => ({
@@ -139,6 +148,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     }),
   git_ignore: () => [],
   copy_files: () => null,
+  import_paths: (a) => ({
+    created: (a.sources as string[]).map((source) => {
+      const path = `${a.dir ? `${a.dir}/` : ''}${source.split(/[\\/]/).pop()}`
+      addEntry(path, false)
+      return path
+    }),
+    moved: [],
+  }),
+  drag_out: () => null,
   paste_files: () => {
     throw 'The clipboard has no files to paste.'
   },
@@ -151,7 +169,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   discohook_link: () => 'https://discohook.app/?share=example',
   discohook_preview: () => 'https://discohook.app/?share=example',
   'plugin:autostart|is_enabled': () => false,
-  'plugin:event|listen': () => Math.floor(Math.random() * 1e9),
+  'plugin:event|listen': (a) => {
+    listeners.push({ event: String(a.event), handler: Number(a.handler) })
+    return Math.floor(Math.random() * 1e9)
+  },
   'plugin:event|unlisten': () => null,
 }
 
@@ -159,9 +180,13 @@ export function installMock() {
   let callbackId = 0
   const w = window as unknown as Record<string, unknown>
   w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} }
+  w.__mockEmit = emit
   w.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } },
-    transformCallback: () => ++callbackId,
+    transformCallback: (callback: (message: unknown) => void) => {
+      callbacks.set(++callbackId, callback)
+      return callbackId
+    },
     unregisterCallback: () => {},
     convertFileSrc: (path: string) => path,
     invoke: async (cmd: string, args: Record<string, unknown> = {}) => {

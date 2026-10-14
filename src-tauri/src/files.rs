@@ -267,6 +267,28 @@ pub fn paste(root: &Path, relative_dir: &str, sources: &[PathBuf], cut: bool) ->
     Ok(pasted)
 }
 
+#[cfg(windows)]
+fn same_volume(a: &Path, b: &Path) -> bool {
+    let volume = |p: &Path| match p.canonicalize().ok()?.components().next()? {
+        Component::Prefix(prefix) => Some(prefix.as_os_str().to_ascii_lowercase()),
+        _ => None,
+    };
+    volume(a).is_some_and(|v| Some(v) == volume(b))
+}
+
+#[cfg(unix)]
+fn same_volume(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    matches!((a.metadata(), b.metadata()), (Ok(a), Ok(b)) if a.dev() == b.dev())
+}
+
+/// Brings files you drop on the window into the pack. Like Explorer and Finder, we move files
+/// from the same drive and copy them from another, unless `requested_move` says otherwise.
+pub fn import(root: &Path, relative_dir: &str, sources: &[PathBuf], requested_move: Option<bool>) -> Result<Pasted> {
+    let cut = requested_move.unwrap_or_else(|| sources.iter().all(|s| same_volume(s, root)));
+    paste(root, relative_dir, sources, cut)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +324,22 @@ mod tests {
         assert!(!dir.join("config/a.json").exists() && !outside.join("b.toml").exists());
         let unchanged = paste(&dir, "kubejs", &[dir.join("kubejs/a.json")], true).unwrap();
         assert!(unchanged.created.is_empty() && dir.join("kubejs/a.json").exists());
+    }
+
+    #[test]
+    fn import_moves_on_the_same_drive_unless_you_ask_to_copy() {
+        let dir = std::env::temp_dir().join("packraven-import-test");
+        let outside = std::env::temp_dir().join("packraven-import-test-outside");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(dir.join("config")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(dir.join("a.json"), "").unwrap();
+        std::fs::write(outside.join("b.toml"), "").unwrap();
+        assert_eq!(import(&dir, "config", &[outside.join("b.toml")], Some(false)).unwrap().created, ["config/b.toml"]);
+        assert!(outside.join("b.toml").exists(), "a requested copy keeps the original");
+        assert_eq!(import(&dir, "config", &[dir.join("a.json")], None).unwrap().moved, [("a.json".to_string(), "config/a.json".to_string())]);
+        assert!(!dir.join("a.json").exists(), "the same drive moves by default");
     }
 
     #[test]

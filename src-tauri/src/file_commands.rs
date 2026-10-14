@@ -2,11 +2,12 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, Window};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::commands::AppState;
 use crate::files::{self, Entry, FileContent, Pasted};
+use crate::os_drag;
 
 type CmdResult<T> = Result<T, String>;
 
@@ -115,6 +116,26 @@ pub fn rename_path(state: State<'_, AppState>, from: String, to: String) -> CmdR
 #[tauri::command]
 pub fn move_paths(state: State<'_, AppState>, paths: Vec<String>, dir: String) -> CmdResult<Vec<(String, String)>> {
     files::move_into(&state.settings().instance_dir, &paths, &dir).map_err(err)
+}
+
+#[tauri::command]
+pub async fn import_paths(state: State<'_, AppState>, dir: String, sources: Vec<PathBuf>) -> CmdResult<Pasted> {
+    let root = state.settings().instance_dir;
+    let requested_move = os_drag::requested_move();
+    tauri::async_runtime::spawn_blocking(move || files::import(&root, &dir, &sources, requested_move)).await.map_err(|e| e.to_string())?.map_err(err)
+}
+
+// The OS drag loop needs the main thread, and on Windows it blocks that thread until you drop,
+// so we start it there and wait for it here.
+#[tauri::command]
+pub async fn drag_out(app: AppHandle, window: Window, state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<()> {
+    let files: Vec<PathBuf> = files::absolute_paths(&state.settings().instance_dir, &paths).map_err(err)?.into_iter().map(PathBuf::from).collect();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(os_drag::drag_out(&window, &files).map_err(|e| format!("starting the drag: {e}")));
+    })
+    .map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || receiver.recv().unwrap_or(Ok(()))).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

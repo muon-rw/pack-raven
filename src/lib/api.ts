@@ -157,6 +157,11 @@ export interface DirEntry {
   ignored: boolean
 }
 
+export interface Pasted {
+  created: string[]
+  moved: [string, string][]
+}
+
 export interface FileContent {
   text: string | null
   size: number
@@ -211,8 +216,10 @@ export const api = {
   createDir: (path: string) => invoke<void>('create_dir', { path }),
   trashPaths: (paths: string[]) => invoke<void>('trash_paths', { paths }),
   copyFiles: (paths: string[], cut: boolean) => invoke<void>('copy_files', { paths, cut }),
-  pasteFiles: (dir: string, cut: string[]) => invoke<{ created: string[]; moved: [string, string][] }>('paste_files', { dir, cut }),
+  pasteFiles: (dir: string, cut: string[]) => invoke<Pasted>('paste_files', { dir, cut }),
   openPackFolder: () => invoke<void>('open_pack_folder'),
+  importPaths: (dir: string, sources: string[]) => invoke<Pasted>('import_paths', { dir, sources }),
+  dragOut: (paths: string[]) => invoke<void>('drag_out', { paths }),
   renamePath: (from: string, to: string) => invoke<void>('rename_path', { from, to }),
   movePaths: (paths: string[], dir: string) => invoke<[string, string][]>('move_paths', { paths, dir }),
   gitOverview: () => invoke<{ status: GitStatus; commits: GitCommit[] }>('git_overview'),
