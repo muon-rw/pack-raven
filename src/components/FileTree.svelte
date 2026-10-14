@@ -8,7 +8,7 @@
     selected,
     changes,
     onopen,
-  }: { selected: string | null; changes: Map<string, string>; onopen: (path: string) => void } = $props()
+  }: { selected: string | null; changes: Map<string, string>; onopen: (path: string, pinned: boolean) => void } = $props()
 
   const children = new SvelteMap<string, DirEntry[]>()
   const expanded = new SvelteSet<string>()
@@ -83,7 +83,7 @@
   function activate(row: Row) {
     focused = row.entry.path
     if (row.entry.isDir) toggle(row.entry)
-    else onopen(row.entry.path)
+    else onopen(row.entry.path, false)
   }
 
   function focusRow(path: string) {
@@ -150,6 +150,7 @@
       class:ignored={row.entry.ignored}
       style="--depth: {row.depth}"
       onclick={() => activate(row)}
+      ondblclick={() => !row.entry.isDir && onopen(row.entry.path, true)}
       onfocus={() => (focused = row.entry.path)}
     >
       <span class="twisty" aria-hidden="true">

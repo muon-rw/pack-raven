@@ -1,4 +1,5 @@
 import type { EditorState, TransactionSpec } from '@codemirror/state'
+import type { Problems } from './editor'
 import { listen } from '@tauri-apps/api/event'
 import { api } from './api'
 
@@ -12,6 +13,8 @@ export interface Tab {
   unreadable: string | null
   conflict: 'changed' | 'deleted' | null
   disk: string | null
+  problems: Problems
+  preview: boolean
 }
 
 export const workspace = $state({ tabs: [] as Tab[], active: null as string | null, pack: null as string | null, error: null as string | null })
@@ -45,14 +48,38 @@ export function updateDirty(path: string, state: EditorState) {
   if (!current) return
   current.state = state
   current.dirty = state.doc.length !== current.saved.length || state.doc.toString() !== current.saved
+  if (current.dirty) current.preview = false
 }
 
-export async function open(path: string) {
-  if (!tab(path)) {
+async function editorState(path: string, text: string) {
+  const { createState } = await import('./editor')
+  return createState(
+    path,
+    text,
+    (state) => updateDirty(path, state),
+    () => save(path),
+    (problems) => {
+      const current = tab(path)
+      if (current) current.problems = problems
+    },
+  )
+}
+
+export function pin(path: string) {
+  const current = tab(path)
+  if (current) current.preview = false
+}
+
+// Like VS Code, a preview tab shows a file until you open another one in its place. Editing
+// the file or opening it with pinned set keeps it open.
+export async function open(path: string, { pinned = true } = {}) {
+  const existing = tab(path)
+  if (existing) {
+    if (pinned) existing.preview = false
+  } else {
     const content = await api.readFile(path)
     const text = content.text ?? ''
-    const { createState } = await import('./editor')
-    workspace.tabs.push({
+    const opened: Tab = {
       path,
       saved: text,
       dirty: false,
@@ -61,8 +88,13 @@ export async function open(path: string) {
       unreadable: content.unreadable,
       conflict: null,
       disk: null,
-      state: content.text === null ? null : createState(path, text, (state) => updateDirty(path, state), () => save(path)),
-    })
+      problems: { errors: 0, warnings: 0 },
+      preview: !pinned,
+      state: content.text === null ? null : await editorState(path, text),
+    }
+    const replaced = pinned ? -1 : workspace.tabs.findIndex((t) => t.preview)
+    if (replaced >= 0) workspace.tabs[replaced] = opened
+    else workspace.tabs.push(opened)
   }
   workspace.active = path
 }
@@ -88,7 +120,6 @@ export async function reload(path: string) {
   if (!current) return
   const content = await api.readFile(path)
   const text = content.text ?? ''
-  const { createState } = await import('./editor')
   Object.assign(current, {
     saved: text,
     dirty: false,
@@ -97,7 +128,8 @@ export async function reload(path: string) {
     unreadable: content.unreadable,
     conflict: null,
     disk: null,
-    state: content.text === null ? null : createState(path, text, (state) => updateDirty(path, state), () => save(path)),
+    problems: { errors: 0, warnings: 0 },
+    state: content.text === null ? null : await editorState(path, text),
   })
 }
 

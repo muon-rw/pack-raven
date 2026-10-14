@@ -11,6 +11,8 @@ import { yaml } from '@codemirror/lang-yaml'
 import { toml } from '@codemirror/legacy-modes/mode/toml'
 import { properties } from '@codemirror/legacy-modes/mode/properties'
 import { tags } from '@lezer/highlight'
+import { forEachDiagnostic, lintKeymap } from '@codemirror/lint'
+import { lintFor } from './lint'
 
 const highlight = HighlightStyle.define([
   { tag: [tags.keyword, tags.bool, tags.null, tags.atom], color: 'var(--forest)', fontWeight: '700' },
@@ -42,12 +44,29 @@ const theme = EditorView.theme({
   '.cm-panels': { backgroundColor: 'var(--surface)', color: 'var(--text)', borderColor: 'var(--line)' },
   '.cm-panel input, .cm-panel button': { fontFamily: 'var(--font-ui)', fontSize: 'var(--step--1)' },
   '.cm-foldGutter span': { color: 'var(--muted)' },
+  '.cm-lintRange': { backgroundImage: 'none', textDecoration: 'underline wavy', textDecorationSkipInk: 'none', textUnderlineOffset: '3px' },
+  '.cm-lintRange-error': { textDecorationColor: 'var(--fail-icon)' },
+  '.cm-lintRange-warning': { textDecorationColor: 'var(--warn-icon)' },
+  '.cm-lintRange-active': { backgroundColor: 'color-mix(in srgb, var(--ochre) 30%, transparent)' },
+  '.cm-gutter-lint': { width: '1.2em' },
+  '.cm-gutter-lint .cm-gutterElement': { display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0' },
+  '.cm-lint-marker': { content: 'none', width: '8px', height: '8px', borderRadius: '50%' },
+  '.cm-lint-marker-error': { backgroundColor: 'var(--fail-icon)' },
+  '.cm-lint-marker-warning': { border: '2px solid var(--warn-icon)' },
+  '.cm-tooltip': { backgroundColor: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--line-strong)', borderRadius: '6px', overflow: 'hidden' },
+  '.cm-diagnostic': { fontFamily: 'var(--font-ui)', padding: '6px 10px 6px 8px' },
+  '.cm-diagnostic-error': { borderLeft: '4px solid var(--fail-icon)' },
+  '.cm-diagnostic-warning': { borderLeft: '4px solid var(--warn-icon)' },
+  '.cm-panel.cm-panel-lint ul': { maxHeight: '140px' },
+  '.cm-panel.cm-panel-lint ul [aria-selected]': { backgroundColor: 'var(--here)', color: 'var(--text)' },
+  '.cm-panel.cm-panel-lint ul:focus [aria-selected]': { backgroundColor: 'var(--highlight)', color: 'var(--text)' },
 })
 
 function language(path: string): Extension {
   const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase()
   switch (ext) {
     case 'json':
+    case 'jsonc':
     case 'json5':
     case 'mcmeta':
       return json()
@@ -72,7 +91,28 @@ function language(path: string): Extension {
   }
 }
 
-export function createState(path: string, doc: string, onChange: (state: EditorState) => void, onSave: () => void): EditorState {
+export interface Problems {
+  errors: number
+  warnings: number
+}
+
+function countProblems(state: EditorState): Problems {
+  const problems = { errors: 0, warnings: 0 }
+  forEachDiagnostic(state, (d) => {
+    if (d.severity === 'error') problems.errors++
+    else if (d.severity === 'warning') problems.warnings++
+  })
+  return problems
+}
+
+export function createState(
+  path: string,
+  doc: string,
+  onChange: (state: EditorState) => void,
+  onSave: () => void,
+  onProblems: (problems: Problems) => void,
+): EditorState {
+  let reported = ''
   return EditorState.create({
     doc,
     extensions: [
@@ -93,6 +133,7 @@ export function createState(path: string, doc: string, onChange: (state: EditorS
       highlightSelectionMatches(),
       syntaxHighlighting(highlight),
       language(path),
+      lintFor(path),
       theme,
       keymap.of([
         { key: 'Mod-s', preventDefault: true, run: () => (onSave(), true) },
@@ -102,9 +143,16 @@ export function createState(path: string, doc: string, onChange: (state: EditorS
         ...searchKeymap,
         ...historyKeymap,
         ...foldKeymap,
+        ...lintKeymap,
       ]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onChange(update.state)
+        const problems = countProblems(update.state)
+        const key = `${problems.errors}/${problems.warnings}`
+        if (key !== reported) {
+          reported = key
+          onProblems(problems)
+        }
       }),
     ],
   })

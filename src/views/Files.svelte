@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
   import { EditorView } from '@codemirror/view'
+  import { openLintPanel } from '@codemirror/lint'
   import { ask } from '@tauri-apps/plugin-dialog'
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
   import { api, errorText } from '../lib/api'
-  import { workspace, activeTab, open, save, close, reload, resetFor, bindView, fs, useDiskVersion, keepMine, type Tab } from '../lib/workspace.svelte'
+  import { workspace, activeTab, open, pin, save, close, reload, resetFor, bindView, fs, useDiskVersion, keepMine, type Tab } from '../lib/workspace.svelte'
   import FileTree from '../components/FileTree.svelte'
   import Notice from '../components/Notice.svelte'
 
@@ -33,8 +34,11 @@
   onMount(() => {
     loadChanges()
     const timer = setInterval(loadChanges, 5000)
+    const pinActive = () => workspace.active && pin(workspace.active)
+    host.addEventListener('mousedown', pinActive)
     return () => {
       clearInterval(timer)
+      host.removeEventListener('mousedown', pinActive)
       const current = activeTab()
       if (view && current?.state) current.state = view.state
       bindView(null, null)
@@ -65,12 +69,17 @@
     view.focus()
   })
 
-  async function openFile(path: string) {
+  $effect(() => {
+    const index = workspace.tabs.findIndex((t) => t.path === workspace.active)
+    if (index >= 0) document.getElementById(`tab-${index}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  })
+
+  async function openFile(path: string, pinned: boolean) {
     const current = activeTab()
     if (view && current?.state) current.state = view.state
     try {
       openError = null
-      await open(path)
+      await open(path, { pinned })
     } catch (e) {
       openError = errorText(e)
     }
@@ -132,6 +141,16 @@
     }
   }
 
+  // Most mice only scroll vertically, so we turn vertical wheel movement into horizontal
+  // scrolling once the tabs overflow. Trackpads already scroll sideways and pass through.
+  function scrollTabs(event: WheelEvent) {
+    const bar = event.currentTarget as HTMLElement
+    if (bar.scrollWidth <= bar.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return
+    event.preventDefault()
+    const lines = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 40 : 1
+    bar.scrollLeft += event.deltaY * lines
+  }
+
   function onTabKey(event: KeyboardEvent, index: number) {
     const tabs = workspace.tabs
     const to = event.key === 'ArrowRight' ? index + 1 : event.key === 'ArrowLeft' ? index - 1 : null
@@ -141,7 +160,21 @@
     document.getElementById(`tab-${to}`)?.focus()
   }
 
+  function plural(count: number, noun: string) {
+    return `${count} ${noun}${count === 1 ? '' : 's'}`
+  }
+
+  function showProblems() {
+    if (view) openLintPanel(view)
+  }
+
   let current = $derived(workspace.tabs.find((t) => t.path === workspace.active))
+  let problems = $derived.by(() => {
+    if (!current?.state) return null
+    const { errors, warnings } = current.problems
+    const parts = [errors && plural(errors, 'error'), warnings && plural(warnings, 'warning')].filter(Boolean)
+    return parts.length ? { text: parts.join(', '), tone: errors ? 'error' : 'warn' } : null
+  })
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -157,9 +190,9 @@
 
   <section class="editor">
     {#if workspace.tabs.length}
-      <div class="tabs" role="tablist" aria-label="Open files">
+      <div class="tabs" role="tablist" aria-label="Open files" onwheel={scrollTabs}>
         {#each workspace.tabs as tab, index (tab.path)}
-          <div class="tab" class:active={tab.path === workspace.active}>
+          <div class="tab" class:active={tab.path === workspace.active} class:preview={tab.preview}>
             <button
               id="tab-{index}"
               role="tab"
@@ -167,9 +200,10 @@
               tabindex={tab.path === workspace.active ? 0 : -1}
               title={tab.path}
               onclick={() => selectTab(tab)}
+              ondblclick={() => pin(tab.path)}
               onkeydown={(e) => onTabKey(e, index)}
             >
-              {name(tab.path)}{#if tab.dirty}<span class="dirty" aria-label="unsaved"></span>{/if}
+<span class="name">{name(tab.path)}</span>{#if tab.dirty}<span class="dirty" aria-label="unsaved"></span>{/if}
             </button>
             <button class="close" aria-label="Close {name(tab.path)}" title="Close (Ctrl+W)" onclick={() => closeTab(tab)}>×</button>
           </div>
@@ -181,6 +215,9 @@
       <div class="toolbar">
         <span class="file path" title={current.path}>{current.path}</span>
         <span class="actions">
+          {#if problems}
+            <button class="link problems {problems.tone}" title="Show problems (Ctrl+Shift+M)" onclick={showProblems}>{problems.text}</button>
+          {/if}
           {#if current.state}
             <span class="muted small">{current.crlf ? 'CRLF' : 'LF'}</span>
           {/if}
@@ -290,11 +327,27 @@
     scrollbar-width: thin;
   }
 
+  /* A nowrap name's min-content is its full width, so the tab can't derive its minimum from
+     its contents. We set it here instead: 5ch of name plus the button padding and close button,
+     with the tab's font size set so ch matches the name. */
   .tab {
     display: flex;
     align-items: center;
-    flex: none;
+    flex: 0 1 auto;
+    min-width: calc(5ch + 40px);
+    font-size: var(--step--1);
     border-right: 1px solid var(--line);
+  }
+
+  .tab:has(.dirty) {
+    min-width: calc(5ch + 53px);
+  }
+
+  .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .tab.active {
@@ -314,8 +367,18 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    min-width: 0;
     padding: 8px 4px 8px 12px;
     color: var(--muted);
+  }
+
+  .dirty,
+  .close {
+    flex: none;
+  }
+
+  .tab.preview .name {
+    font-style: italic;
   }
 
   .tab.active [role='tab'] {
@@ -335,6 +398,7 @@
   }
 
   .close {
+    width: 24px;
     padding: 4px 10px 4px 4px;
     color: var(--muted);
   }
@@ -366,6 +430,18 @@
     align-items: center;
     gap: 6px;
     flex: none;
+  }
+
+  .problems {
+    font-weight: 700;
+  }
+
+  .problems.error {
+    color: var(--fail);
+  }
+
+  .problems.warn {
+    color: var(--warn);
   }
 
   .save {
