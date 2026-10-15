@@ -316,13 +316,13 @@
   <section class="step" aria-labelledby="commit-title">
     <h3 id="commit-title">Release commit</h3>
     <label class="commit-field">
-      <span class="muted small">Commit message <span class="optional">(optional, defaults to "{defaultMessage}")</span></span>
+      <span class="muted small">Commit message</span>
       <input bind:value={commitMessage} placeholder={defaultMessage} aria-describedby="commit-hint" />
     </label>
     <p class="muted small" id="commit-hint">
-      packraven builds the packs from disk, so it commits all your changes along with the new version and archived notes, as {identity ??
-        'your git identity'}.
-      {#if !identity}<button class="link" onclick={() => (nav.view = 'settings')}>Set a commit name and email</button>{/if}
+      Leave it empty to use "{defaultMessage}". packraven builds the packs from disk, so the commit holds all your changes along with the new version
+      and archived notes. It commits as {identity ?? 'the name and email in your git config'}.
+      <button class="link" onclick={() => (nav.view = 'settings')}>Change in App settings</button>
     </p>
     {#if uncommitted.length}
       <details>
@@ -470,10 +470,6 @@
     display: grid;
     gap: 4px;
     max-width: 480px;
-  }
-
-  .optional {
-    font-weight: 400;
   }
 
   summary {

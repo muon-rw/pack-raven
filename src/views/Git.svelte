@@ -313,6 +313,33 @@
     </div>
   </header>
 
+  {#if conflicts}
+    <Notice tone="warn">
+      <div class="conflicts">
+        <p>
+          You and the remote both changed {conflicts.length === 1 ? 'this mod' : `these ${conflicts.length} mods`}. Choose whose versions to keep; packraven
+          keeps every other change from both sides.
+        </p>
+        <ul class="conflict-list">
+          {#each conflicts as conflict (conflict.name)}
+            <li>
+              <span class="file">{conflict.name}</span>
+              <dl>
+                <dt>Yours</dt><dd class:file={!!conflict.mine}>{conflict.mine ?? 'Removed'}</dd>
+                <dt>Theirs</dt><dd class:file={!!conflict.theirs}>{conflict.theirs ?? 'Removed'}</dd>
+              </dl>
+            </li>
+          {/each}
+        </ul>
+        <div class="conflict-actions">
+          <button disabled={busy} onclick={() => pullPreferring('mine')}>Pull, keeping yours</button>
+          <button disabled={busy} onclick={() => pullPreferring('theirs')}>Pull, keeping theirs</button>
+          <button class="quiet" onclick={() => (conflicts = null)}>Cancel</button>
+        </div>
+      </div>
+    </Notice>
+  {/if}
+
   <div class="work">
   <div class="side">
 
@@ -338,32 +365,6 @@
     {#if loadError}<Notice tone="error"><p>Couldn't read the repository: {loadError}</p></Notice>{/if}
     {#if notice}<Notice tone="warn"><p>{notice}</p></Notice>{/if}
     {#if gitJob.phase === 'failed'}<Notice tone="error"><p><LinkedText text={gitJob.message ?? ''} /></p></Notice>{/if}
-    {#if conflicts}
-      <Notice tone="warn">
-        <div class="conflicts">
-          <p>
-            You and the remote both changed {conflicts.length === 1 ? 'this mod' : `these ${conflicts.length} mods`}. Choose whose versions to keep; packraven
-            keeps every other change from both sides.
-          </p>
-          <ul class="conflict-list">
-            {#each conflicts as conflict (conflict.name)}
-              <li>
-                <span class="file">{conflict.name}</span>
-                <dl>
-                  <dt>Yours</dt><dd class:file={!!conflict.mine}>{conflict.mine ?? 'Removed'}</dd>
-                  <dt>Theirs</dt><dd class:file={!!conflict.theirs}>{conflict.theirs ?? 'Removed'}</dd>
-                </dl>
-              </li>
-            {/each}
-          </ul>
-          <div class="conflict-actions">
-            <button onclick={() => pullPreferring('theirs')}>Pull, keeping theirs</button>
-            <button onclick={() => pullPreferring('mine')}>Pull, keeping mine</button>
-            <button class="quiet" onclick={() => (conflicts = null)}>Cancel</button>
-          </div>
-        </div>
-      </Notice>
-    {/if}
     {#if status?.conflicted.length}
       <Notice tone="warn"><p>{status.conflicted.length === 1 ? '1 file has a merge conflict' : `${status.conflicted.length} files have merge conflicts`}. Resolve them in an editor, then stage them.</p></Notice>
     {/if}
@@ -462,7 +463,7 @@
 
   .conflict-list {
     display: grid;
-    gap: 8px;
+    gap: 10px;
     margin: 0;
     padding: 0;
     list-style: none;

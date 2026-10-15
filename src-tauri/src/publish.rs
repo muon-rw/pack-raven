@@ -63,8 +63,8 @@ pub fn preflight(pack: &Pack, version: &str, not_on_curseforge: &[String], ident
     }
     match not_on_curseforge {
         [] => {}
-        [path] => problems.push(format!("{path} isn't on CurseForge. In Changes, commit it directly or remove it.")),
-        paths => problems.push(format!("{} files aren't on CurseForge. In Changes, commit them directly or remove them.", paths.len())),
+        [path] => problems.push(format!("{path} isn't on CurseForge. In Changes, add it to Git or move it to the trash.")),
+        paths => problems.push(format!("{} files aren't on CurseForge. In Changes, add them to Git or move them to the trash.", paths.len())),
     }
     // The commit comes after the upload, which you can't take back, so we check git can make it first.
     if !identity.is_usable(&pack.dir) {

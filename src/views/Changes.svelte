@@ -60,17 +60,17 @@
     }
   }
 
-  let unknownBusy = $state(false)
+  let unknownBusy = $state<'track' | 'trash' | null>(null)
   let unknownResult = $state<{ ok: boolean; text: string } | null>(null)
 
   async function resolveUnknown(action: 'track' | 'trash') {
     if (!overview) return
     const paths = overview.notOnCurseforge
-    unknownBusy = true
+    unknownBusy = action
     try {
       if (action === 'track') {
         await api.trackDirectly(paths)
-        unknownResult = { ok: true, text: `Staged ${paths.length === 1 ? 'it' : 'them'} in Git. Commit when you're ready.` }
+        unknownResult = { ok: true, text: `Added ${paths.length === 1 ? 'it' : 'them'} to Git. Your next commit includes ${paths.length === 1 ? 'it' : 'them'}.` }
       } else {
         await api.trashPaths(paths)
         unknownResult = { ok: true, text: `Moved ${paths.length === 1 ? 'it' : 'them'} to the trash.` }
@@ -80,7 +80,7 @@
     } catch (error) {
       unknownResult = { ok: false, text: errorText(error) }
     } finally {
-      unknownBusy = false
+      unknownBusy = null
     }
   }
 
@@ -191,17 +191,21 @@
     <Notice tone="warn">
       <div class="mod-list-notice">
         <p>
-          <strong>{notOnCurseforgeSummary(paths)}.</strong> packraven can only download mods from CurseForge, so releases and collaborators won't get
-          {paths.length === 1 ? 'this file' : 'these files'} unless you commit {paths.length === 1 ? 'it' : 'them'} to git directly. Publishing waits until you
-          do, or remove {paths.length === 1 ? 'it' : 'them'}.
+          <strong>{notOnCurseforgeSummary(paths)}.</strong> packraven only downloads mods from CurseForge, so releases and collaborators won't get
+          {paths.length === 1 ? 'this file' : 'these files'} unless you commit {paths.length === 1 ? 'it' : 'them'} directly. You can't publish until you add
+          {paths.length === 1 ? 'it' : 'them'} to Git or remove {paths.length === 1 ? 'it' : 'them'}.
         </p>
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <ul class="folder-files" tabindex="0" aria-label="Files not on CurseForge">
           {#each paths as path (path)}<li class="file">{path}</li>{/each}
         </ul>
         <div class="actions">
-          <button class:busy={unknownBusy} disabled={unknownBusy} onclick={() => resolveUnknown('track')}>Commit directly</button>
-          <button class="quiet" disabled={unknownBusy} onclick={() => resolveUnknown('trash')}>Move to trash</button>
+          <button class:busy={unknownBusy === 'track'} disabled={!!unknownBusy} onclick={() => resolveUnknown('track')}>
+            {unknownBusy === 'track' ? 'Adding' : 'Add to Git'}
+          </button>
+          <button class="quiet" class:busy={unknownBusy === 'trash'} disabled={!!unknownBusy} onclick={() => resolveUnknown('trash')}>
+            {unknownBusy === 'trash' ? 'Moving' : 'Move to trash'}
+          </button>
         </div>
       </div>
     </Notice>

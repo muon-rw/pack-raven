@@ -96,6 +96,7 @@
       await load()
       onchange()
       messageFailed = false
+      identityMessage = null
       message = adjusted ? `Saved. The editor limits are now ${editorAskMb} MB and ${editorMaxMb} MB, since the second can't be lower than the first.` : 'Saved'
     } catch (error) {
       messageFailed = true
