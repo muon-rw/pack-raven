@@ -539,6 +539,21 @@ fn sync_plan(repo: &Repo, lock: &Lockfile, hashes: &mut HashCache) -> Result<Syn
 }
 
 pub async fn restore(dir: &Path, log: &Log) -> Result<()> {
+    sync_folder(dir, log, true).await
+}
+
+// Setup rebuilds mods.lock.json from the folder right after this, so we only fill in files that are
+// absent and leave every file you already have in place.
+pub async fn download_missing(dir: &Path, log: &Log) -> Result<()> {
+    sync_folder(dir, log, false).await
+}
+
+pub fn missing_count(dir: &Path) -> usize {
+    let Ok(text) = std::fs::read_to_string(dir.join(LOCKFILE)) else { return 0 };
+    Lockfile::parse(&text).map_or(0, |lock| lock.files.iter().filter(|e| !dir.join(&e.path).exists()).count())
+}
+
+async fn sync_folder(dir: &Path, log: &Log, replace_existing: bool) -> Result<()> {
     let repo = Repo::open(dir)?;
     let lock = repo.read_lock()?;
     if let (Some(local), Some(expected)) = (read_instance(&repo.root).loader, &lock.loader)
@@ -547,7 +562,11 @@ pub async fn restore(dir: &Path, log: &Log) -> Result<()> {
         log.stream("err", &format!("modsync: WARNING: lockfile expects {expected} but this profile uses {local}; change it in the CurseForge app"));
     }
     let mut hashes = HashCache::load(&repo);
-    let plan = sync_plan(&repo, &lock, &mut hashes)?;
+    let mut plan = sync_plan(&repo, &lock, &mut hashes)?;
+    if !replace_existing {
+        plan.extra.clear();
+        plan.missing.retain(|e| !repo.root.join(&e.path).exists());
+    }
     if plan.missing.is_empty() && plan.extra.is_empty() {
         return hashes.save();
     }

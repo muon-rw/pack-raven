@@ -43,6 +43,7 @@ pub struct InstanceInfo {
     pub addon_count: usize,
     pub has_git: bool,
     pub has_lock: bool,
+    pub missing_mods: usize,
     pub hooks: HooksState,
     pub tracked_binaries: Vec<TrackedBinary>,
     pub remote: Option<String>,
@@ -147,6 +148,7 @@ pub fn inspect(dir: &Path, added: &[PathBuf]) -> Result<InstanceInfo> {
         addon_count: instance.get("installedAddons").and_then(Value::as_array).map_or(0, Vec::len),
         has_git,
         has_lock: dir.join(LOCKFILE).exists(),
+        missing_mods: modsync::missing_count(dir),
         hooks: hooks_state(dir),
         tracked_binaries: if has_git { tracked_binaries(dir, &instance) } else { Vec::new() },
         remote: if has_git { git::run(dir, &["remote", "get-url", "origin"]).ok().map(|s| s.trim().to_string()) } else { None },
@@ -254,6 +256,10 @@ pub async fn setup(dir: PathBuf, options: SetupOptions, identity: &crate::git::I
     }
 
     git::run(&dir, &["config", "core.hooksPath", ".githooks"])?;
+    // In a fresh clone the mods folder is still empty, and rebuilding the list from it would drop every mod.
+    if modsync::missing_count(&dir) > 0 {
+        modsync::download_missing(&dir, &log).await.context("downloading the mods in mods.lock.json failed")?;
+    }
     let committed_directly = modsync::adopt(&dir, &log).await.context("building mods.lock.json failed")?;
 
     if let Some(remote) = options.remote.as_deref().map(str::trim).filter(|r| !r.is_empty()) {

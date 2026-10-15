@@ -10,6 +10,7 @@
 
   let { first, onadded }: { first: boolean; onadded: () => void } = $props()
 
+  let mode = $state<'track' | 'join'>('track')
   let instances: InstanceInfo[] = $state([])
   let loading = $state(true)
   let selected = $state<InstanceInfo | null>(null)
@@ -25,11 +26,26 @@
   let started = $state(false)
   let result = $state<{ ok: boolean; message: string } | null>(null)
   let hasKey = $state(true)
+  let hasGithubToken = $state(true)
 
   onMount(() => {
     discover()
-    api.credentialsStatus().then((c) => (hasKey = c.download.present), () => {})
+    api.credentialsStatus().then((c) => {
+      hasKey = c.download.present
+      hasGithubToken = c.github.present
+    }, () => {})
   })
+
+  function chooseMode(next: 'track' | 'join') {
+    mode = next
+    selected = null
+    result = null
+    error = null
+  }
+
+  function selectable(i: InstanceInfo): boolean {
+    return !i.added && !(mode === 'join' && i.hasGit)
+  }
 
   async function discover() {
     loading = true
@@ -45,7 +61,7 @@
 
   function select(instance: InstanceInfo) {
     selected = instance
-    remote = instance.remote ?? ''
+    remote = mode === 'join' ? '' : (instance.remote ?? '')
     error = null
     pickError = null
   }
@@ -78,6 +94,19 @@
     }
   }
 
+  async function join() {
+    if (!selected) return
+    try {
+      error = null
+      result = null
+      started = true
+      await api.joinPack(selected.dir, remote.trim())
+    } catch (e) {
+      started = false
+      error = errorText(e)
+    }
+  }
+
   // We show what setup did before moving on, since it can commit jars to git that you expected
   // it to leave out.
   onJobEnd('setup', (phase) => {
@@ -88,6 +117,10 @@
 
   function status(i: InstanceInfo): string {
     if (i.added) return 'Already added'
+    if (mode === 'join') {
+      if (i.hasGit) return 'Already a git repository'
+      return i.addonCount ? `Has ${i.addonCount} CurseForge files` : 'Empty, ready to join'
+    }
     if (i.hasLock && i.hooks === 'current') return 'Set up, ready to add'
     if (i.hasGit) return 'Git repository, needs setup'
     return 'Not set up yet'
@@ -101,8 +134,22 @@
     if (selected.hooks === 'missing') list.push('Install the sync hooks (.githooks). Git runs these to download mods each time you pull, and to update the mod list (mods.lock.json) each time you commit')
     if (selected.hooks === 'outdated') list.push('Update the sync hooks (.githooks) to this version of packraven')
     list.push(selected.hasGit ? 'Add mod jars and pack zips to .gitignore' : 'Write a .gitignore that leaves out logs, saves, caches and mod jars')
+    if (selected.missingMods) list.push(`Download the ${selected.missingMods} ${selected.missingMods === 1 ? 'file' : 'files'} in mods.lock.json that the mods folder doesn't have yet`)
     list.push(selected.hasLock ? 'Rebuild mods.lock.json from the mods folder' : `Write mods.lock.json from the ${selected.addonCount} CurseForge files, and track files not on CurseForge in git directly`)
     if (selected.hasGit) list.push("Stage these changes in git (you'll make the commits yourself)")
+    return list
+  })
+
+  let joinSteps = $derived.by(() => {
+    if (!selected) return []
+    const list = [
+      'Create a git repository in the profile folder and fetch the pack from the remote',
+      "Stop, and leave the profile as it was, if its Minecraft version or mod loader differs from the pack's",
+      "Replace files the profile already has, like the options.txt CurseForge writes, with the pack's versions",
+      'Link the sync hooks (.githooks). Git runs these to download mods each time you pull, and to update the mod list (mods.lock.json) each time you commit',
+      "Download the mods and other files in the pack's mod list",
+    ]
+    if (selected.addonCount) list.push(`Set aside any of the profile's ${selected.addonCount} CurseForge files that the pack's mod list doesn't include`)
     return list
   })
 
@@ -114,8 +161,31 @@
 <div class="add">
   <div class="intro">
     <h2>{first ? 'Add your first pack' : 'Add a pack'}</h2>
-    <p class="muted">Pick a CurseForge instance to track in git. packraven keeps mod jars out of the repository and records them in a mod list (mods.lock.json) instead.</p>
+    <p class="muted">packraven keeps mod jars out of the git repository and records them in a mod list (mods.lock.json) instead.</p>
   </div>
+
+  <fieldset class="modes">
+    <legend class="visually-hidden">How to add the pack</legend>
+    <label class="mode" class:chosen={mode === 'track'}>
+      <input type="radio" name="mode" checked={mode === 'track'} disabled={running} onchange={() => chooseMode('track')} />
+      <span class="title">Track a CurseForge instance</span>
+      <span class="muted">Start tracking a pack you already have in CurseForge.</span>
+    </label>
+    <label class="mode" class:chosen={mode === 'join'}>
+      <input type="radio" name="mode" checked={mode === 'join'} disabled={running} onchange={() => chooseMode('join')} />
+      <span class="title">Join a shared pack</span>
+      <span class="muted">Download a pack someone else tracks in git into a new CurseForge profile.</span>
+    </label>
+  </fieldset>
+
+  {#if mode === 'join'}
+    <Notice tone="warn">
+      <p>
+        Before you join, create a profile in the CurseForge app with the pack's Minecraft version and mod loader, and don't add any mods to it.
+        Then choose it below.
+      </p>
+    </Notice>
+  {/if}
 
   <fieldset class="instances">
     <legend>CurseForge instance</legend>
@@ -123,8 +193,8 @@
       <p class="muted">Looking for instances.</p>
     {:else if !pickError || instances.length}
       {#each instances as instance (instance.dir)}
-        <label class="instance" class:chosen={selected?.dir === instance.dir} class:disabled={instance.added}>
-          <input type="radio" name="instance" value={instance.dir} disabled={instance.added || running} checked={selected?.dir === instance.dir} onchange={() => select(instance)} />
+        <label class="instance" class:chosen={selected?.dir === instance.dir} class:disabled={!selectable(instance)}>
+          <input type="radio" name="instance" value={instance.dir} disabled={!selectable(instance) || running} checked={selected?.dir === instance.dir} onchange={() => select(instance)} />
           <span class="title">{instance.name}</span>
           <span class="muted">{instance.minecraft} {loaderName(instance.loader)}, {instance.addonCount} files</span>
           <span class="status">{status(instance)}</span>
@@ -139,10 +209,53 @@
         {#if !instances.length}<p><button type="button" onclick={discover}>Look again</button></p>{/if}
       </Notice>
     {/if}
-    <div><button type="button" onclick={chooseFolder} disabled={running}>Choose another folder</button></div>
+    <div class="pick-actions">
+      {#if mode === 'join'}<button type="button" onclick={discover} disabled={running || loading}>Look again</button>{/if}
+      <button type="button" onclick={chooseFolder} disabled={running}>Choose another folder</button>
+    </div>
   </fieldset>
 
-  {#if selected}
+  {#if selected && mode === 'join'}
+    <form class="setup" onsubmit={(e) => { e.preventDefault(); join() }}>
+      <fieldset>
+        <legend>{selected.name}</legend>
+        <p class="lead">When you click Join pack, packraven will:</p>
+        <ul class="steps">
+          {#each joinSteps as step (step)}<li><span class="marker" aria-hidden="true"></span>{step}</li>{/each}
+        </ul>
+      </fieldset>
+
+      <fieldset>
+        <legend>Pack to join</legend>
+        <div class="field">
+          <label for="join-remote">Git remote</label>
+          <input id="join-remote" bind:value={remote} required placeholder="https://github.com/them/pack.git" aria-describedby="join-remote-hint" />
+          <p class="hint" id="join-remote-hint">
+            The repository your collaborators push the pack to.
+            {#if !hasGithubToken}
+              If it's a private GitHub repository, <button type="button" class="link" onclick={() => (nav.view = 'settings')}>add a GitHub token in App settings</button> first.
+            {/if}
+          </p>
+        </div>
+      </fieldset>
+
+      {#if error}<Notice tone="error"><p>{error}</p></Notice>{/if}
+      {#if result && !result.ok}<Notice tone="error"><p>{result.message}</p></Notice>{/if}
+      {#if result?.ok}
+        <Notice tone="ok">
+          <p>{result.message}</p>
+          <p><button type="button" class="primary" onclick={onadded}>Open Changes</button></p>
+        </Notice>
+      {:else}
+        <div class="actions">
+          <button type="submit" class="primary" class:busy={running} disabled={running || !remote.trim()}>{running ? 'Joining' : 'Join pack'}</button>
+        </div>
+      {/if}
+      {#if (started || result) && job('setup').lines.length}
+        <LogView lines={job('setup').lines} label="Join log" />
+      {/if}
+    </form>
+  {:else if selected}
     <form class="setup" onsubmit={(e) => { e.preventDefault(); setUp() }}>
       <fieldset>
         <legend>{selected.name}</legend>
@@ -329,12 +442,54 @@
     font-size: var(--step--1);
   }
 
+  .modes {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .mode {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: 10px;
+    row-gap: 2px;
+    align-items: baseline;
+    align-content: start;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .mode:hover {
+    background: var(--surface);
+  }
+
+  .mode.chosen {
+    background: color-mix(in srgb, var(--forest) 12%, var(--surface));
+  }
+
+  .mode .title {
+    font-weight: 700;
+  }
+
+  .mode .muted {
+    grid-column: 2;
+    font-size: var(--step--1);
+  }
+
+  .pick-actions {
+    display: flex;
+    gap: 12px;
+  }
+
   .instances > div,
   .instances > :global(.notice) {
     margin-top: 14px;
   }
 
   @media (max-width: 800px) {
+    .modes,
     .fields,
     .commit-fields {
       grid-template-columns: minmax(0, 1fr);

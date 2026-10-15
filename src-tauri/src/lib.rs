@@ -19,6 +19,7 @@ mod history;
 mod gitops;
 mod http;
 mod jobs;
+mod join;
 mod launch;
 mod logs;
 mod mirror;
@@ -183,6 +184,7 @@ pub fn run() {
             pack_commands::discover_instances,
             pack_commands::inspect_instance,
             pack_commands::setup_instance,
+            pack_commands::join_pack,
             pack_commands::switch_pack,
             pack_commands::remove_pack,
             pack_commands::update_hooks,

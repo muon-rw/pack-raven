@@ -122,6 +122,7 @@ export interface InstanceInfo {
   addonCount: number
   hasGit: boolean
   hasLock: boolean
+  missingMods: number
   hooks: HooksState
   trackedBinaries: TrackedBinary[]
   remote: string | null
@@ -305,6 +306,7 @@ export const api = {
   discoverInstances: (root?: string) => invoke<InstanceInfo[]>('discover_instances', { root: root ?? null }),
   inspectInstance: (dir: string) => invoke<InstanceInfo>('inspect_instance', { dir }),
   setupInstance: (dir: string, options: SetupOptions) => invoke<void>('setup_instance', { dir, options }),
+  joinPack: (dir: string, remote: string) => invoke<void>('join_pack', { dir, remote }),
   switchPack: (dir: string, killTests: boolean) => invoke<void>('switch_pack', { dir, killTests }),
   removePack: (dir: string) => invoke<void>('remove_pack', { dir }),
   updateHooks: () => invoke<void>('update_hooks'),

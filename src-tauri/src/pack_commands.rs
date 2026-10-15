@@ -1,9 +1,10 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
+use crate::join;
 use crate::setup::{self, InstanceInfo, SetupOptions};
 
 type CmdResult<T> = Result<T, String>;
@@ -39,16 +40,36 @@ pub fn inspect_instance(state: State<'_, AppState>, dir: PathBuf) -> CmdResult<I
     setup::inspect(&dir, &state.settings().packs).map_err(err)
 }
 
+fn activate(app: &AppHandle, dir: &Path) -> anyhow::Result<()> {
+    use tauri::Manager;
+    let state = app.state::<AppState>();
+    state.update_settings(|s| s.activate(dir))?;
+    state.rewatch(app);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn setup_instance(app: AppHandle, state: State<'_, AppState>, dir: PathBuf, options: SetupOptions) -> CmdResult<()> {
     let finished = app.clone();
     let identity = state.settings().identity();
     state.jobs.start(&app, "setup", move |log| async move {
-        let message = setup::setup(dir.clone(), options, &identity, log).await?;
-        use tauri::Manager;
-        let state = finished.state::<AppState>();
-        state.update_settings(|s| s.activate(&dir))?;
-        state.rewatch(&finished);
+        // Setup can download missing mods, whose future the compiler can't prove Send, so we drive it on a
+        // blocking thread as pull does.
+        let setup_dir = dir.clone();
+        let message = tauri::async_runtime::spawn_blocking(move || tauri::async_runtime::block_on(setup::setup(setup_dir, options, &identity, log))).await??;
+        activate(&finished, &dir)?;
+        Ok(message)
+    })
+}
+
+// We run joins as the setup job, since both happen on the Add pack page and share its log.
+#[tauri::command]
+pub fn join_pack(app: AppHandle, state: State<'_, AppState>, dir: PathBuf, remote: String) -> CmdResult<()> {
+    let finished = app.clone();
+    state.jobs.start(&app, "setup", move |log| async move {
+        let join_dir = dir.clone();
+        let message = tauri::async_runtime::spawn_blocking(move || tauri::async_runtime::block_on(join::join(&join_dir, &remote, &log))).await??;
+        activate(&finished, &dir)?;
         Ok(message)
     })
 }
