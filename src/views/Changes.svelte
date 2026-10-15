@@ -305,9 +305,9 @@
         {#if diff?.baseline}
           Compared with the export you chose. <button class="link" onclick={stopComparing}>Compare with the last release instead</button>
         {:else if diff?.since}
-          The changelog lists these mods after your notes. <button class="link" onclick={compareWithZip}>Compare with an older export</button>
+          packraven will add these automatically to your changelog. <button class="link" onclick={compareWithZip}>Compare with an older export</button>
         {:else}
-          The changelog lists these mods after your notes.
+          packraven will add these automatically to your changelog.
         {/if}
       </p>
       {#if diffError}

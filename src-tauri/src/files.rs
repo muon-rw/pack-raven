@@ -114,10 +114,10 @@ fn megabytes(bytes: u64) -> String {
 // stop at `max` and only go past `ask` when you choose the simplified editor.
 fn over_limit(size: u64, limits: Limits, allow_large: bool) -> Option<(String, bool)> {
     if size > limits.max {
-        let reason = format!("This file is {}, over the {} limit for the editor. You can raise the limit in App settings.", megabytes(size), megabytes(limits.max));
+        let reason = format!("This file is {}, over the recommended {} limit for the editor. You can raise this limit in App settings.", megabytes(size), megabytes(limits.max));
         Some((reason, false))
     } else if size > limits.ask && !allow_large {
-        let reason = format!("This file is {}, over the {} you set to ask about. You can open it in a simplified editor without checking or folding.", megabytes(size), megabytes(limits.ask));
+        let reason = format!("This file is {}, over the recommended {} limit for intelligent features. You can open it in a simplified editor.", megabytes(size), megabytes(limits.ask));
         Some((reason, true))
     } else {
         None

@@ -12,5 +12,5 @@ export function modListSummary(folder: FolderChanges): string {
     folder.added.length ? `${folder.added.length} new` : null,
     folder.missing.length ? `${folder.missing.length} missing` : null,
   ].filter(Boolean)
-  return parts.length ? `Mods folder differs from the mod list: ${parts.join(', ')}` : 'Mods folder matches the mod list'
+  return parts.length ? `Mods folder differs from packraven\'s mod list: ${parts.join(', ')}` : 'Mods folder matches packraven\'s mod list'
 }

@@ -145,13 +145,13 @@
   <div class="settings">
   <header>
     <h2>App settings</h2>
-    <p class="muted">For packraven on this machine, across every pack. Each pack's own settings are under Pack settings.</p>
+    <p class="muted">Configure general packraven settings. For individual packs, see Pack settings.</p>
   </header>
 
   <div class="switch-row">
     <div>
       <div id="autostart-label">Start in the tray when I sign in</div>
-      <p class="muted" id="autostart-hint">Keep packraven running so builds and test servers are a click away. This changes right away; it doesn't wait for Save.</p>
+      <p class="muted" id="autostart-hint">Keep packraven running so builds and test servers are a click away.</p>
       {#if autostartError}<p class="failed" role="alert">{autostartError}</p>{/if}
     </div>
     <button
@@ -177,8 +177,8 @@
     <section>
       <h3>Java</h3>
       <p class="muted">
-        Leave a field empty to use the Java that CurseForge installed for those versions. You can pick a newer Java than Minecraft officially
-        supports, such as Java 25 for every version, but some packs may not run on it. A pack's own Java, under Pack settings, wins over these.
+        Default: Use CurseForge's Java version for your pack. You can pick a different Java than Minecraft officially
+        supports, like Java 25 for every version, but some mods may not work. Also overrideable in Pack settings.
       </p>
       {#each JAVA_SLOTS as slot (slot.major)}
         <div class="path">

@@ -94,7 +94,7 @@
     <div>
       <h2>Releases</h2>
       <p class="muted">
-        Versions published from packraven on this machine, with their CurseForge review status and Discord announcements.
+        Versions published from packraven on this machine, their CurseForge review status, and Discord announcements.
         {#if !hasWebhook}No Discord webhook is set, so packraven won't announce anything.{/if}
       </p>
     </div>

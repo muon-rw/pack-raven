@@ -86,7 +86,7 @@
         <input id="recopy" type="checkbox" bind:checked={testOptions.recopyAll} disabled={serverRunning} aria-describedby="recopy-hint" />
         <label for="recopy">Recopy all server files, not just changes</label>
         <p class="hint muted" id="recopy-hint">
-          {serverRunning ? 'Stop the test server to change this.' : 'Tick this to give each test server a clean slate. Each start then takes 10 to 60 seconds longer.'}
+          {serverRunning ? 'Stop the test server to change this.' : 'Tick this to give each test server a clean slate. Server starts will take 10 to 60 seconds longer.'}
         </p>
       </div>
       <Tip tip={whyNoQuick}>
@@ -125,7 +125,7 @@
               <button aria-disabled={!!whyNoStart} aria-describedby={why} onclick={() => !whyNoStart && startTest(false)}>Start server</button>
             {/snippet}
           </Tip>
-          <Tip tip={whyNoStop ?? 'Save the world and shut the server down'}>
+          <Tip tip={whyNoStop ?? 'Save the world and shut down the server'}>
             {#snippet children(why)}
               <button aria-disabled={!!whyNoStop} aria-describedby={why} onclick={() => !whyNoStop && run(() => api.serverCommand('stop'))}>Stop</button>
             {/snippet}
@@ -146,7 +146,7 @@
       </form>
       <p class="hint muted" id="console-hint">
         {serverRunning ? 'Send commands to the server console. Use Stop to save and shut down, or Kill to end the process without saving.' : 'You can send commands once the server is running.'}
-        Server crashing on a mod? <button class="link" onclick={onservermods}>Change server mods</button>.
+        Server crashing due to a mod? <button class="link" onclick={onservermods}>Change server mods</button>.
       </p>
     </div>
 
