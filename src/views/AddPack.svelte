@@ -113,7 +113,17 @@
     if (!started) return
     started = false
     result = { ok: phase === 'done', message: job('setup').message ?? '' }
+    if (selected) reinspect(selected.dir)
   })
+
+  // A failed join or setup can stop after creating .git or mods.lock.json, so we refresh the status and
+  // steps. We keep a selection that's no longer selectable, so its form and error stay in view.
+  function reinspect(dir: string) {
+    api.inspectInstance(dir).then((fresh) => {
+      instances = instances.map((i) => (i.dir === dir ? fresh : i))
+      if (selected?.dir === dir && selectable(fresh)) selected = fresh
+    }, () => {})
+  }
 
   function status(i: InstanceInfo): string {
     if (i.added) return 'Already added'
@@ -144,7 +154,7 @@
     if (!selected) return []
     const list = [
       'Create a git repository in the profile folder and fetch the pack from the remote',
-      "Stop, and leave the profile as it was, if its Minecraft version or mod loader differs from the pack's",
+      "Check that the profile's Minecraft version and mod loader match the pack's, and stop without changing the profile if they don't",
       "Replace files the profile already has, like the options.txt CurseForge writes, with the pack's versions",
       'Link the sync hooks (.githooks). Git runs these to download mods each time you pull, and to update the mod list (mods.lock.json) each time you commit',
       "Download the mods and other files in the pack's mod list",
@@ -164,31 +174,28 @@
     <p class="muted">packraven keeps mod jars out of the git repository and records them in a mod list (mods.lock.json) instead.</p>
   </div>
 
-  <fieldset class="modes">
+  <fieldset class="add-modes">
     <legend class="visually-hidden">How to add the pack</legend>
-    <label class="mode" class:chosen={mode === 'track'}>
+    <label class="add-mode" class:chosen={mode === 'track'} class:disabled={running}>
       <input type="radio" name="mode" checked={mode === 'track'} disabled={running} onchange={() => chooseMode('track')} />
       <span class="title">Track a CurseForge instance</span>
       <span class="muted">Start tracking a pack you already have in CurseForge.</span>
     </label>
-    <label class="mode" class:chosen={mode === 'join'}>
+    <label class="add-mode" class:chosen={mode === 'join'} class:disabled={running}>
       <input type="radio" name="mode" checked={mode === 'join'} disabled={running} onchange={() => chooseMode('join')} />
       <span class="title">Join a shared pack</span>
       <span class="muted">Download a pack someone else tracks in git into a new CurseForge profile.</span>
     </label>
   </fieldset>
 
-  {#if mode === 'join'}
-    <Notice tone="warn">
-      <p>
-        Before you join, create a profile in the CurseForge app with the pack's Minecraft version and mod loader, and don't add any mods to it.
-        Then choose it below.
-      </p>
-    </Notice>
-  {/if}
-
   <fieldset class="instances">
-    <legend>CurseForge instance</legend>
+    <legend>{mode === 'join' ? 'CurseForge profile' : 'CurseForge instance'}</legend>
+    {#if mode === 'join'}
+      <p class="lead pick-lead">
+        Before you join, create a profile in the CurseForge app with the pack's Minecraft version and mod loader, and don't add any mods to it.
+        Then choose it here (click Look again if it isn't listed yet).
+      </p>
+    {/if}
     {#if loading}
       <p class="muted">Looking for instances.</p>
     {:else if !pickError || instances.length}
@@ -206,7 +213,7 @@
     {#if pickError}
       <Notice tone="error">
         <p>{pickError}</p>
-        {#if !instances.length}<p><button type="button" onclick={discover}>Look again</button></p>{/if}
+        {#if !instances.length && mode !== 'join'}<p><button type="button" onclick={discover}>Look again</button></p>{/if}
       </Notice>
     {/if}
     <div class="pick-actions">
@@ -229,7 +236,7 @@
         <legend>Pack to join</legend>
         <div class="field">
           <label for="join-remote">Git remote</label>
-          <input id="join-remote" bind:value={remote} required placeholder="https://github.com/them/pack.git" aria-describedby="join-remote-hint" />
+          <input id="join-remote" bind:value={remote} required spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/pack.git" aria-describedby="join-remote-hint" />
           <p class="hint" id="join-remote-hint">
             The repository your collaborators push the pack to.
             {#if !hasGithubToken}
@@ -324,7 +331,7 @@
         <div class="fields">
           <div class="field wide">
             <label for="remote">Git remote <span class="optional">(optional)</span></label>
-            <input id="remote" bind:value={remote} placeholder="https://github.com/you/pack.git" aria-describedby="remote-hint" />
+            <input id="remote" bind:value={remote} spellcheck="false" autocomplete="off" placeholder="https://github.com/you/pack.git" aria-describedby="remote-hint" />
             <p class="hint" id="remote-hint">Where you push your commits. packraven only pushes when you ask it to.</p>
           </div>
           <div class="field">
@@ -409,7 +416,7 @@
     border-bottom: 1px solid var(--line);
   }
 
-  .instance:hover:not(.disabled) {
+  .instance:hover:not(.disabled, .chosen) {
     background: var(--surface);
   }
 
@@ -442,12 +449,12 @@
     font-size: var(--step--1);
   }
 
-  .modes {
+  .add-modes {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 12px;
   }
 
-  .mode {
+  .add-mode {
     display: grid;
     grid-template-columns: auto 1fr;
     column-gap: 10px;
@@ -461,19 +468,23 @@
     cursor: pointer;
   }
 
-  .mode:hover {
+  .add-mode:hover:not(.disabled, .chosen) {
     background: var(--surface);
   }
 
-  .mode.chosen {
+  .add-mode.disabled {
+    cursor: default;
+  }
+
+  .add-mode.chosen {
     background: color-mix(in srgb, var(--forest) 12%, var(--surface));
   }
 
-  .mode .title {
+  .add-mode .title {
     font-weight: 700;
   }
 
-  .mode .muted {
+  .add-mode .muted {
     grid-column: 2;
     font-size: var(--step--1);
   }
@@ -489,7 +500,7 @@
   }
 
   @media (max-width: 800px) {
-    .modes,
+    .add-modes,
     .fields,
     .commit-fields {
       grid-template-columns: minmax(0, 1fr);
@@ -503,6 +514,10 @@
 
   .lead {
     color: var(--muted);
+  }
+
+  .pick-lead {
+    margin: 0 0 14px;
   }
 
   .steps {
