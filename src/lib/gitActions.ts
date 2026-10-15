@@ -1,12 +1,14 @@
 import { ask } from '@tauri-apps/plugin-dialog'
 import { api, errorText, type FileChange, type GitStatus } from './api'
+import { LOCKFILE } from './modsync'
 import { showDiff } from './nav.svelte'
 import type { MenuItem, Submenu } from './menu'
 
 export async function confirmDiscard(changes: FileChange[]) {
   const names = changes.length === 1 ? changes[0].path : `${changes.length} files`
   const deletes = changes.some((c) => c.status === '?') ? ' Git deletes new files you discard.' : ''
-  return ask(`Discard your changes to ${names}? This can't be undone.${deletes}`, {
+  const mods = changes.some((c) => c.path === LOCKFILE) ? ' packraven also puts your mods back the way the last commit has them.' : ''
+  return ask(`Discard your changes to ${names}? This can't be undone.${deletes}${mods}`, {
     title: 'Discard changes',
     kind: 'warning',
     okLabel: 'Discard',
@@ -14,11 +16,17 @@ export async function confirmDiscard(changes: FileChange[]) {
   })
 }
 
-export function discardChanges(changes: FileChange[]) {
-  return api.gitDiscard(
-    changes.filter((c) => c.status !== '?').map((c) => c.path),
-    changes.filter((c) => c.status === '?').map((c) => c.path),
-  )
+// packraven rewrites mods.lock.json from the mods folder, so discarding only the file would undo
+// nothing. We revert the mods folder along with it instead.
+export async function discardChanges(changes: FileChange[]) {
+  const files = changes.filter((c) => c.path !== LOCKFILE)
+  if (files.length) {
+    await api.gitDiscard(
+      files.filter((c) => c.status !== '?').map((c) => c.path),
+      files.filter((c) => c.status === '?').map((c) => c.path),
+    )
+  }
+  if (files.length < changes.length) await api.revertMods()
 }
 
 export type Feedback = { ondone: () => void; onerror: (message: string) => void; onnotice: (message: string) => void }

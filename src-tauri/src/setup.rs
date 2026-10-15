@@ -213,7 +213,7 @@ pub fn has_hooks(dir: &Path) -> bool {
     dir.join(".git").exists() && dir.join(".githooks").join("run.sh").exists()
 }
 
-pub async fn setup(dir: PathBuf, options: SetupOptions, log: Log) -> Result<String> {
+pub async fn setup(dir: PathBuf, options: SetupOptions, identity: &crate::git::Identity, log: Log) -> Result<String> {
     if !dir.join(".git").exists() {
         git::run(&dir, &["init", "-b", "main"])?;
         log.info("Created a git repository");
@@ -277,7 +277,9 @@ pub async fn setup(dir: PathBuf, options: SetupOptions, log: Log) -> Result<Stri
     match options.commit.filter(|_| new_repo) {
         Some(commit) => {
             let message = Some(commit.message.trim()).filter(|m| !m.is_empty()).unwrap_or("Initial");
-            let mut args = vec!["commit", "-m", message];
+            let identity_args = identity.config_args();
+            let mut args: Vec<&str> = identity_args.iter().map(String::as_str).collect();
+            args.extend(["commit", "-m", message]);
             let author = commit.author.as_deref().map(str::trim).filter(|a| !a.is_empty()).map(String::from);
             if let Some(author) = &author {
                 args.push("--author");

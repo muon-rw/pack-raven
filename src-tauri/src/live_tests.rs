@@ -44,7 +44,7 @@ async fn setup_fresh_instance() {
     std::fs::write(dir.join("mods/not-on-curseforge.jar"), b"local build").unwrap();
 
     let options = crate::setup::SetupOptions { remote: None, author: "test".into(), project_id: 0, untrack_binaries: true, commit: Some(crate::setup::FirstCommit { message: String::new(), author: None }) };
-    let message = crate::setup::setup(dir.clone(), options, Log::console("setup")).await.unwrap();
+    let message = crate::setup::setup(dir.clone(), options, &Default::default(), Log::console("setup")).await.unwrap();
     println!("{message}");
 
     let info = crate::setup::inspect(&dir, &[]).unwrap();
@@ -157,7 +157,7 @@ async fn modless_pack(source: &Path) -> PathBuf {
     std::fs::create_dir_all(dir.join("mods")).unwrap();
     std::fs::copy(source.join("minecraftinstance.json"), dir.join("minecraftinstance.json")).unwrap();
     let options = crate::setup::SetupOptions { remote: None, author: "test".into(), project_id: 0, untrack_binaries: true, commit: Some(crate::setup::FirstCommit { message: String::new(), author: None }) };
-    crate::setup::setup(dir.clone(), options, Log::console("setup")).await.unwrap();
+    crate::setup::setup(dir.clone(), options, &Default::default(), Log::console("setup")).await.unwrap();
     dir
 }
 

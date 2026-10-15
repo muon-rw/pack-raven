@@ -12,6 +12,7 @@ const KEYCHAIN_SERVICE: &str = APP_IDENTIFIER;
 pub enum Credential {
     Download,
     Upload,
+    Github,
 }
 
 impl Credential {
@@ -19,6 +20,7 @@ impl Credential {
         match self {
             Credential::Download => "curseforge-api-key",
             Credential::Upload => "curseforge-upload-token",
+            Credential::Github => "github-token",
         }
     }
 
@@ -27,6 +29,7 @@ impl Credential {
         match self {
             Credential::Download => &["CF_DOWNLOAD_TOKEN"],
             Credential::Upload => &["CURSEFORGE_TOKEN", "CF_TOKEN"],
+            Credential::Github => &[],
         }
     }
 }
@@ -47,6 +50,7 @@ pub enum Source {
 struct Sources {
     download: Option<Source>,
     upload: Option<Source>,
+    github: Option<Source>,
 }
 
 impl Sources {
@@ -54,6 +58,7 @@ impl Sources {
         match credential {
             Credential::Download => &mut self.download,
             Credential::Upload => &mut self.upload,
+            Credential::Github => &mut self.github,
         }
     }
 }

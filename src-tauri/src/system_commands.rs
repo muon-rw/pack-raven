@@ -74,12 +74,18 @@ pub async fn install_git() -> CmdResult<String> {
 pub struct CredentialsView {
     download: CredentialStatus,
     upload: CredentialStatus,
+    github: CredentialStatus,
     keychain: &'static str,
 }
 
 #[tauri::command]
 pub fn credentials_status() -> CredentialsView {
-    CredentialsView { download: credentials::status(Credential::Download), upload: credentials::status(Credential::Upload), keychain: credentials::keychain_name() }
+    CredentialsView {
+        download: credentials::status(Credential::Download),
+        upload: credentials::status(Credential::Upload),
+        github: credentials::status(Credential::Github),
+        keychain: credentials::keychain_name(),
+    }
 }
 
 #[tauri::command]
@@ -95,6 +101,11 @@ pub fn credential_use_env(credential: Credential, name: String) -> CmdResult<()>
 #[tauri::command]
 pub fn credential_clear(credential: Credential) -> CmdResult<()> {
     credentials::clear(credential).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn github_identity() -> CmdResult<crate::remote::GithubIdentity> {
+    crate::remote::github_identity().await.map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]

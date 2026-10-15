@@ -24,6 +24,8 @@ pub struct Settings {
     pub editor_ask_mb: u32,
     /// Files larger than this many megabytes don't open in the editor at all.
     pub editor_max_mb: u32,
+    pub git_name: String,
+    pub git_email: String,
 }
 
 fn curseforge_root() -> PathBuf {
@@ -37,7 +39,7 @@ fn curseforge_root() -> PathBuf {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { instance_dir: PathBuf::new(), packs: Vec::new(), install_dir: curseforge_root().join("Install"), legacy_java: None, java_by_major: BTreeMap::new(), pack_java: BTreeMap::new(), defender_excluded: Vec::new(), defender_dismissed: false, discord_webhooks: BTreeMap::new(), editor_ask_mb: (crate::files::Limits::DEFAULT.ask / 1_000_000) as u32, editor_max_mb: (crate::files::Limits::DEFAULT.max / 1_000_000) as u32 }
+        Self { instance_dir: PathBuf::new(), packs: Vec::new(), install_dir: curseforge_root().join("Install"), legacy_java: None, java_by_major: BTreeMap::new(), pack_java: BTreeMap::new(), defender_excluded: Vec::new(), defender_dismissed: false, discord_webhooks: BTreeMap::new(), editor_ask_mb: (crate::files::Limits::DEFAULT.ask / 1_000_000) as u32, editor_max_mb: (crate::files::Limits::DEFAULT.max / 1_000_000) as u32, git_name: String::new(), git_email: String::new() }
     }
 }
 
@@ -64,6 +66,10 @@ impl Settings {
     pub fn editor_limits(&self) -> crate::files::Limits {
         let ask = u64::from(self.editor_ask_mb.max(1)) * 1_000_000;
         crate::files::Limits { ask, max: (u64::from(self.editor_max_mb) * 1_000_000).max(ask) }
+    }
+
+    pub fn identity(&self) -> crate::git::Identity {
+        crate::git::Identity { name: self.git_name.clone(), email: self.git_email.clone() }
     }
 
     pub fn webhook(&self, pack: &Path) -> Option<String> {

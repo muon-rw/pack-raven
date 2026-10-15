@@ -2,7 +2,8 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
-use crate::gitops::{self, Commit, Diff, Status};
+use crate::gitops::{self, Commit, Diff, PullPreview, Status};
+use crate::modsync::Prefer;
 
 type CmdResult<T> = Result<T, String>;
 
@@ -50,16 +51,24 @@ pub fn git_ignore(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<V
 
 #[tauri::command]
 pub fn git_commit(app: AppHandle, state: State<'_, AppState>, message: String) -> CmdResult<()> {
-    let dir = state.settings().instance_dir;
-    state.jobs.start(&app, "git", move |log| async move { gitops::commit(&dir, &message, &log).await })
+    let settings = state.settings();
+    let (dir, identity) = (settings.instance_dir.clone(), settings.identity());
+    state.jobs.start(&app, "git", move |log| async move { gitops::commit(&dir, &message, &identity, &log).await })
 }
 
 #[tauri::command]
-pub fn git_sync(app: AppHandle, state: State<'_, AppState>, action: String) -> CmdResult<()> {
+pub async fn git_pull_preview(state: State<'_, AppState>) -> CmdResult<PullPreview> {
+    gitops::pull_preview(&state.settings().instance_dir).await.map_err(err)
+}
+
+#[tauri::command]
+pub fn git_sync(app: AppHandle, state: State<'_, AppState>, action: String, prefer: Option<Prefer>) -> CmdResult<()> {
     let dir = state.settings().instance_dir;
     state.jobs.start(&app, "git", move |log| async move {
         match action.as_str() {
-            "pull" => gitops::pull(&dir, &log).await,
+            // Pull restores mods, whose future the compiler can't prove Send, so we drive it on a
+            // blocking thread as revert_mods does.
+            "pull" => tauri::async_runtime::spawn_blocking(move || tauri::async_runtime::block_on(gitops::pull(&dir, prefer, &log))).await?,
             "push" => gitops::push(&dir, &log).await,
             _ => gitops::fetch(&dir, &log).await,
         }

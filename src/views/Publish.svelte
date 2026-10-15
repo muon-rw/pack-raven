@@ -6,10 +6,10 @@
   import { api, errorText, type Overview, type PackConfig } from '../lib/api'
   import { job, onJobEnd } from '../lib/jobs.svelte'
   import RenderedChangelog from '../components/RenderedChangelog.svelte'
-  import { folderChangeCount } from '../lib/modsync'
   import { bumpVersion, parseVersion, type Bump } from '../lib/version'
   import JobLog from '../components/JobLog.svelte'
   import LinkedText from '../components/LinkedText.svelte'
+  import { nav } from '../lib/nav.svelte'
 
   let {
     overview,
@@ -30,6 +30,8 @@
   let previewError = $state<string | null>(null)
   let error: string | null = $state(null)
   let published: { version: string; pushed: boolean } | null = $state(null)
+  let commitMessage = $state('')
+  let identity = $state<string | null>(null)
 
   // You choose the version here, where a tag collision matters. Publishing writes it to the
   // Better Compatibility Checker config, so until then the pack reports the last release.
@@ -56,11 +58,16 @@
       () => (config = null),
     )
     api.getWebhook().then((w) => (hasWebhook = !!w), () => (hasWebhook = false))
+    api.getSettings().then(
+      (s) => (identity = [s.gitName.trim(), s.gitEmail.trim() && `<${s.gitEmail.trim()}>`].filter(Boolean).join(' ') || null),
+      () => (identity = null),
+    )
   })
 
   onJobEnd('publish', (phase) => {
     if (phase !== 'done') return
     versionTouched = false
+    commitMessage = ''
     loadChangelog()
   })
 
@@ -86,11 +93,12 @@
   }
 
   let trimmed = $derived(version.trim())
-  let outOfSync = $derived(overview ? folderChangeCount(overview.folder) : 0)
+  let defaultMessage = $derived(`Release ${trimmed || suggested}`)
+  let uncommitted = $derived(overview?.changed ?? [])
 
   $effect(() => {
     const wanted = trimmed
-    void outOfSync
+    void overview?.notOnCurseforge.length
     void job('publish').finishedRuns
     let current = true
     checking = true
@@ -116,9 +124,6 @@
   let emptyNotes = $derived(changelog !== null && !changelog.trim())
   let warnings = $derived(
     [
-      overview?.changed.length
-        ? `${overview.changed.length} uncommitted ${overview.changed.length === 1 ? 'file' : 'files'}. packraven builds the packs from disk, so these changes ship but stay out of the release commit.`
-        : null,
       emptyNotes ? 'No release notes and no mod changes, so the CurseForge changelog will be empty.' : null,
     ].filter((w): w is string => !!w),
   )
@@ -129,7 +134,7 @@
   async function publish() {
     const consequences = [
       `Upload ${overview?.name} ${trimmed} and its server pack to CurseForge as ${releaseType ? `a ${releaseType.toLowerCase()}` : 'a release'}${config?.curseforge.manual_release ? ', held until you release it' : ''}.`,
-      `Commit and tag v${trimmed}${push ? ', then push' : ''}.`,
+      `Commit ${uncommitted.length ? `your ${uncommitted.length} uncommitted ${uncommitted.length === 1 ? 'file' : 'files'} and ` : ''}the release as "${commitMessage.trim() || defaultMessage}", tag it v${trimmed}${push ? ', then push' : ''}.`,
       'Archive the release notes and clear changelog.md for the next release.',
       announces ? `Post to Discord once CurseForge approves it${rolePing ? ', pinging the role' : ''}.` : null,
       emptyNotes ? 'The changelog on CurseForge will be empty.' : null,
@@ -144,7 +149,7 @@
     try {
       error = null
       published = { version: trimmed, pushed: push }
-      await api.publish(trimmed, push)
+      await api.publish(trimmed, commitMessage.trim(), push)
       onchange()
     } catch (e) {
       error = errorText(e)
@@ -308,6 +313,28 @@
     </dl>
   </section>
 
+  <section class="step" aria-labelledby="commit-title">
+    <h3 id="commit-title">Release commit</h3>
+    <label class="commit-field">
+      <span class="muted small">Commit message <span class="optional">(optional, defaults to "{defaultMessage}")</span></span>
+      <input bind:value={commitMessage} placeholder={defaultMessage} aria-describedby="commit-hint" />
+    </label>
+    <p class="muted small" id="commit-hint">
+      packraven builds the packs from disk, so it commits all your changes along with the new version and archived notes, as {identity ??
+        'your git identity'}.
+      {#if !identity}<button class="link" onclick={() => (nav.view = 'settings')}>Set a commit name and email</button>{/if}
+    </p>
+    {#if uncommitted.length}
+      <details>
+        <summary>{uncommitted.length === 1 ? '1 uncommitted file' : `${uncommitted.length} uncommitted files`} go into the release commit</summary>
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <ul class="uncommitted" tabindex="0" aria-label="Uncommitted files">
+          {#each uncommitted as path (path)}<li class="file">{path}</li>{/each}
+        </ul>
+      </details>
+    {/if}
+  </section>
+
   <section class="step" aria-labelledby="changelog-title">
     <div class="row">
       <h3 id="changelog-title">Changelog on CurseForge</h3>
@@ -437,6 +464,31 @@
 
   .step {
     --changelog-max-height: 60vh;
+  }
+
+  .commit-field {
+    display: grid;
+    gap: 4px;
+    max-width: 480px;
+  }
+
+  .optional {
+    font-weight: 400;
+  }
+
+  summary {
+    cursor: pointer;
+  }
+
+  .uncommitted {
+    display: grid;
+    gap: 2px;
+    max-height: 200px;
+    overflow: auto;
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--step--1);
   }
 
   .empty-changelog {

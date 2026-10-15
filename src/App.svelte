@@ -23,7 +23,7 @@
   import PackSwitcher from './components/PackSwitcher.svelte'
   import RavenMark from './components/RavenMark.svelte'
   import ThemeToggle from './components/ThemeToggle.svelte'
-  import { folderChangeCount, modListSummary } from './lib/modsync'
+  import { modCountsSummary, notOnCurseforgeSummary } from './lib/modsync'
   import { shortcut } from './lib/platform'
 
   type View = 'changes' | 'test' | 'mods' | 'files' | 'git' | 'publish' | 'releases' | 'pack' | 'settings' | 'add'
@@ -78,9 +78,11 @@
     const unlisten = listen<{ kind: string }>('test-event', ({ payload }) => {
       if (payload.kind.endsWith('-started') || payload.kind.endsWith('-stopped')) refresh()
     })
+    const unlistenModList = listen('mod-list-changed', poll)
     return () => {
       clearInterval(timer)
       unlisten.then((stop) => stop())
+      unlistenModList.then((stop) => stop())
     }
   })
 
@@ -153,7 +155,10 @@
       : [],
   )
 
-  let outOfSync = $derived(overview ? folderChangeCount(overview.folder) : 0)
+  let modListStatus = $derived(
+    overview?.modListError ? "Couldn't update the mod list" : overview?.notOnCurseforge.length ? notOnCurseforgeSummary(overview.notOnCurseforge) : undefined,
+  )
+  let incomingSummary = $derived(overview?.incoming ? modCountsSummary(overview.incoming) : null)
 
   let testStatus = $derived(
     testState.players.length
@@ -176,8 +181,8 @@
           id: 'changes',
           title: 'Changes',
           key: '1',
-          status: !overview ? 'Instance not found' : outOfSync ? modListSummary(overview.folder) : undefined,
-          tone: !overview ? 'bad' : outOfSync ? 'warn' : 'idle',
+          status: !overview ? 'Instance not found' : modListStatus,
+          tone: !overview ? 'bad' : modListStatus ? 'warn' : 'idle',
         },
         {
           id: 'test',
@@ -265,6 +270,7 @@
               <span class="file">{overview.branch}</span>
               {#if overview.ahead}<span class="pending">{overview.ahead} to push</span>{/if}
               {#if overview.behind}<span class="pending">{overview.behind} to pull</span>{/if}
+              {#if incomingSummary}<span class="pending">{incomingSummary}</span>{/if}
             </dd>
           </div>
           <div class="clickable" class:open={addonsOpen}>

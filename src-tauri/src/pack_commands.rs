@@ -42,8 +42,9 @@ pub fn inspect_instance(state: State<'_, AppState>, dir: PathBuf) -> CmdResult<I
 #[tauri::command]
 pub fn setup_instance(app: AppHandle, state: State<'_, AppState>, dir: PathBuf, options: SetupOptions) -> CmdResult<()> {
     let finished = app.clone();
+    let identity = state.settings().identity();
     state.jobs.start(&app, "setup", move |log| async move {
-        let message = setup::setup(dir.clone(), options, log).await?;
+        let message = setup::setup(dir.clone(), options, &identity, log).await?;
         use tauri::Manager;
         let state = finished.state::<AppState>();
         state.update_settings(|s| s.activate(&dir))?;

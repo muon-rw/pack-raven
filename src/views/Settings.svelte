@@ -43,6 +43,25 @@
 
   const UPLOAD_TOKEN_PAGE = 'https://legacy.curseforge.com/account/api-tokens'
   const API_KEY_PAGE = 'https://console.curseforge.com/'
+  const GITHUB_TOKEN_PAGE = 'https://github.com/settings/personal-access-tokens/new'
+
+  let identityBusy = $state(false)
+  let identityMessage = $state<{ ok: boolean; text: string } | null>(null)
+
+  async function fillIdentityFromGithub() {
+    if (!settings) return
+    identityBusy = true
+    try {
+      const identity = await api.githubIdentity()
+      settings.gitName = identity.name
+      settings.gitEmail = identity.email
+      identityMessage = { ok: true, text: 'Filled in from your GitHub account. Save app settings to keep it.' }
+    } catch (error) {
+      identityMessage = { ok: false, text: `Couldn't read your GitHub account: ${errorText(error)}` }
+    } finally {
+      identityBusy = false
+    }
+  }
 
   onMount(async () => {
     await load()
@@ -175,6 +194,24 @@
     </section>
 
     <section>
+      <h3>Commits</h3>
+      <label>Name <input bind:value={settings.gitName} placeholder="From your git config" autocomplete="name" /></label>
+      <label>
+        Email
+        <input bind:value={settings.gitEmail} placeholder="From your git config" autocomplete="email" aria-describedby="commit-identity-hint" />
+      </label>
+      <p class="muted hint" id="commit-identity-hint">
+        packraven makes commits as this person when you publish or commit in Git. Leave a field empty to use your git config.
+      </p>
+      {#if credentials?.github.present}
+        <div class="identity-row">
+          <button type="button" class:busy={identityBusy} disabled={identityBusy} onclick={fillIdentityFromGithub}>Fill in from GitHub</button>
+          {#if identityMessage}<span class:muted={identityMessage.ok} class:failed={!identityMessage.ok} role="status">{identityMessage.text}</span>{/if}
+        </div>
+      {/if}
+    </section>
+
+    <section>
       <h3>Java</h3>
       <p class="muted">
         Default: Use CurseForge's Java version for your pack. You can pick a different Java than Minecraft officially
@@ -235,10 +272,23 @@
           </p>
         {/snippet}
       </CredentialField>
-      <CredentialField credential="upload" label="CurseForge upload token" status={credentials.upload} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
+      <CredentialField credential="upload" noun="token" label="CurseForge upload token" status={credentials.upload} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
         {#snippet help()}
           <p class="muted hint">
             You only need this to publish. <a href={UPLOAD_TOKEN_PAGE} onclick={(e) => { e.preventDefault(); openUrl(UPLOAD_TOKEN_PAGE) }}>Generate a token on CurseForge</a>, then paste it here.
+          </p>
+        {/snippet}
+      </CredentialField>
+    </section>
+
+    <section class="removal" id="github-access">
+      <h3>GitHub access</h3>
+      <CredentialField credential="github" noun="token" label="GitHub token" status={credentials.github} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
+        {#snippet help()}
+          <p class="muted hint">
+            packraven uses this to pull and push when your pack's remote is an HTTPS URL on github.com. Other remotes keep using your git setup.
+            <a href={GITHUB_TOKEN_PAGE} onclick={(e) => { e.preventDefault(); openUrl(GITHUB_TOKEN_PAGE) }}>Create a fine-grained token</a> for the pack's
+            repository with Contents: Read and write, then paste it here.
           </p>
         {/snippet}
       </CredentialField>
@@ -270,6 +320,13 @@
 {/if}
 
 <style>
+  .identity-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+  }
+
   .settings {
     display: grid;
     gap: 36px;

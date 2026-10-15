@@ -44,6 +44,7 @@ pub fn watch(app: AppHandle, root: PathBuf) -> Result<PackWatcher> {
         }
     })?;
     watcher.watch(&root, RecursiveMode::Recursive)?;
+    let mod_list = crate::mod_list::spawn_updater(app.clone(), root);
     std::thread::spawn(move || {
         while let Ok(first) = receiver.recv() {
             let started = Instant::now();
@@ -52,6 +53,9 @@ pub fn watch(app: AppHandle, root: PathBuf) -> Result<PackWatcher> {
                 && let Ok(path) = receiver.recv_timeout(BATCH_WINDOW)
             {
                 batch.insert(path);
+            }
+            if batch.iter().any(|path| crate::modsync::affects_mod_list(path)) {
+                let _ = mod_list.send(());
             }
             let _ = app.emit("fs-change", FsChange { paths: batch.into_iter().collect() });
         }

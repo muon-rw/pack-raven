@@ -25,6 +25,10 @@ const PARALLEL_DOWNLOADS: usize = 6;
 
 type FileSource = (u64, u64, String);
 
+pub fn affects_mod_list(relative: &str) -> bool {
+    relative == INSTANCE_JSON || FOLDERS.iter().any(|folder| relative.strip_prefix(folder).is_some_and(|rest| rest.starts_with('/')))
+}
+
 pub fn managed_files(root: &Path) -> Result<Vec<String>> {
     let tracked: HashSet<String> = git::tracked_files(root)?.into_iter().collect();
     let mut found = Vec::new();
@@ -71,25 +75,68 @@ impl Repo {
     }
 
     fn write_lock(&self, lock: &mut Lockfile, stage: bool) -> Result<()> {
-        lock.files.sort_by_key(|e| e.path.to_lowercase());
-        let mut text = String::from("{\n");
-        for (key, value) in [("minecraft", &lock.minecraft), ("loader", &lock.loader)] {
-            if let Some(value) = value.as_deref().filter(|v| !v.is_empty()) {
-                text += &format!("  \"{key}\": {},\n", serde_json::to_string(value)?);
-            }
+        let text = render_lock(lock)?;
+        // The watcher reports every write, so we skip identical ones to avoid a refresh loop.
+        if std::fs::read_to_string(self.root.join(LOCKFILE)).ok().as_deref() != Some(text.as_str()) {
+            std::fs::write(self.root.join(LOCKFILE), text)?;
         }
-        text += "  \"files\": [\n";
-        for (i, entry) in lock.files.iter().enumerate() {
-            let comma = if i + 1 < lock.files.len() { "," } else { "" };
-            text += &format!("    {}{comma}\n", spaced_json(entry)?);
-        }
-        text += "  ]\n}\n";
-        std::fs::write(self.root.join(LOCKFILE), text)?;
         if stage {
             git::run(&self.root, &["add", LOCKFILE])?;
         }
         Ok(())
     }
+
+    fn restoring_marker(&self) -> PathBuf {
+        self.state_dir.join("restoring")
+    }
+}
+
+fn render_lock(lock: &mut Lockfile) -> Result<String> {
+    lock.files.sort_by_key(|e| e.path.to_lowercase());
+    let mut text = String::from("{\n");
+    for (key, value) in [("minecraft", &lock.minecraft), ("loader", &lock.loader)] {
+        if let Some(value) = value.as_deref().filter(|v| !v.is_empty()) {
+            text += &format!("  \"{key}\": {},\n", serde_json::to_string(value)?);
+        }
+    }
+    text += "  \"files\": [\n";
+    for (i, entry) in lock.files.iter().enumerate() {
+        let comma = if i + 1 < lock.files.len() { "," } else { "" };
+        text += &format!("    {}{comma}\n", spaced_json(entry)?);
+    }
+    text += "  ]\n}\n";
+    Ok(text)
+}
+
+// We hold this while rewriting mods.lock.json or the mods folder, so the automatic mod list update
+// can't run in the middle of a pull, restore or publish.
+pub static MOD_LIST_GUARD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+const RESTORE_MARKER_MAX_AGE: Duration = Duration::from_secs(15 * 60);
+
+struct RestoringMarker(PathBuf);
+
+impl RestoringMarker {
+    fn create(repo: &Repo) -> Result<Self> {
+        std::fs::create_dir_all(&repo.state_dir)?;
+        std::fs::write(repo.restoring_marker(), std::process::id().to_string())?;
+        Ok(Self(repo.restoring_marker()))
+    }
+}
+
+impl Drop for RestoringMarker {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+// The git hooks restore in their own process, so packraven can't use MOD_LIST_GUARD to wait for them.
+// A marker older than RESTORE_MARKER_MAX_AGE belongs to a restore that crashed.
+pub fn restore_in_progress(dir: &Path) -> bool {
+    let Ok(repo) = Repo::open(dir) else { return false };
+    std::fs::metadata(repo.restoring_marker())
+        .and_then(|m| m.modified())
+        .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age < RESTORE_MARKER_MAX_AGE))
 }
 
 // Matches Python's json.dumps spacing, which earlier lockfiles used, so we don't rewrite every line.
@@ -297,77 +344,170 @@ pub async fn lock(dir: &Path, log: &Log) -> Result<()> {
     repo.write_lock(&mut lock, true)
 }
 
-// Unlike the pre-commit hook's lock, we leave mods.lock.json unstaged, so you review and stage it in Git.
-pub async fn update_mod_list(dir: &Path) -> Result<()> {
+// Unlike the pre-commit hook's lock, we leave mods.lock.json unstaged. We record every file we can
+// resolve and return the rest, so one unknown jar doesn't hold back the whole list.
+pub async fn refresh_mod_list(dir: &Path) -> Result<Vec<String>> {
     let repo = Repo::open(dir)?;
     let (mut lock, unknown) = build_lock(&repo).await?;
+    repo.write_lock(&mut lock, false)?;
+    Ok(unknown)
+}
+
+pub async fn update_mod_list(dir: &Path) -> Result<()> {
+    let unknown = refresh_mod_list(dir).await?;
     match unknown.len() {
-        0 => repo.write_lock(&mut lock, false),
-        1 => bail!("{} isn't on CurseForge, so the mod list can't record it. Add it to git directly, or remove it.", unknown[0]),
-        n => bail!("{n} files aren't on CurseForge, so the mod list can't record them. Add them to git directly, or remove them: {}", unknown.join(", ")),
+        0 => Ok(()),
+        1 => bail!("{} isn't on CurseForge, so the mod list can't record it. Commit it directly, or remove it.", unknown[0]),
+        n => bail!("{n} files aren't on CurseForge, so the mod list can't record them. Commit them directly, or remove them: {}", unknown.join(", ")),
     }
+}
+
+pub fn lock_at(dir: &Path, rev: &str) -> Result<Lockfile> {
+    git::show(dir, rev, LOCKFILE).map_or_else(|| Ok(Lockfile::default()), |text| Lockfile::parse(&text))
+}
+
+pub fn write_lock(dir: &Path, lock: &mut Lockfile) -> Result<()> {
+    Repo::open(dir)?.write_lock(lock, false)
+}
+
+pub fn track_directly(dir: &Path, paths: &[String]) -> Result<()> {
+    let mut args = vec!["add", "-f", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    git::run(dir, &args)?;
+    Ok(())
+}
+
+#[derive(Serialize, Default, Debug, PartialEq)]
+pub struct ModCounts {
+    pub added: usize,
+    pub updated: usize,
+    pub removed: usize,
+}
+
+impl ModCounts {
+    pub fn is_empty(&self) -> bool {
+        self.added + self.updated + self.removed == 0
+    }
+}
+
+pub fn mod_counts(from: &Lockfile, to: &Lockfile) -> ModCounts {
+    let keys = MergeKeys::new(&[from, to]);
+    let (before, after) = (keys.index(from), keys.index(to));
+    let mut counts = ModCounts::default();
+    for (key, entry) in &after {
+        match before.get(key) {
+            None => counts.added += 1,
+            Some(old) if old.sha1 != entry.sha1 => counts.updated += 1,
+            _ => {}
+        }
+    }
+    counts.removed = before.keys().filter(|key| !after.contains_key(*key)).count();
+    counts
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum Prefer {
+    Mine,
+    Theirs,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+pub struct ModConflict {
+    pub name: String,
+    pub mine: Option<String>,
+    pub theirs: Option<String>,
+}
+
+// We match entries by CurseForge project, so updating a mod on one side and leaving it alone on the
+// other merges cleanly even though the path changed. Packs can hold several files of one project
+// (resource pack variants, say), and those we match by path instead.
+struct MergeKeys {
+    by_path: HashSet<u64>,
+}
+
+impl MergeKeys {
+    fn new(locks: &[&Lockfile]) -> Self {
+        let mut by_path = HashSet::new();
+        for lock in locks {
+            let mut seen = HashSet::new();
+            for entry in &lock.files {
+                if entry.project_id == 0 || !seen.insert(entry.project_id) {
+                    by_path.insert(entry.project_id);
+                }
+            }
+        }
+        Self { by_path }
+    }
+
+    fn key(&self, entry: &LockEntry) -> String {
+        if self.by_path.contains(&entry.project_id) { format!("path:{}", entry.path) } else { format!("project:{}", entry.project_id) }
+    }
+
+    fn index<'a>(&self, lock: &'a Lockfile) -> HashMap<String, &'a LockEntry> {
+        lock.files.iter().map(|e| (self.key(e), e)).collect()
+    }
+}
+
+fn file_name(entry: Option<&LockEntry>) -> Option<String> {
+    entry.map(|e| e.path.rsplit('/').next().unwrap_or(&e.path).to_string())
+}
+
+fn merge_value(name: &str, base: &Option<String>, mine: &Option<String>, theirs: &Option<String>, prefer: Option<Prefer>, conflicts: &mut Vec<ModConflict>) -> Option<String> {
+    if mine == base || mine == theirs {
+        return theirs.clone();
+    }
+    if theirs == base {
+        return mine.clone();
+    }
+    match prefer {
+        Some(Prefer::Mine) => mine.clone(),
+        Some(Prefer::Theirs) => theirs.clone(),
+        None => {
+            conflicts.push(ModConflict { name: name.into(), mine: mine.clone(), theirs: theirs.clone() });
+            mine.clone()
+        }
+    }
+}
+
+/// Replays your mod changes since `base` onto `theirs`. Without `prefer`, a mod that both sides
+/// changed differently is a conflict.
+pub fn merge_locks(base: &Lockfile, mine: &Lockfile, theirs: &Lockfile, prefer: Option<Prefer>) -> std::result::Result<Lockfile, Vec<ModConflict>> {
+    let keys = MergeKeys::new(&[base, mine, theirs]);
+    let (base_files, mine_files, theirs_files) = (keys.index(base), keys.index(mine), keys.index(theirs));
+    let mut all: Vec<&String> = base_files.keys().chain(mine_files.keys()).chain(theirs_files.keys()).collect();
+    all.sort();
+    all.dedup();
+
+    let mut conflicts = Vec::new();
+    let mut files = Vec::new();
+    for key in all {
+        let (b, m, t) = (base_files.get(key).copied(), mine_files.get(key).copied(), theirs_files.get(key).copied());
+        let sha = |e: Option<&LockEntry>| e.map(|e| e.sha1.clone());
+        let chosen = if sha(m) == sha(b) || sha(m) == sha(t) {
+            t
+        } else if sha(t) == sha(b) {
+            m
+        } else {
+            match prefer {
+                Some(Prefer::Mine) => m,
+                Some(Prefer::Theirs) => t,
+                None => {
+                    let name = file_name(b.or(m).or(t)).unwrap_or_default();
+                    conflicts.push(ModConflict { name, mine: file_name(m), theirs: file_name(t) });
+                    m
+                }
+            }
+        };
+        files.extend(chosen.cloned());
+    }
+    let minecraft = merge_value("Minecraft version", &base.minecraft, &mine.minecraft, &theirs.minecraft, prefer, &mut conflicts);
+    let loader = merge_value("Mod loader", &base.loader, &mine.loader, &theirs.loader, prefer, &mut conflicts);
+    if conflicts.is_empty() { Ok(Lockfile { minecraft, loader, files }) } else { Err(conflicts) }
 }
 
 pub async fn folder_lock(dir: &Path) -> Result<Lockfile> {
     Ok(build_lock(&Repo::open(dir)?).await?.0)
-}
-
-#[derive(Serialize)]
-pub struct FolderUpdate {
-    pub from: String,
-    pub to: String,
-}
-
-#[derive(Serialize, Default)]
-pub struct FolderChanges {
-    pub updated: Vec<FolderUpdate>,
-    pub added: Vec<String>,
-    pub missing: Vec<String>,
-}
-
-impl FolderChanges {
-    pub fn is_empty(&self) -> bool {
-        self.updated.is_empty() && self.added.is_empty() && self.missing.is_empty()
-    }
-}
-
-// The shell polls this, so we compare sizes first and only hash the files that differ. We pair
-// those by CurseForge project, so an update reads as one change rather than a new file plus a
-// missing one.
-pub fn folder_changes(dir: &Path, lock: &Lockfile) -> Result<FolderChanges> {
-    let on_disk: HashMap<String, u64> =
-        managed_files(dir)?.into_iter().filter_map(|path| std::fs::metadata(dir.join(&path)).ok().map(|m| (path, m.len()))).collect();
-    let listed: HashSet<&str> = lock.files.iter().map(|e| e.path.as_str()).collect();
-    let mut changes = FolderChanges::default();
-    let mut gone: Vec<&LockEntry> = Vec::new();
-    for entry in lock.files.iter().filter(|e| on_disk.get(&e.path) != Some(&e.size)) {
-        if on_disk.contains_key(&entry.path) {
-            changes.updated.push(FolderUpdate { from: entry.path.clone(), to: entry.path.clone() });
-        } else {
-            gone.push(entry);
-        }
-    }
-    let mut unlisted: Vec<String> = on_disk.into_keys().filter(|p| !listed.contains(p.as_str())).collect();
-    unlisted.sort();
-    if !unlisted.is_empty() && !gone.is_empty() {
-        let repo = Repo::open(dir)?;
-        let mut hashes = HashCache::load(&repo);
-        let instance = read_instance(&repo.root);
-        let mut gone_by_project: HashMap<u64, String> = gone.iter().map(|e| (e.project_id, e.path.clone())).collect();
-        for path in std::mem::take(&mut unlisted) {
-            let project = instance.by_sha1.get(&hashes.sha1(&repo.root, &path)?).map(|source| source.0);
-            match project.and_then(|id| gone_by_project.remove(&id)) {
-                Some(from) => changes.updated.push(FolderUpdate { from, to: path }),
-                None => unlisted.push(path),
-            }
-        }
-        hashes.save()?;
-        gone.retain(|e| gone_by_project.contains_key(&e.project_id));
-    }
-    changes.added = unlisted;
-    changes.missing = gone.into_iter().map(|e| e.path.clone()).collect();
-    changes.updated.sort_by_key(|u| u.to.to_lowercase());
-    Ok(changes)
 }
 
 pub async fn adopt(dir: &Path, log: &Log) -> Result<Vec<String>> {
@@ -411,6 +551,7 @@ pub async fn restore(dir: &Path, log: &Log) -> Result<()> {
     if plan.missing.is_empty() && plan.extra.is_empty() {
         return hashes.save();
     }
+    let _marker = RestoringMarker::create(&repo)?;
     std::fs::create_dir_all(repo.cache_dir())?;
 
     for (path, sha1) in &plan.extra {
@@ -530,6 +671,67 @@ mod tests {
     fn lock_entries_keep_python_spacing() {
         let entry = LockEntry { path: "mods/a.jar".into(), project_id: 1, file_id: 2, sha1: "ab".into(), size: 3, url: "u".into() };
         assert_eq!(spaced_json(&entry).unwrap(), r#"{"path": "mods/a.jar", "projectId": 1, "fileId": 2, "sha1": "ab", "size": 3, "url": "u"}"#);
+    }
+
+    fn entry(path: &str, project_id: u64, sha1: &str) -> LockEntry {
+        LockEntry { path: path.into(), project_id, file_id: 0, sha1: sha1.into(), size: 0, url: String::new() }
+    }
+
+    fn lock_of(files: Vec<LockEntry>) -> Lockfile {
+        Lockfile { minecraft: Some("1.21.1".into()), loader: Some("neoforge-21.1.1".into()), files }
+    }
+
+    fn paths(lock: &Lockfile) -> Vec<&str> {
+        let mut paths: Vec<&str> = lock.files.iter().map(|e| e.path.as_str()).collect();
+        paths.sort();
+        paths
+    }
+
+    #[test]
+    fn merge_keeps_changes_from_both_sides() {
+        let base = lock_of(vec![entry("mods/a-1.jar", 1, "a1"), entry("mods/b.jar", 2, "b"), entry("mods/c.jar", 3, "c")]);
+        let mine = lock_of(vec![entry("mods/a-2.jar", 1, "a2"), entry("mods/b.jar", 2, "b"), entry("mods/c.jar", 3, "c"), entry("mods/d.jar", 4, "d")]);
+        let theirs = lock_of(vec![entry("mods/a-1.jar", 1, "a1"), entry("mods/c.jar", 3, "c"), entry("mods/e.jar", 5, "e")]);
+        let merged = merge_locks(&base, &mine, &theirs, None).unwrap();
+        assert_eq!(paths(&merged), ["mods/a-2.jar", "mods/c.jar", "mods/d.jar", "mods/e.jar"]);
+    }
+
+    #[test]
+    fn merge_reports_mods_both_sides_changed() {
+        let base = lock_of(vec![entry("mods/a-1.jar", 1, "a1")]);
+        let mine = lock_of(vec![entry("mods/a-2.jar", 1, "a2")]);
+        let theirs = lock_of(vec![entry("mods/a-3.jar", 1, "a3")]);
+        let conflicts = merge_locks(&base, &mine, &theirs, None).unwrap_err();
+        assert_eq!(conflicts, [ModConflict { name: "a-1.jar".into(), mine: Some("a-2.jar".into()), theirs: Some("a-3.jar".into()) }]);
+        assert_eq!(paths(&merge_locks(&base, &mine, &theirs, Some(Prefer::Theirs)).unwrap()), ["mods/a-3.jar"]);
+        assert_eq!(paths(&merge_locks(&base, &mine, &theirs, Some(Prefer::Mine)).unwrap()), ["mods/a-2.jar"]);
+    }
+
+    #[test]
+    fn merge_treats_removal_against_update_as_conflict() {
+        let base = lock_of(vec![entry("mods/a-1.jar", 1, "a1")]);
+        let mine = lock_of(vec![]);
+        let theirs = lock_of(vec![entry("mods/a-2.jar", 1, "a2")]);
+        let conflicts = merge_locks(&base, &mine, &theirs, None).unwrap_err();
+        assert_eq!(conflicts[0].mine, None);
+        assert_eq!(conflicts[0].theirs.as_deref(), Some("a-2.jar"));
+    }
+
+    #[test]
+    fn merge_matches_repeated_projects_by_path() {
+        let base = lock_of(vec![entry("resourcepacks/x-dark.zip", 7, "d"), entry("resourcepacks/x-light.zip", 7, "l")]);
+        let mine = lock_of(vec![entry("resourcepacks/x-dark.zip", 7, "d2"), entry("resourcepacks/x-light.zip", 7, "l")]);
+        let theirs = lock_of(vec![entry("resourcepacks/x-dark.zip", 7, "d"), entry("resourcepacks/x-light.zip", 7, "l2")]);
+        let merged = merge_locks(&base, &mine, &theirs, None).unwrap();
+        let shas: Vec<&str> = merged.files.iter().map(|e| e.sha1.as_str()).collect();
+        assert!(shas.contains(&"d2") && shas.contains(&"l2"));
+    }
+
+    #[test]
+    fn counts_incoming_changes_by_project() {
+        let from = lock_of(vec![entry("mods/a-1.jar", 1, "a1"), entry("mods/b.jar", 2, "b")]);
+        let to = lock_of(vec![entry("mods/a-2.jar", 1, "a2"), entry("mods/c.jar", 3, "c")]);
+        assert_eq!(mod_counts(&from, &to), ModCounts { added: 1, updated: 1, removed: 1 });
     }
 
     #[test]

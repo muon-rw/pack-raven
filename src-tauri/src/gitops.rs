@@ -1,11 +1,14 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use serde::Serialize;
 use tokio::process::Command;
 
-use crate::git;
+use crate::git::{self, Identity};
 use crate::jobs::Log;
+use crate::modsync::{self, ModConflict, ModCounts, Prefer};
+use crate::pack::LOCKFILE;
+use crate::remote;
 
 const MAX_DIFF_BYTES: usize = 400_000;
 
@@ -199,40 +202,224 @@ async fn git_logged(dir: &Path, args: &[&str], log: &Log) -> Result<()> {
     crate::process::run_logged(command, log).await
 }
 
-pub async fn commit(dir: &Path, message: &str, log: &Log) -> Result<String> {
+pub async fn commit(dir: &Path, message: &str, identity: &Identity, log: &Log) -> Result<String> {
     let message = message.trim();
     if message.is_empty() {
         bail!("Write a commit message first.");
     }
-    git_logged(dir, &["commit", "-m", message], log).await?;
+    let mut args = identity.config_args();
+    args.extend(["commit", "-m", message].map(String::from));
+    git_logged(dir, &args.iter().map(String::as_str).collect::<Vec<_>>(), log).await?;
     Ok(format!("Committed \"{}\"", message.lines().next().unwrap_or(message)))
 }
 
-pub async fn pull(dir: &Path, log: &Log) -> Result<String> {
-    git_logged(dir, &["pull", "--ff-only"], log).await.map_err(|e| {
-        e.context("git stopped the pull because the branches have diverged or you have conflicting local changes. Commit or discard your changes, then pull again.")
-    })?;
-    Ok("Pulled".into())
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullPreview {
+    pub incoming: ModCounts,
+    pub conflicts: Vec<ModConflict>,
+}
+
+fn has_lock_changes(dir: &Path) -> bool {
+    git::changed_files(dir).iter().any(|path| path == LOCKFILE)
+}
+
+pub async fn pull_preview(dir: &Path) -> Result<PullPreview> {
+    let fetch_dir = dir.to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || remote::run(&fetch_dir, &["fetch"])).await??;
+    let base = modsync::lock_at(dir, "HEAD")?;
+    let theirs = modsync::lock_at(dir, "@{upstream}")?;
+    let mine = modsync::folder_lock(dir).await?;
+    let conflicts = if modsync::mod_counts(&base, &mine).is_empty() { Vec::new() } else { modsync::merge_locks(&base, &mine, &theirs, None).err().unwrap_or_default() };
+    Ok(PullPreview { incoming: modsync::mod_counts(&base, &theirs), conflicts })
+}
+
+fn conflict_message(conflicts: &[ModConflict]) -> String {
+    let names: Vec<&str> = conflicts.iter().map(|c| c.name.as_str()).collect();
+    format!("You and the remote both changed {}. Choose whose versions to keep, then pull again.", names.join(", "))
+}
+
+// git's own merge would treat mods.lock.json as text and stop on any nearby edit, so we merge it by
+// mod: we set your mod list aside, pull, then replay your mod changes onto the one you pulled.
+pub async fn pull(dir: &Path, prefer: Option<Prefer>, log: &Log) -> Result<String> {
+    let _guard = modsync::MOD_LIST_GUARD.lock().await;
+    modsync::update_mod_list(dir).await.context("packraven can't pull until the mod list records every mod")?;
+    remote::run_logged(dir, &["fetch"], log).await?;
+
+    let lock_path = dir.join(LOCKFILE);
+    let mine_text = has_lock_changes(dir).then(|| std::fs::read_to_string(&lock_path)).transpose()?;
+    let merged = match &mine_text {
+        Some(text) => {
+            let mine = crate::pack::Lockfile::parse(text)?;
+            let merged = modsync::merge_locks(&modsync::lock_at(dir, "HEAD")?, &mine, &modsync::lock_at(dir, "@{upstream}")?, prefer)
+                .map_err(|conflicts| anyhow!(conflict_message(&conflicts)))?;
+            git::run(dir, &["checkout", "HEAD", "--", LOCKFILE])?;
+            Some(merged)
+        }
+        None => None,
+    };
+
+    // We restore the mods ourselves once the merged list is in place, so the post-merge hook must not
+    // restore the pulled list first and set your new mods aside.
+    let no_hooks = PathBuf::from(git::run(dir, &["rev-parse", "--absolute-git-dir"])?.trim()).join("modsync").join("no-hooks");
+    std::fs::create_dir_all(&no_hooks)?;
+    let hooks_path = format!("core.hooksPath={}", no_hooks.to_string_lossy());
+    if let Err(error) = remote::run_logged(dir, &["-c", &hooks_path, "pull", "--ff-only"], log).await {
+        if let Some(text) = &mine_text {
+            std::fs::write(&lock_path, text)?;
+        }
+        if remote::is_explained(&error) {
+            return Err(error);
+        }
+        return Err(error.context("git stopped the pull because the branches have diverged or you have conflicting local changes. Commit or discard your changes, then pull again."));
+    }
+    if let Some(mut merged) = merged {
+        modsync::write_lock(dir, &mut merged)?;
+        log.info("Replayed your mod changes onto the pulled mod list");
+    }
+    modsync::restore(dir, log).await?;
+    Ok(if mine_text.is_some() { "Pulled and kept your mod changes".into() } else { "Pulled".into() })
 }
 
 pub async fn push(dir: &Path, log: &Log) -> Result<String> {
     let has_upstream = git::run(dir, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_ok();
     if has_upstream {
-        git_logged(dir, &["push", "--follow-tags"], log).await?;
+        remote::run_logged(dir, &["push", "--follow-tags"], log).await?;
     } else {
-        git_logged(dir, &["push", "--follow-tags", "-u", "origin", "HEAD"], log).await?;
+        remote::run_logged(dir, &["push", "--follow-tags", "-u", "origin", "HEAD"], log).await?;
     }
     Ok("Pushed".into())
 }
 
 pub async fn fetch(dir: &Path, log: &Log) -> Result<String> {
-    git_logged(dir, &["fetch", "--prune"], log).await?;
+    remote::run_logged(dir, &["fetch", "--prune"], log).await?;
     Ok("Fetched".into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::ignore_pattern;
+    use super::*;
+    use sha1::{Digest, Sha1};
+
+    const ADDONS: [(&str, u64, u64); 5] = [("base", 1, 10), ("shared-1", 2, 20), ("shared-2", 2, 21), ("theirs", 3, 30), ("mine", 4, 40)];
+
+    fn sha1(content: &str) -> String {
+        hex::encode(Sha1::digest(content.as_bytes()))
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let mut all = vec!["-c", "user.name=Test", "-c", "user.email=test@example.com"];
+        all.extend(args);
+        git::run(dir, &all).unwrap();
+    }
+
+    fn put_mod(dir: &Path, name: &str) {
+        std::fs::write(dir.join("mods").join(format!("{name}.jar")), name).unwrap();
+    }
+
+    fn cache_mod(dir: &Path, name: &str) {
+        let cache = dir.join(".git/modsync/cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join(sha1(name)), name).unwrap();
+    }
+
+    fn mod_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir.join("mods")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    fn write_instance(dir: &Path) {
+        let addons: Vec<_> = ADDONS
+            .iter()
+            .map(|(name, project, file)| serde_json::json!({ "addonID": project, "installedFile": { "id": file, "fileName": format!("{name}.jar"), "downloadUrl": "http://127.0.0.1:9/unreachable", "hashes": [{ "type": 1, "value": sha1(name) }] } }))
+            .collect();
+        let instance = serde_json::json!({ "gameVersion": "1.21.1", "baseModLoader": { "name": "neoforge-21.1.1" }, "installedAddons": addons });
+        std::fs::write(dir.join("minecraftinstance.json"), instance.to_string()).unwrap();
+    }
+
+    fn commit_mods(dir: &Path, runtime: &tokio::runtime::Runtime, message: &str) {
+        runtime.block_on(modsync::update_mod_list(dir)).unwrap();
+        git(dir, &["add", "-A"]);
+        git(dir, &["commit", "-m", message]);
+        git(dir, &["push", "-u", "origin", "HEAD"]);
+    }
+
+    // Two clones of one pack: "they" update a mod and add one, while "you" add a mod without committing.
+    fn diverged_clones(name: &str) -> (PathBuf, PathBuf, tokio::runtime::Runtime) {
+        let root = std::env::temp_dir().join(format!("packraven-pull-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        git(&root, &["init", "-q", "--bare", "origin.git"]);
+        git(&root, &["clone", "-q", "origin.git", "theirs"]);
+        let theirs = root.join("theirs");
+        std::fs::create_dir_all(theirs.join("mods")).unwrap();
+        std::fs::write(theirs.join(".gitignore"), "mods/*.jar\nminecraftinstance.json\n").unwrap();
+        write_instance(&theirs);
+        put_mod(&theirs, "base");
+        put_mod(&theirs, "shared-1");
+        commit_mods(&theirs, &runtime, "Initial");
+
+        git(&root, &["clone", "-q", "origin.git", "mine"]);
+        let mine = root.join("mine");
+        std::fs::create_dir_all(mine.join("mods")).unwrap();
+        write_instance(&mine);
+        put_mod(&mine, "base");
+        put_mod(&mine, "shared-1");
+
+        std::fs::remove_file(theirs.join("mods/shared-1.jar")).unwrap();
+        put_mod(&theirs, "shared-2");
+        put_mod(&theirs, "theirs");
+        commit_mods(&theirs, &runtime, "Update shared, add theirs");
+
+        // packraven can't download in a test, so we place what the pull needs in the cache.
+        cache_mod(&mine, "shared-2");
+        cache_mod(&mine, "theirs");
+        (theirs, mine, runtime)
+    }
+
+    #[test]
+    fn pull_keeps_your_uncommitted_mods() {
+        let (_theirs, mine, runtime) = diverged_clones("keeps");
+        put_mod(&mine, "mine");
+        runtime.block_on(modsync::update_mod_list(&mine)).unwrap();
+
+        let message = runtime.block_on(pull(&mine, None, &Log::console("pull"))).unwrap();
+        assert_eq!(message, "Pulled and kept your mod changes");
+        assert_eq!(mod_names(&mine), ["base.jar", "mine.jar", "shared-2.jar", "theirs.jar"]);
+        let lock = crate::pack::Lockfile::parse(&std::fs::read_to_string(mine.join(LOCKFILE)).unwrap()).unwrap();
+        let mut paths: Vec<&str> = lock.files.iter().map(|e| e.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, ["mods/base.jar", "mods/mine.jar", "mods/shared-2.jar", "mods/theirs.jar"]);
+        assert_eq!(git::ahead_behind(&mine), Some((0, 0)));
+    }
+
+    #[test]
+    fn pull_without_local_mod_changes_restores_theirs() {
+        let (_theirs, mine, runtime) = diverged_clones("plain");
+        let message = runtime.block_on(pull(&mine, None, &Log::console("pull"))).unwrap();
+        assert_eq!(message, "Pulled");
+        assert_eq!(mod_names(&mine), ["base.jar", "shared-2.jar", "theirs.jar"]);
+        assert!(git::changed_files(&mine).is_empty());
+    }
+
+    #[test]
+    fn pull_stops_on_a_mod_both_sides_changed() {
+        let (_theirs, mine, runtime) = diverged_clones("conflict");
+        std::fs::remove_file(mine.join("mods/shared-1.jar")).unwrap();
+        runtime.block_on(modsync::update_mod_list(&mine)).unwrap();
+        let before = std::fs::read_to_string(mine.join(LOCKFILE)).unwrap();
+
+        let error = runtime.block_on(pull(&mine, None, &Log::console("pull"))).unwrap_err();
+        assert!(format!("{error:#}").contains("You and the remote both changed shared-1.jar"), "{error:#}");
+        assert_eq!(std::fs::read_to_string(mine.join(LOCKFILE)).unwrap(), before);
+        assert_eq!(git::ahead_behind(&mine), Some((0, 1)));
+
+        runtime.block_on(pull(&mine, Some(Prefer::Theirs), &Log::console("pull"))).unwrap();
+        assert_eq!(mod_names(&mine), ["base.jar", "shared-2.jar", "theirs.jar"]);
+    }
 
     #[test]
     fn anchors_and_escapes_ignore_patterns() {

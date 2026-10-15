@@ -9,6 +9,8 @@ export interface Settings {
   defenderDismissed: boolean
   editorAskMb: number
   editorMaxMb: number
+  gitName: string
+  gitEmail: string
 }
 
 export interface PackConfig {
@@ -27,10 +29,12 @@ export interface Overview {
   loader: string | null
   lockCount: number
   addons: { mods: number; resourcePacks: number; shaderPacks: number; dataPacks: number; other: number }
-  folder: FolderChanges
+  notOnCurseforge: string[]
+  modListError: string | null
   branch: string | null
   ahead: number
   behind: number
+  incoming: ModCounts | null
   changed: string[]
   lastTag: string | null
   devJars: string[]
@@ -42,11 +46,24 @@ export interface Overview {
   hooks: HooksState
 }
 
-export interface FolderChanges {
-  updated: { from: string; to: string }[]
-  added: string[]
-  missing: string[]
+export interface ModCounts {
+  added: number
+  updated: number
+  removed: number
 }
+
+export interface ModConflict {
+  name: string
+  mine: string | null
+  theirs: string | null
+}
+
+export interface PullPreview {
+  incoming: ModCounts
+  conflicts: ModConflict[]
+}
+
+export type Prefer = 'mine' | 'theirs'
 
 export interface ModChange {
   name: string
@@ -211,7 +228,7 @@ export interface DefenderView {
   prompt: boolean
 }
 
-export type Credential = 'download' | 'upload'
+export type Credential = 'download' | 'upload' | 'github'
 export type CredentialSource = { kind: 'none' } | { kind: 'stored' } | { kind: 'env'; name: string }
 
 export interface CredentialStatus {
@@ -222,6 +239,7 @@ export interface CredentialStatus {
 export interface CredentialsView {
   download: CredentialStatus
   upload: CredentialStatus
+  github: CredentialStatus
   keychain: string
 }
 
@@ -232,6 +250,7 @@ export const api = {
   credentialStore: (credential: Credential, secret: string) => invoke<void>('credential_store', { credential, secret }),
   credentialUseEnv: (credential: Credential, name: string) => invoke<void>('credential_use_env', { credential, name }),
   credentialClear: (credential: Credential) => invoke<void>('credential_clear', { credential }),
+  githubIdentity: () => invoke<{ name: string; email: string }>('github_identity'),
   envVarNames: () => invoke<string[]>('env_var_names'),
   setIconTheme: (dark: boolean) => invoke<void>('set_icon_theme', { dark }),
   getPackJava: () => invoke<string | null>('get_pack_java'),
@@ -280,7 +299,8 @@ export const api = {
   gitIgnore: (paths: string[]) => invoke<string[]>('git_ignore', { paths }),
   gitDiscard: (tracked: string[], untracked: string[]) => invoke<void>('git_discard', { tracked, untracked }),
   gitCommit: (message: string) => invoke<void>('git_commit', { message }),
-  gitSync: (action: 'fetch' | 'pull' | 'push') => invoke<void>('git_sync', { action }),
+  gitSync: (action: 'fetch' | 'pull' | 'push', prefer: Prefer | null = null) => invoke<void>('git_sync', { action, prefer }),
+  gitPullPreview: () => invoke<PullPreview>('git_pull_preview'),
   listPacks: () => invoke<PackList>('list_packs'),
   discoverInstances: (root?: string) => invoke<InstanceInfo[]>('discover_instances', { root: root ?? null }),
   inspectInstance: (dir: string) => invoke<InstanceInfo>('inspect_instance', { dir }),
@@ -298,8 +318,8 @@ export const api = {
   changelogPreview: () => invoke<{ diff: ModDiff; markdown: string }>('changelog_preview'),
   setCompareBaseline: (zip: string) => invoke<void>('set_compare_baseline', { zip }),
   clearCompareBaseline: () => invoke<void>('clear_compare_baseline'),
-  updateModList: () => invoke<void>('update_mod_list'),
-  restoreMods: () => invoke<void>('restore_mods'),
+  trackDirectly: (paths: string[]) => invoke<void>('track_directly', { paths }),
+  revertMods: () => invoke<void>('revert_mods'),
   serverSides: () => invoke<ModSide[]>('server_sides'),
   setSideOverride: (projectId: number, mode: Override) => invoke<void>('set_side_override', { projectId, mode }),
   publishPreflight: (version: string) => invoke<string[]>('publish_preflight', { version }),
@@ -309,7 +329,7 @@ export const api = {
   startClient: (join: boolean) => invoke<void>('start_client', { join }),
   serverCommand: (line: string) => invoke<void>('server_command', { line }),
   killProcess: (which: 'server' | 'client') => invoke<void>('kill_process', { which }),
-  publish: (version: string, push: boolean) => invoke<void>('publish', { options: { version, push } }),
+  publish: (version: string, message: string, push: boolean) => invoke<void>('publish', { options: { version, message, push } }),
   releases: () => invoke<ReleaseStatus[]>('releases'),
   outputDir: () => invoke<string>('output_dir'),
 }

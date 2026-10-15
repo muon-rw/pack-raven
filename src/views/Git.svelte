@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
-  import { api, errorText, type FileChange, type GitCommit, type GitDiff, type GitStatus } from '../lib/api'
+  import { api, errorText, type FileChange, type GitCommit, type GitDiff, type GitStatus, type ModConflict, type Prefer } from '../lib/api'
   import { job, onJobEnd } from '../lib/jobs.svelte'
   import { nav, showInFiles } from '../lib/nav.svelte'
   import { addToGitignore, confirmDiscard, discardChanges } from '../lib/gitActions'
@@ -10,6 +10,7 @@
   import ContextMenu from '../components/ContextMenu.svelte'
   import Notice from '../components/Notice.svelte'
   import LogView from '../components/LogView.svelte'
+  import LinkedText from '../components/LinkedText.svelte'
 
   let { onchange }: { onchange: () => void } = $props()
 
@@ -26,6 +27,8 @@
   let lastAction = $state<string | null>(null)
   let notice = $state<string | null>(null)
   let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  let conflicts = $state<ModConflict[] | null>(null)
+  let checkingPull = $state(false)
 
   const statusNames: Record<string, string> = {
     M: 'Modified',
@@ -198,9 +201,35 @@
     await run(() => api.gitCommit(message))
   }
 
-  async function sync(action: 'fetch' | 'pull' | 'push') {
+  async function sync(action: 'fetch' | 'push') {
     lastAction = action
     await run(() => api.gitSync(action))
+  }
+
+  // We fetch and merge the mod lists first, so you choose between conflicting mods before git changes anything.
+  async function pull() {
+    lastAction = 'pull'
+    conflicts = null
+    checkingPull = true
+    try {
+      error = null
+      const preview = await api.gitPullPreview()
+      if (preview.conflicts.length) {
+        conflicts = preview.conflicts
+        return
+      }
+    } catch (e) {
+      error = `Couldn't check the remote: ${errorText(e)}`
+      return
+    } finally {
+      checkingPull = false
+    }
+    await run(() => api.gitSync('pull'))
+  }
+
+  async function pullPreferring(prefer: Prefer) {
+    conflicts = null
+    await run(() => api.gitSync('pull', prefer))
   }
 
   function split(path: string) {
@@ -216,7 +245,7 @@
     return ''
   }
 
-  let busy = $derived(job('git').phase === 'running')
+  let busy = $derived(job('git').phase === 'running' || checkingPull)
   let canCommit = $derived(!busy && !!status?.staged.length && message.trim().length > 0)
   let commitHint = $derived(
     !status?.staged.length
@@ -279,7 +308,7 @@
     </div>
     <div class="sync">
       <button disabled={busy || !status?.hasRemote} onclick={() => sync('fetch')} class:busy={busy && lastAction === 'fetch'}>Fetch</button>
-      <button disabled={busy || !status?.upstream} onclick={() => sync('pull')} class:busy={busy && lastAction === 'pull'} class:primary={!!status?.behind}>Pull</button>
+      <button disabled={busy || !status?.upstream} onclick={pull} class:busy={busy && lastAction === 'pull'} class:primary={!!status?.behind}>Pull</button>
       <button disabled={busy || !status?.hasRemote || !status?.hasCommits} onclick={() => sync('push')} class:busy={busy && lastAction === 'push'} class:primary={!!status?.ahead && !status?.behind}>Push</button>
     </div>
   </header>
@@ -308,7 +337,33 @@
     {#if error}<Notice tone="error"><p>{error}</p></Notice>{/if}
     {#if loadError}<Notice tone="error"><p>Couldn't read the repository: {loadError}</p></Notice>{/if}
     {#if notice}<Notice tone="warn"><p>{notice}</p></Notice>{/if}
-    {#if gitJob.phase === 'failed'}<Notice tone="error"><p>{gitJob.message}</p></Notice>{/if}
+    {#if gitJob.phase === 'failed'}<Notice tone="error"><p><LinkedText text={gitJob.message ?? ''} /></p></Notice>{/if}
+    {#if conflicts}
+      <Notice tone="warn">
+        <div class="conflicts">
+          <p>
+            You and the remote both changed {conflicts.length === 1 ? 'this mod' : `these ${conflicts.length} mods`}. Choose whose versions to keep; packraven
+            keeps every other change from both sides.
+          </p>
+          <ul class="conflict-list">
+            {#each conflicts as conflict (conflict.name)}
+              <li>
+                <span class="file">{conflict.name}</span>
+                <dl>
+                  <dt>Yours</dt><dd class:file={!!conflict.mine}>{conflict.mine ?? 'Removed'}</dd>
+                  <dt>Theirs</dt><dd class:file={!!conflict.theirs}>{conflict.theirs ?? 'Removed'}</dd>
+                </dl>
+              </li>
+            {/each}
+          </ul>
+          <div class="conflict-actions">
+            <button onclick={() => pullPreferring('theirs')}>Pull, keeping theirs</button>
+            <button onclick={() => pullPreferring('mine')}>Pull, keeping mine</button>
+            <button class="quiet" onclick={() => (conflicts = null)}>Cancel</button>
+          </div>
+        </div>
+      </Notice>
+    {/if}
     {#if status?.conflicted.length}
       <Notice tone="warn"><p>{status.conflicted.length === 1 ? '1 file has a merge conflict' : `${status.conflicted.length} files have merge conflicts`}. Resolve them in an editor, then stage them.</p></Notice>
     {/if}
@@ -337,7 +392,7 @@
       {#if status?.unstaged.length}
         <ul class="changes">{#each status.unstaged as change (change.path)}{@render changeRow(change, false)}{/each}</ul>
       {:else if status}
-        <p class="muted small empty">No unstaged changes. Config edits show up here. Mod changes show up as mods.lock.json once you update the mod list in Changes.</p>
+        <p class="muted small empty">No unstaged changes. Config edits show up here, and packraven records mod changes in mods.lock.json.</p>
       {/if}
     </section>
 
@@ -400,6 +455,42 @@
 {/if}
 
 <style>
+  .conflicts {
+    display: grid;
+    gap: 10px;
+  }
+
+  .conflict-list {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    overflow-wrap: anywhere;
+  }
+
+  .conflict-list dl {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0 10px;
+    margin: 2px 0 0;
+    font-size: var(--step--1);
+  }
+
+  .conflict-list dt {
+    color: var(--muted);
+  }
+
+  .conflict-list dd {
+    margin: 0;
+  }
+
+  .conflict-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
   .git {
     display: flex;
     flex-direction: column;

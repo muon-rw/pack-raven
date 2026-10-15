@@ -22,6 +22,7 @@ mod jobs;
 mod launch;
 mod logs;
 mod mirror;
+mod mod_list;
 mod modrinth;
 mod modsync;
 mod nbt;
@@ -30,6 +31,7 @@ mod pack;
 mod pack_commands;
 mod process;
 mod publish;
+mod remote;
 mod settings;
 mod setup;
 mod sides;
@@ -114,6 +116,7 @@ pub fn run() {
                 test: Arc::new(testrun::TestRun::default()),
                 watcher: Mutex::new(None),
                 history: Mutex::default(),
+                mod_list: Mutex::default(),
             });
             app.state::<AppState>().rewatch(app.handle());
             announcer::start(app.handle().clone());
@@ -161,8 +164,9 @@ pub fn run() {
             commands::changelog_preview,
             commands::set_compare_baseline,
             commands::clear_compare_baseline,
-            commands::update_mod_list,
-            commands::restore_mods,
+            commands::track_directly,
+            commands::revert_mods,
+            git_commands::git_pull_preview,
             commands::server_sides,
             commands::set_side_override,
             commands::publish_preflight,
@@ -228,6 +232,7 @@ pub fn run() {
             system_commands::credential_store,
             system_commands::credential_use_env,
             system_commands::credential_clear,
+            system_commands::github_identity,
             system_commands::env_var_names,
             system_commands::set_icon_theme,
             discord_commands::get_webhook,

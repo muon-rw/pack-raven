@@ -9,7 +9,8 @@ use crate::curseforge;
 use crate::export;
 use crate::git;
 use crate::jobs::Log;
-use crate::pack::{Pack, CHANGELOG, CHANGELOG_ARCHIVE, CONFIG_FILE, LOCKFILE};
+use crate::git::Identity;
+use crate::pack::{Pack, CHANGELOG_ARCHIVE};
 use crate::sides::{self, MetadataCache};
 use crate::modsync;
 
@@ -31,6 +32,7 @@ pub struct Release {
 #[serde(rename_all = "camelCase")]
 pub struct PublishOptions {
     pub version: String,
+    pub message: String,
     pub push: bool,
 }
 
@@ -43,7 +45,7 @@ pub fn save_releases(path: &Path, releases: &[Release]) -> Result<()> {
     Ok(())
 }
 
-pub fn preflight(pack: &Pack, version: &str) -> Vec<String> {
+pub fn preflight(pack: &Pack, version: &str, not_on_curseforge: &[String], identity: &Identity) -> Vec<String> {
     let mut problems = Vec::new();
     if pack.config.curseforge.project_id == 0 {
         problems.push("Set the CurseForge project ID in Pack settings.".into());
@@ -59,16 +61,14 @@ pub fn preflight(pack: &Pack, version: &str) -> Vec<String> {
     } else if git::run(&pack.dir, &["rev-parse", "-q", "--verify", &format!("refs/tags/v{version}")]).is_ok() {
         problems.push(format!("You already released {version} (tag v{version} exists)."));
     }
-    match modsync::folder_changes(&pack.dir, &pack.lock) {
-        Ok(changes) if !changes.is_empty() => problems.push(
-            "Your mods folder doesn't match the mod list. In Changes, update the mod list or restore the mods, then commit mods.lock.json.".into(),
-        ),
-        Err(error) => problems.push(format!("Couldn't compare the mods folder with the mod list: {error:#}")),
-        _ => {}
+    match not_on_curseforge {
+        [] => {}
+        [path] => problems.push(format!("{path} isn't on CurseForge. In Changes, commit it directly or remove it.")),
+        paths => problems.push(format!("{} files aren't on CurseForge. In Changes, commit them directly or remove them.", paths.len())),
     }
-    // The release commit only stages its own files, so we make sure the tag records the mod list that ships.
-    if git::changed_files(&pack.dir).iter().any(|path| path == LOCKFILE) {
-        problems.push("mods.lock.json has changes you haven't committed. Commit it in Git first, so the release tag records the mods that ship.".into());
+    // The commit comes after the upload, which you can't take back, so we check git can make it first.
+    if !identity.is_usable(&pack.dir) {
+        problems.push("Set your commit name and email in App settings.".into());
     }
     match export::unallowed_override_jars(pack) {
         Ok(jars) if !jars.is_empty() => problems.push(format!(
@@ -83,6 +83,7 @@ pub fn preflight(pack: &Pack, version: &str) -> Vec<String> {
 
 pub struct PublishContext {
     pub pack: Pack,
+    pub identity: Identity,
     pub java: PathBuf,
     pub data_dir: PathBuf,
     pub pack_data: PathBuf,
@@ -91,12 +92,15 @@ pub struct PublishContext {
 }
 
 pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> Result<String> {
-    let PublishContext { pack, java, data_dir, pack_data, cache_path, announce } = ctx;
+    let PublishContext { pack, identity, java, data_dir, pack_data, cache_path, announce } = ctx;
     let version = options.version.trim().to_string();
-    let problems = preflight(&pack, &version);
+    let _guard = modsync::MOD_LIST_GUARD.lock().await;
+    let unknown = modsync::refresh_mod_list(&pack.dir).await?;
+    let problems = preflight(&pack, &version, &unknown, &identity);
     if !problems.is_empty() {
         bail!("{}", problems.join("\n"));
     }
+    let pack = Pack::open(&pack.dir)?;
     let project_id = pack.config.curseforge.project_id;
 
     pack.set_version(&version)?;
@@ -156,19 +160,20 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
     std::fs::write(archive.join(format!("{version}.md")), &notes)?;
     changelog::write_notes(&pack, "")?;
     let _ = std::fs::remove_file(&baseline_path);
-    let archived = format!("{CHANGELOG_ARCHIVE}/{version}.md");
-    let mut paths = vec!["config/bcc-common.toml", CHANGELOG, archived.as_str()];
-    if pack.dir.join(CONFIG_FILE).exists() {
-        paths.push(CONFIG_FILE);
+    // packraven built the packs from disk, so we commit everything, and the tag records what shipped.
+    git::run(&pack.dir, &["add", "-A"])?;
+    let message = Some(options.message.trim()).filter(|m| !m.is_empty()).map_or_else(|| format!("Release {version}"), String::from);
+    let tag = format!("v{version}");
+    for command in [&["commit", "--allow-empty", "-m", &message][..], &["tag", "-a", &tag, "-m", &message]] {
+        let mut args = identity.config_args();
+        args.extend(command.iter().map(|a| a.to_string()));
+        git::run(&pack.dir, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
     }
-    let mut add = vec!["add", "--"];
-    add.extend(paths);
-    git::run(&pack.dir, &add)?;
-    git::run(&pack.dir, &["commit", "-m", &format!("Release {version}")])?;
-    git::run(&pack.dir, &["tag", "-a", &format!("v{version}"), "-m", &format!("Release {version}")])?;
-    log.info(format!("Committed and tagged v{version}"));
+    log.info(format!("Committed \"{message}\" and tagged v{version}"));
     if options.push {
-        git::run(&pack.dir, &["push", "--follow-tags"])?;
+        crate::gitops::push(&pack.dir, &log)
+            .await
+            .with_context(|| format!("packraven published {version} and tagged v{version}, but couldn't push. Once you've fixed this, push from Git"))?;
         log.info("Pushed the release commit and tag");
     }
     Ok(format!("Published {version}: pack file {file_id}, server pack {server_file_id}"))

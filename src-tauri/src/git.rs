@@ -89,3 +89,29 @@ pub fn ahead_behind(dir: &Path) -> Option<(u32, u32)> {
     let mut parts = out.split_whitespace().filter_map(|p| p.parse().ok());
     Some((parts.next()?, parts.next()?))
 }
+
+#[derive(Default, Clone)]
+pub struct Identity {
+    pub name: String,
+    pub email: String,
+}
+
+impl Identity {
+    // user.* sets both the author and the committer, and git config fills in any part left empty.
+    pub fn config_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
+        for (key, value) in [("user.name", &self.name), ("user.email", &self.email)] {
+            if !value.trim().is_empty() {
+                args.push("-c".into());
+                args.push(format!("{key}={}", value.trim()));
+            }
+        }
+        args
+    }
+
+    pub fn is_usable(&self, dir: &Path) -> bool {
+        let mut args = self.config_args();
+        args.extend(["var", "GIT_COMMITTER_IDENT"].map(String::from));
+        run(dir, &args.iter().map(String::as_str).collect::<Vec<_>>()).is_ok()
+    }
+}

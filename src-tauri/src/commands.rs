@@ -16,7 +16,7 @@ use crate::pack::{Pack, PackConfig};
 use crate::publish::{self, PublishContext, PublishOptions};
 use crate::settings::Settings;
 use crate::sides::{self, MetadataCache, ModSide};
-use crate::modsync::{self, FolderChanges};
+use crate::modsync::{self, ModCounts};
 use crate::testrun::{self, TestRun};
 
 pub struct AppState {
@@ -27,6 +27,7 @@ pub struct AppState {
     pub test: Arc<TestRun>,
     pub watcher: Mutex<Option<crate::watcher::PackWatcher>>,
     pub history: Mutex<crate::history::History>,
+    pub mod_list: Mutex<crate::mod_list::ModListState>,
 }
 
 impl AppState {
@@ -106,10 +107,12 @@ pub struct Overview {
     loader: Option<String>,
     lock_count: usize,
     addons: AddonCounts,
-    folder: FolderChanges,
+    not_on_curseforge: Vec<String>,
+    mod_list_error: Option<String>,
     branch: Option<String>,
     ahead: u32,
     behind: u32,
+    incoming: Option<ModCounts>,
     changed: Vec<String>,
     last_tag: Option<String>,
     dev_jars: Vec<String>,
@@ -146,12 +149,16 @@ fn addon_counts(pack: &Pack) -> AddonCounts {
     counts
 }
 
-// The shell polls this every few seconds, and it runs git and hashes the mods folder, so we
-// keep it off the main thread.
+fn incoming_mods(dir: &std::path::Path) -> Option<ModCounts> {
+    Some(modsync::mod_counts(&modsync::lock_at(dir, "HEAD").ok()?, &modsync::lock_at(dir, "@{upstream}").ok()?))
+}
+
+// The shell polls this every few seconds, and it runs git, so we keep it off the main thread.
 #[tauri::command(async)]
 pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
     let pack = state.pack().map_err(err)?;
-    let folder = modsync::folder_changes(&pack.dir, &pack.lock).map_err(err)?;
+    let mod_list = state.mod_list.lock().unwrap().clone();
+    let mod_list = if crate::setup::same_dir(&mod_list.dir, &pack.dir) { mod_list } else { Default::default() };
     let (ahead, behind) = git::ahead_behind(&pack.dir).unwrap_or((0, 0));
     Ok(Overview {
         name: pack.name(),
@@ -160,10 +167,12 @@ pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
         loader: pack.lock.loader.clone(),
         lock_count: pack.lock.files.len(),
         addons: addon_counts(&pack),
-        folder,
+        not_on_curseforge: mod_list.not_on_curseforge,
+        mod_list_error: mod_list.error,
         branch: git::branch(&pack.dir),
         ahead,
         behind,
+        incoming: if behind > 0 { incoming_mods(&pack.dir) } else { None },
         changed: git::changed_files(&pack.dir),
         last_tag: git::last_release_tag(&pack.dir),
         dev_jars: export::local_dev_jars(&pack),
@@ -224,19 +233,26 @@ pub async fn changelog_preview(state: State<'_, AppState>) -> CmdResult<Changelo
 }
 
 #[tauri::command]
-pub async fn update_mod_list(state: State<'_, AppState>) -> CmdResult<()> {
+pub async fn track_directly(app: AppHandle, state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<()> {
     let dir = state.settings().instance_dir;
-    modsync::update_mod_list(&dir).await.map_err(err)
+    modsync::track_directly(&dir, &paths).map_err(err)?;
+    crate::mod_list::refresh_now(&app, &dir).await;
+    Ok(())
 }
 
 #[tauri::command]
-pub fn restore_mods(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+pub fn revert_mods(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let dir = state.settings().instance_dir;
     // The restore future borrows lock entries across its download stream, which the compiler can't
     // prove Send, so we drive it on a blocking thread the way the git hook's CLI does.
     state.jobs.start(&app, "restore", move |log| async move {
-        tauri::async_runtime::spawn_blocking(move || tauri::async_runtime::block_on(modsync::restore(&dir, &log))).await??;
-        Ok("The mods folder matches the mod list again.".into())
+        tauri::async_runtime::spawn_blocking(move || {
+            let _guard = modsync::MOD_LIST_GUARD.blocking_lock();
+            git::run(&dir, &["checkout", "HEAD", "--", crate::pack::LOCKFILE])?;
+            tauri::async_runtime::block_on(modsync::restore(&dir, &log))
+        })
+        .await??;
+        Ok("Your mods match the last commit again.".into())
     })
 }
 
@@ -275,7 +291,8 @@ pub fn set_side_override(state: State<'_, AppState>, project_id: u64, mode: Stri
 
 #[tauri::command(async)]
 pub fn publish_preflight(state: State<'_, AppState>, version: String) -> CmdResult<Vec<String>> {
-    Ok(publish::preflight(&state.pack().map_err(err)?, version.trim()))
+    let not_on_curseforge = state.mod_list.lock().unwrap().not_on_curseforge.clone();
+    Ok(publish::preflight(&state.pack().map_err(err)?, version.trim(), &not_on_curseforge, &state.settings().identity()))
 }
 
 #[tauri::command]
@@ -394,6 +411,7 @@ pub fn publish(app: AppHandle, state: State<'_, AppState>, options: PublishOptio
     let context = PublishContext {
         announce,
         pack,
+        identity: state.settings().identity(),
         java: launch::java(&state.settings()).map_err(err)?,
         data_dir: state.data_dir.clone(),
         pack_data: state.pack_data(),
