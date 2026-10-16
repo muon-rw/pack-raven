@@ -10,9 +10,19 @@
     return out
   }
 
+  // When a submenu fits on neither side of its parent, we narrow it into the roomier side rather
+  // than letting it cover the parent menu, and its long labels truncate.
   function fit(anchor: { left: number; right: number; top: number }, width: number, height: number) {
-    const left = anchor.right + width <= innerWidth - 4 ? anchor.right : Math.max(4, anchor.left - width)
-    return { left, top: Math.max(4, Math.min(anchor.top, innerHeight - height - 4)) }
+    const roomRight = innerWidth - 4 - anchor.right
+    const roomLeft = anchor.left - 4
+    const right = width <= roomRight || (width > roomLeft && roomRight >= roomLeft)
+    const room = right ? roomRight : roomLeft
+    const shown = Math.min(width, room)
+    return {
+      left: right ? anchor.right : anchor.left - shown,
+      top: Math.max(4, Math.min(anchor.top, innerHeight - height - 4)),
+      maxWidth: width > room ? room : null,
+    }
   }
 </script>
 
@@ -23,8 +33,8 @@
 
   let menu: HTMLDivElement
   let submenu: HTMLDivElement | undefined = $state()
-  let position = $state<{ left: number; top: number } | null>(null)
-  let open = $state<{ index: number; left: number; top: number; placed: boolean } | null>(null)
+  let position = $state<{ left: number; top: number; maxWidth: number | null } | null>(null)
+  let open = $state<{ index: number; left: number; top: number; maxWidth: number | null; placed: boolean } | null>(null)
   const returnFocus = document.activeElement as HTMLElement | null
   // Heading diagonally for the submenu crosses the items below its trigger, so we wait a
   // moment before closing it and cancel if the pointer reaches the submenu.
@@ -68,7 +78,7 @@
       return
     }
     const rect = button.getBoundingClientRect()
-    open = { index, left: rect.right, top: rect.top - 5, placed: false }
+    open = { index, left: rect.right, top: rect.top - 5, maxWidth: null, placed: false }
     await tick()
     if (!submenu || open?.index !== index) return
     const { width, height } = submenu.getBoundingClientRect()
@@ -109,6 +119,7 @@
 <svelte:window onpointerdown={(e) => outside(e.target as Node) && close(false)} onblur={() => close(false)} onresize={() => close(false)} />
 
 {#snippet entries(list: MenuItem[], nested: boolean)}
+  {@const narrowed = !!(nested ? open?.maxWidth : position?.maxWidth)}
   {#each list as item, i (i)}
     {#if item === 'separator'}
       <div class="separator" role="separator"></div>
@@ -121,6 +132,7 @@
         data-index={i}
         data-submenu="true"
         class:expanded={open?.index === i}
+        title={narrowed ? item.label : undefined}
         onclick={(e) => openSubmenu(i, e.currentTarget, true)}
         onpointerenter={(e) => openSubmenu(i, e.currentTarget, false)}
       >
@@ -133,6 +145,7 @@
         tabindex="-1"
         data-index={i}
         class:danger={item.danger}
+        title={narrowed ? item.label : undefined}
         disabled={item.disabled}
         onclick={() => choose(item)}
         onpointerenter={() => !nested && open && (closeTimer = setTimeout(() => (open = null), 250))}
@@ -152,6 +165,7 @@
   bind:this={menu}
   style:left="{position?.left ?? x}px"
   style:top="{position?.top ?? y}px"
+  style:max-width={position?.maxWidth ? `${position.maxWidth}px` : null}
   style:visibility={position ? 'visible' : 'hidden'}
   onkeydown={onKey}
   oncontextmenu={(e) => e.preventDefault()}
@@ -169,6 +183,7 @@
     onpointerenter={() => clearTimeout(closeTimer)}
     style:left="{open.left}px"
     style:top="{open.top}px"
+    style:max-width={open.maxWidth ? `${open.maxWidth}px` : null}
     style:visibility={open.placed ? 'visible' : 'hidden'}
     onkeydown={onKey}
     oncontextmenu={(e) => e.preventDefault()}
@@ -182,6 +197,7 @@
     position: fixed;
     z-index: 20;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     min-width: 200px;
     padding: 4px;
     font-size: var(--step--1);
@@ -222,12 +238,23 @@
     color: var(--fail);
   }
 
+  /* In a narrowed menu the shortcut column gives up its room well before the label does. */
+  button span,
   kbd {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  kbd {
+    flex: 0 8 auto;
     border: 0;
     padding: 0;
   }
 
   svg {
+    flex: none;
     width: 12px;
     height: 12px;
     fill: none;

@@ -73,6 +73,15 @@
   function count(n: number, noun: string) {
     return `${n} ${noun}${n === 1 ? '' : 's'}`
   }
+
+  let previewSummary = $derived(
+    !preview || !patterns.length
+      ? ''
+      : [
+          preview.untracked.length ? `Git will stop showing ${count(preview.untracked.length, 'new file')}.` : "These patterns don't match any new files.",
+          preview.tracked.length ? `Git already tracks ${count(preview.tracked.length, 'matching file')}.` : '',
+        ].join(' '),
+  )
 </script>
 
 {#snippet pathList(paths: string[], label: string)}
@@ -106,12 +115,15 @@
           onkeydown={(e) => (e.ctrlKey || e.metaKey) && e.key === 'Enter' && (e.preventDefault(), submit())}></textarea>
       </label>
 
-      <div class="preview" role="status">
+      <p class="visually-hidden" role="status">{previewError ?? previewSummary}</p>
+      <div class="preview">
         {#if previewError}
           <p class="failed">{previewError}</p>
         {:else if !patterns.length}
           <p class="muted">Enter a pattern to see which files it matches.</p>
-        {:else if preview}
+        {:else if !preview}
+          <p class="muted">Checking which files these patterns match.</p>
+        {:else}
           {#if preview.untracked.length}
             <p>Git will stop showing {count(preview.untracked.length, 'new file')}:</p>
             {@render pathList(preview.untracked, 'New files these patterns ignore')}
@@ -119,11 +131,16 @@
             <p class="muted">These patterns don't match any new files.</p>
           {/if}
           {#if preview.tracked.length}
-            <p>Git already tracks {count(preview.tracked.length, 'matching file')}, and .gitignore doesn't apply to those:</p>
+            {@const one = preview.tracked.length === 1}
+            <p>Git already tracks {count(preview.tracked.length, 'matching file')}, and .gitignore doesn't apply to {one ? 'it' : 'those'}:</p>
             {@render pathList(preview.tracked, 'Tracked files these patterns match')}
-            <label class="check">
+            <label class="check untrack">
               <input type="checkbox" bind:checked={untrackMatches} />
-              <span>Stop tracking {preview.tracked.length === 1 ? 'it' : 'them'}. The files stay on disk, and we stage their removal for your next commit.</span>
+              <span>
+                {one
+                  ? 'Stop tracking it. The file stays on disk, and we stage its removal for your next commit.'
+                  : 'Stop tracking them. The files stay on disk, and we stage their removal for your next commit.'}
+              </span>
             </label>
           {/if}
         {/if}
@@ -152,7 +169,7 @@
   }
 
   dialog::backdrop {
-    background: rgb(0 0 0 / 0.3);
+    background: var(--shadow);
   }
 
   form {
@@ -218,6 +235,14 @@
     border: 1px solid var(--line);
     border-radius: var(--radius-control);
     overflow-wrap: anywhere;
+  }
+
+  .untrack {
+    align-items: start;
+  }
+
+  .untrack input {
+    margin-top: 0.2em;
   }
 
   .actions {

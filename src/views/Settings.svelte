@@ -201,7 +201,7 @@
         <input bind:value={settings.gitEmail} placeholder="From your git config" autocomplete="email" aria-describedby="commit-identity-hint" />
       </label>
       <p class="muted hint" id="commit-identity-hint">
-        packraven makes commits as this person when you publish or commit in Git. Leave a field empty to use your git config.
+        packraven makes commits as this person when you publish or press commit. Leave a field empty to use your git config.
       </p>
       {#if credentials?.github.present}
         <div class="identity-row">

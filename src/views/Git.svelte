@@ -324,7 +324,8 @@
     const only = keys.size === 1 ? [...keys][0] : null
     const single = only ? parseKey(only) : null
     const exists = single?.isDir || (!!only && changesFor(only)[0]?.status !== 'D')
-    const files = (n: number) => (n === 1 ? '' : ` ${n} files`)
+    const mixed = staged.length > 0 && unstaged.length > 0
+    const files = (n: number) => (n === 1 && !mixed ? '' : ` ${n} ${n === 1 ? 'file' : 'files'}`)
     const ignore = await ignoreItems(paths, feedback)
     menu = {
       x,
@@ -468,8 +469,9 @@
       <span class="visually-hidden">{statusNames[row.change.status] ?? row.change.status}:</span>
       <span class="path">{#if layout === 'list'}<span class="dir">{parts.dir}</span>{/if}<span class="name">{parts.name}</span></span>
     {/if}
+    <!-- Hidden from screen readers because options can't hold buttons; Enter, Delete and the menu key cover them. -->
     <!-- svelte-ignore a11y_no_static_element_interactions (only stops the row's double-click) -->
-    <span class="row-actions" ondblclick={(e) => e.stopPropagation()}>
+    <span class="row-actions" aria-hidden="true" ondblclick={(e) => e.stopPropagation()}>
       {#if group === 'staged'}
         <button class="icon" tabindex="-1" aria-label="Unstage {row.path}" title="Unstage" onclick={(e) => (e.stopPropagation(), unstage(changesFor(key)))}>−</button>
       {:else}
@@ -569,7 +571,6 @@
     {/if}
 
     <div class="layout-row">
-      <span class="muted small">Shift or {isMac ? '⌘' : 'Ctrl'}+click to select several.</span>
       <span class="modes" role="group" aria-label="Show changes as">
         <button class="mode" aria-pressed={layout === 'list'} onclick={() => setLayout('list')}>List</button>
         <button class="mode" aria-pressed={layout === 'tree'} onclick={() => setLayout('tree')}>Tree</button>
@@ -632,7 +633,7 @@
     {#if !selected && keys.size}
       {@const total = selectedStaged.length + selectedUnstaged.length}
       <div class="diff-head">
-        <span class="file">{total === 1 ? '1 file selected' : `${total} files selected`}</span>
+        <span class="selection-count">{total === 1 ? '1 file selected' : `${total} files selected`}</span>
         <span class="muted small state">{[selectedStaged.length && `${selectedStaged.length} staged`, selectedUnstaged.length && `${selectedUnstaged.length} not staged`].filter(Boolean).join(', ')}</span>
       </div>
       <div class="pad summary">
@@ -640,7 +641,7 @@
           {#if selectedUnstaged.length}<button class="primary" onclick={() => stage(selectedUnstaged)}>Stage {selectedUnstaged.length === 1 ? '1 file' : `${selectedUnstaged.length} files`}</button>{/if}
           {#if selectedStaged.length}<button onclick={() => unstage(selectedStaged)}>Unstage {selectedStaged.length === 1 ? '1 file' : `${selectedStaged.length} files`}</button>{/if}
           <button onclick={ignoreSelection}>Add to .gitignore…</button>
-          {#if selectedUnstaged.length}<button class="danger" onclick={() => discard(selectedUnstaged)}>Discard changes</button>{/if}
+          {#if selectedUnstaged.length}<button class="danger" onclick={() => discard(selectedUnstaged)}>Discard changes{selectedUnstaged.length === 1 ? '' : ` to ${selectedUnstaged.length} files`}</button>{/if}
         </div>
         <ul class="summary-list" aria-label="Selected files">
           {#each [...selectedStaged.map((c) => ({ c, group: 'Staged' })), ...selectedUnstaged.map((c) => ({ c, group: 'Not staged' }))] as item (`${item.group}:${item.c.path}`)}
@@ -655,6 +656,7 @@
     {:else if !selected}
       <div class="placeholder">
         <p>Select a file to see what changed.</p>
+        <p class="small">Shift or {isMac ? '⌘' : 'Ctrl'}+click to select several.</p>
       </div>
     {:else}
       <div class="diff-head">
@@ -828,13 +830,7 @@
 
   .changes {
     min-width: 0;
-    margin: 0;
-    padding: 0;
-    list-style: none;
     border-top: 1px solid var(--line);
-  }
-
-  .changes {
     outline: none;
   }
 
@@ -856,7 +852,6 @@
 
   .row.selected {
     background: var(--here);
-    box-shadow: inset 3px 0 0 var(--forest);
   }
 
   .row:focus-visible {
@@ -875,9 +870,7 @@
 
   .layout-row {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
+    justify-content: end;
   }
 
   .badge {
@@ -1013,7 +1006,9 @@
 
   .placeholder {
     display: grid;
-    place-items: center;
+    place-content: center;
+    justify-items: center;
+    gap: 4px;
     flex: 1;
     color: var(--muted);
   }
@@ -1046,6 +1041,7 @@
 
   .summary {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     align-content: start;
     gap: 14px;
     min-height: 0;
@@ -1072,6 +1068,14 @@
     padding: 5px 0;
     font-size: var(--step--1);
     border-bottom: 1px solid var(--line);
+  }
+
+  .summary-list .path-text {
+    flex: 1;
+  }
+
+  .selection-count {
+    font-weight: 700;
   }
 
   .diff-body {
