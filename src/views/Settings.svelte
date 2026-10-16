@@ -308,7 +308,7 @@
         <div><button type="button" class:busy={defenderBusy} disabled={defenderBusy} onclick={excludeFolders}>{defenderBusy ? 'Waiting for Windows' : 'Exclude folders'}</button></div>
         <p class="muted">You'll get a pop-up from Windows.</p>
       {:else}
-        <p class="muted">Defender skips the pack, CurseForge and packraven folders.</p>
+        <p class="muted">Windows Defender will skip the pack, CurseForge and packraven folders. Only install projects you trust.</p>
       {/if}
       <p class:muted={!defenderFailed} class:failed={defenderFailed} role="status">{defenderMessage ?? ''}</p>
       <label class="check">

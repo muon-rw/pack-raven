@@ -250,7 +250,7 @@
   let commitHint = $derived(
     !status?.staged.length
       ? status?.unstaged.length
-        ? 'Stage the files you want to include, then commit.'
+        ? 'Stage something, then you can commit it.'
         : 'Nothing to commit.'
       : !message.trim()
         ? 'Write a message describing the change.'
@@ -379,7 +379,7 @@
       {#if status?.staged.length}
         <ul class="changes">{#each status.staged as change (change.path)}{@render changeRow(change, true)}{/each}</ul>
       {:else}
-        <p class="muted small empty">Stage changes below to include them in the next commit.</p>
+        <p class="muted small empty">Staged files will appear here.</p>
       {/if}
     </section>
 
@@ -393,7 +393,7 @@
       {#if status?.unstaged.length}
         <ul class="changes">{#each status.unstaged as change (change.path)}{@render changeRow(change, false)}{/each}</ul>
       {:else if status}
-        <p class="muted small empty">No unstaged changes. Config edits show up here, and packraven records mod changes in mods.lock.json.</p>
+        <p class="muted small empty">No unstaged changes. Mod changes will only show here as a change to mods.lock.json.</p>
       {/if}
     </section>
 

@@ -320,13 +320,13 @@
       <input bind:value={commitMessage} placeholder={defaultMessage} aria-describedby="commit-hint" />
     </label>
     <p class="muted small" id="commit-hint">
-      Leave it empty to use "{defaultMessage}". packraven builds the packs from disk, so the commit holds all your changes along with the new version
-      and archived notes. It commits as {identity ?? 'the name and email in your git config'}.
+      Leave it empty to use "{defaultMessage}". We'll commit any remaining changes along with the new version
+      and archived notes. The commit author will be {identity ?? 'the name and email in your git config'}.
       <button class="link" onclick={() => (nav.view = 'settings')}>Change in App settings</button>
     </p>
     {#if uncommitted.length}
       <details>
-        <summary>{uncommitted.length === 1 ? '1 uncommitted file' : `${uncommitted.length} uncommitted files`} go into the release commit</summary>
+        <summary>{uncommitted.length === 1 ? '1 uncommitted file' : `${uncommitted.length} uncommitted files`} will go into the release commit</summary>
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <ul class="uncommitted" tabindex="0" aria-label="Uncommitted files">
           {#each uncommitted as path (path)}<li class="file">{path}</li>{/each}
