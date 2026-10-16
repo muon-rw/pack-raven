@@ -7,6 +7,7 @@ use tokio::process::{Child, Command};
 
 use crate::jobs::Log;
 
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn hide_window_std(command: &mut std::process::Command) {

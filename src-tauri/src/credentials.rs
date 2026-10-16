@@ -139,7 +139,13 @@ fn forget_stored(credential: Credential) -> Result<()> {
 }
 
 pub fn keychain_name() -> &'static str {
-    if cfg!(windows) { "Windows Credential Manager" } else { "the macOS Keychain" }
+    if cfg!(windows) {
+        "Windows Credential Manager"
+    } else if cfg!(target_os = "macos") {
+        "the macOS Keychain"
+    } else {
+        "your Secret Service keyring"
+    }
 }
 
 // Windows only hands new user variables to processes started after you set them, so we also read the registry.
@@ -168,6 +174,7 @@ fn user_env() -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     #[test]
+    #[cfg_attr(target_os = "linux", ignore = "needs a running Secret Service, like GNOME Keyring or KWallet")]
     fn keychain_persists_across_entries() {
         let entry = keyring::Entry::new("dev.muon.packraven.test", "roundtrip").unwrap();
         entry.set_password("secret-value").unwrap();

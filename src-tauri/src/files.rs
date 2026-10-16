@@ -589,7 +589,9 @@ mod tests {
         assert!(resolve(root, "config/a.toml").is_ok());
         assert!(resolve(root, "../outside.txt").is_err());
         assert!(resolve(root, "config/../../x").is_err());
-        assert!(resolve(root, "C:/Windows/win.ini").is_err());
+        if cfg!(windows) {
+            assert!(resolve(root, "C:/Windows/win.ini").is_err());
+        }
         assert!(resolve(root, "/etc/passwd").is_err());
     }
 

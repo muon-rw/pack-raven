@@ -62,6 +62,9 @@ pub fn drag_out(window: &Window, paths: &[PathBuf]) -> Result<(), String> {
 pub fn drag_out(window: &Window, paths: &[PathBuf]) -> Result<(), String> {
     const DRAG_IMAGE: &[u8] = include_bytes!("../icons/32x32.png");
     let item = drag::DragItem::Files(paths.to_vec());
+    // On Linux, the drag crate wants the GTK window rather than the Tauri one.
+    #[cfg(target_os = "linux")]
+    let window = &window.gtk_window().map_err(|e| e.to_string())?;
     drag::start_drag(window, item, drag::Image::Raw(DRAG_IMAGE.to_vec()), |_, _| {}, drag::Options::default()).map_err(|e| e.to_string())
 }
 
