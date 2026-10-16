@@ -10,7 +10,6 @@ const KEYCHAIN_SERVICE: &str = APP_IDENTIFIER;
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Credential {
-    Download,
     Upload,
     Github,
 }
@@ -18,7 +17,6 @@ pub enum Credential {
 impl Credential {
     fn keychain_user(self) -> &'static str {
         match self {
-            Credential::Download => "curseforge-api-key",
             Credential::Upload => "curseforge-upload-token",
             Credential::Github => "github-token",
         }
@@ -27,7 +25,6 @@ impl Credential {
     // Earlier packraven versions only read these variables, so we keep using them until you choose a source.
     fn legacy_env_names(self) -> &'static [&'static str] {
         match self {
-            Credential::Download => &["CF_DOWNLOAD_TOKEN"],
             Credential::Upload => &["CURSEFORGE_TOKEN", "CF_TOKEN"],
             Credential::Github => &[],
         }
@@ -48,7 +45,6 @@ pub enum Source {
 #[derive(Serialize, Deserialize, Default)]
 #[serde(default)]
 struct Sources {
-    download: Option<Source>,
     upload: Option<Source>,
     github: Option<Source>,
 }
@@ -56,7 +52,6 @@ struct Sources {
 impl Sources {
     fn slot(&mut self, credential: Credential) -> &mut Option<Source> {
         match credential {
-            Credential::Download => &mut self.download,
             Credential::Upload => &mut self.upload,
             Credential::Github => &mut self.github,
         }

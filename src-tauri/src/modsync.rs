@@ -441,7 +441,7 @@ pub async fn lock(dir: &Path, log: &Log) -> Result<()> {
             log.stream("err", &format!("  {path}"));
         }
         if curseforge::core_key().is_none() {
-            log.stream("err", "modsync: packraven has no CurseForge API key, so modsync skipped the CurseForge fingerprint lookup.");
+            log.stream("err", &format!("modsync: {}, so we skipped the CurseForge fingerprint lookup.", curseforge::NO_CORE_KEY));
         }
         bail!("{} file(s) are not on CurseForge", built.unknown.len());
     }

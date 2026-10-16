@@ -1,3 +1,9 @@
+# packraven
+
+## Release builds
+
+Set `PACKRAVEN_CF_API_KEY` to packraven's CurseForge for Studios API key when you build, e.g. `PACKRAVEN_CF_API_KEY=... npm run tauri build`. We embed the key in the binary (masked) at build time, so it never goes in the repo. If you build without it, we can't look up or recognize mods on CurseForge.
+
 # Svelte + TS + Vite
 
 This template should help get you started developing with Svelte and TypeScript in Vite.

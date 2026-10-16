@@ -229,7 +229,7 @@ export interface DefenderView {
   prompt: boolean
 }
 
-export type Credential = 'download' | 'upload' | 'github'
+export type Credential = 'upload' | 'github'
 export type CredentialSource = { kind: 'none' } | { kind: 'stored' } | { kind: 'env'; name: string }
 
 export interface CredentialStatus {
@@ -238,7 +238,7 @@ export interface CredentialStatus {
 }
 
 export interface CredentialsView {
-  download: CredentialStatus
+  builtInApiKey: boolean
   upload: CredentialStatus
   github: CredentialStatus
   keychain: string

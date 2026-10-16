@@ -42,7 +42,6 @@
   }
 
   const UPLOAD_TOKEN_PAGE = 'https://legacy.curseforge.com/account/api-tokens'
-  const API_KEY_PAGE = 'https://console.curseforge.com/'
   const GITHUB_TOKEN_PAGE = 'https://github.com/settings/personal-access-tokens/new'
 
   let identityBusy = $state(false)
@@ -265,14 +264,11 @@
     <section class="removal" id="curseforge-access">
       <h3>CurseForge access</h3>
       <p class="muted">Changes here take effect right away, including in the git hooks.</p>
-      <CredentialField credential="download" label="CurseForge API key (a.k.a. Launcher Token)" status={credentials.download} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
-        {#snippet help()}
-          <p class="muted hint">
-            packraven uses this to look up and download mods, and to keep jars you added by hand out of git. For now, you'll need your own:
-            <a href={API_KEY_PAGE} onclick={(e) => { e.preventDefault(); openUrl(API_KEY_PAGE) }}>create one in the CurseForge for Studios console</a>, then paste it here.
-          </p>
-        {/snippet}
-      </CredentialField>
+      {#if !credentials.builtInApiKey}
+        <Notice tone="warn">
+          <p>This packraven build has no CurseForge API key, so we can't look up mods or keep jars you added by hand out of git. To fix this, build packraven with PACKRAVEN_CF_API_KEY set.</p>
+        </Notice>
+      {/if}
       <CredentialField credential="upload" noun="token" label="CurseForge upload token" status={credentials.upload} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
         {#snippet help()}
           <p class="muted hint">

@@ -295,7 +295,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   get_pack_config: () => config,
   get_webhook: () => 'https://discord.com/api/webhooks/0000/example',
   git_version: () => '2.56.0.windows.2',
-  credentials_status: () => ({ download: { source: { kind: 'stored' }, present: true }, upload: { source: { kind: 'env', name: 'CURSEFORGE_TOKEN' }, present: true }, github: { source: { kind: 'stored' }, present: true }, keychain: 'Windows Credential Manager' }),
+  credentials_status: () => ({ builtInApiKey: true, upload: { source: { kind: 'env', name: 'CURSEFORGE_TOKEN' }, present: true }, github: { source: { kind: 'stored' }, present: true }, keychain: 'Windows Credential Manager' }),
   env_var_names: () => ['APPDATA', 'CF_DOWNLOAD_TOKEN', 'CURSEFORGE_TOKEN', 'PATH'],
   defender_status: () => ({ active: true, exclusionsReadable: false, missing: [], prompt: false }),
   git_overview: () => ({ status: { branch: 'master', upstream: 'origin/master', ahead: 1, behind: 0, hasCommits: true, hasRemote: true, conflicted: [], ...fx.status, staged, unstaged }, commits: fx.commits }),

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -63,11 +64,18 @@ pub struct CfFile {
     pub server_pack_file_id: Option<u64>,
 }
 
-const NO_CORE_KEY: &str = "no CurseForge API key is set; add one in App settings";
+pub const NO_CORE_KEY: &str = "this packraven build has no CurseForge API key; build it with PACKRAVEN_CF_API_KEY set";
 const NO_UPLOAD_TOKEN: &str = "no CurseForge upload token is set; add one in App settings";
 
-pub fn core_key() -> Option<String> {
-    credentials::get(Credential::Download)
+// We mask the key in build.rs (embed_curseforge_key).
+static CORE_KEY: LazyLock<Option<String>> = LazyLock::new(|| {
+    let masked = hex::decode(option_env!("PACKRAVEN_CF_KEY_MASKED")?).ok()?;
+    let mask = hex::decode(option_env!("PACKRAVEN_CF_KEY_MASK")?).ok()?;
+    String::from_utf8(masked.iter().zip(&mask).map(|(k, m)| k ^ m).collect()).ok()
+});
+
+pub fn core_key() -> Option<&'static str> {
+    CORE_KEY.as_deref()
 }
 
 pub fn upload_token() -> Option<String> {

@@ -72,7 +72,7 @@ pub async fn install_git() -> CmdResult<String> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialsView {
-    download: CredentialStatus,
+    built_in_api_key: bool,
     upload: CredentialStatus,
     github: CredentialStatus,
     keychain: &'static str,
@@ -81,7 +81,7 @@ pub struct CredentialsView {
 #[tauri::command]
 pub fn credentials_status() -> CredentialsView {
     CredentialsView {
-        download: credentials::status(Credential::Download),
+        built_in_api_key: crate::curseforge::core_key().is_some(),
         upload: credentials::status(Credential::Upload),
         github: credentials::status(Credential::Github),
         keychain: credentials::keychain_name(),

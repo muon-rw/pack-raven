@@ -31,7 +31,7 @@
   onMount(() => {
     discover()
     api.credentialsStatus().then((c) => {
-      hasKey = c.download.present
+      hasKey = c.builtInApiKey
       hasGithubToken = c.github.present
     }, () => {})
   })
@@ -307,9 +307,8 @@
             <li class="caution">
               <span class="marker warn" aria-hidden="true"></span>
               <div>
-                Without a CurseForge API key, packraven can't recognize jars you added by hand, so it tracks them in git directly instead of
-                in the mod list. <button type="button" class="link" onclick={() => (nav.view = 'settings')}>Add a key in App settings</button> first
-                to keep them out of git.
+                This packraven build has no CurseForge API key, so we can't recognize jars you added by hand and will track them in git
+                directly instead of in the mod list. Use a release build of packraven to keep them out of git.
               </div>
             </li>
           {/if}

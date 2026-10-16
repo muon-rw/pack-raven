@@ -17,10 +17,10 @@
   let diffError: string | null = $state(null)
   let loadingDiff = $state(false)
   let notesError: string | null = $state(null)
-  let keys = $state<{ download: boolean; upload: boolean } | null>(null)
+  let keys = $state<{ upload: boolean } | null>(null)
 
   onMount(async () => {
-    api.credentialsStatus().then((c) => (keys = { download: c.download.present, upload: c.upload.present }), () => {})
+    api.credentialsStatus().then((c) => (keys = { upload: c.upload.present }), () => {})
     notes = savedNotes = await api.getNotes().catch(() => '')
     loadDiff()
   })
@@ -31,7 +31,6 @@
     overview && !overview.lastTag && keys
       ? [
           { done: overview.projectId > 0, text: 'Set the CurseForge project ID', page: 'pack' as const, where: 'Pack settings' },
-          { done: keys.download, text: 'Add a CurseForge API key', page: 'settings' as const, where: 'App settings' },
           { done: keys.upload, text: 'Add a CurseForge upload token', page: 'settings' as const, where: 'App settings' },
         ]
       : null,

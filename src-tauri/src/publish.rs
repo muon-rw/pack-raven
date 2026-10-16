@@ -54,7 +54,7 @@ pub fn preflight(pack: &Pack, version: &str, not_on_curseforge: &[String], ident
         problems.push("Add a CurseForge upload token in App settings.".into());
     }
     if curseforge::core_key().is_none() {
-        problems.push("Add a CurseForge API key in App settings.".into());
+        problems.push("This packraven build has no CurseForge API key. Build it with PACKRAVEN_CF_API_KEY set.".into());
     }
     if version.trim().is_empty() {
         problems.push("Enter a version.".into());
