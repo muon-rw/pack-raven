@@ -256,7 +256,7 @@
     <section class="removal">
       <h3>CurseForge access</h3>
       <Notice tone="error">
-        <p>Couldn't read the saved CurseForge keys: {credentialsError}</p>
+        <p>Couldn't read your saved CurseForge and GitHub tokens: {credentialsError}</p>
         <p><button type="button" onclick={loadCredentials}>Try again</button></p>
       </Notice>
     </section>
@@ -266,10 +266,10 @@
       <p class="muted">Changes here take effect right away, including in the git hooks.</p>
       {#if !credentials.builtInApiKey}
         <Notice tone="warn">
-          <p>This packraven build has no CurseForge API key, so we can't look up mods or keep jars you added by hand out of git. To fix this, build packraven with PACKRAVEN_CF_API_KEY set.</p>
+          <p>This packraven build has no CurseForge API key, so we can't look up mods or keep jars you added by hand out of git. To fix this, build packraven with <code>PACKRAVEN_CF_API_KEY</code> set.</p>
         </Notice>
       {/if}
-      <CredentialField credential="upload" noun="token" label="CurseForge upload token" status={credentials.upload} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
+      <CredentialField credential="upload" label="CurseForge upload token" status={credentials.upload} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
         {#snippet help()}
           <p class="muted hint">
             You only need this to publish. <a href={UPLOAD_TOKEN_PAGE} onclick={(e) => { e.preventDefault(); openUrl(UPLOAD_TOKEN_PAGE) }}>Generate a token on CurseForge</a>, then paste it here.
@@ -280,7 +280,7 @@
 
     <section class="removal" id="github-access">
       <h3>GitHub access</h3>
-      <CredentialField credential="github" noun="token" label="GitHub token" status={credentials.github} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
+      <CredentialField credential="github" label="GitHub token" status={credentials.github} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
         {#snippet help()}
           <p class="muted hint">
             packraven uses this to pull and push when your pack's remote is an HTTPS URL on github.com. Other remotes keep using your git setup.

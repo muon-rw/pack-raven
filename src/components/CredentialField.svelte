@@ -10,7 +10,6 @@
     envNames,
     onchange,
     help,
-    noun = 'key',
   }: {
     credential: Credential
     label: string
@@ -19,7 +18,6 @@
     envNames: string[]
     onchange: () => void
     help: Snippet
-    noun?: string
   } = $props()
 
   let mode = $state<'stored' | 'env'>('stored')
@@ -63,7 +61,7 @@
   {@render help()}
 
   <div class="modes" role="radiogroup" aria-label="Where packraven gets the {label}">
-    <label class="check"><input type="radio" bind:group={mode} value="stored" /> Paste the {noun}</label>
+    <label class="check"><input type="radio" bind:group={mode} value="stored" /> Paste the token</label>
     <label class="check"><input type="radio" bind:group={mode} value="env" /> Use an environment variable</label>
   </div>
 
@@ -72,12 +70,12 @@
       <label class="grow">
         <span class="visually-hidden">{label}</span>
         <input type={revealed ? 'text' : 'password'} bind:value={secret} autocomplete="off" spellcheck="false"
-          placeholder={status.source.kind === 'stored' && status.present ? `Paste a new ${noun} to replace the saved one` : `Paste the ${noun}`} />
+          placeholder={status.source.kind === 'stored' && status.present ? 'Paste a new token to replace the saved one' : 'Paste the token'} />
       </label>
       <button type="button" aria-pressed={revealed} onclick={() => (revealed = !revealed)}>{revealed ? 'Hide' : 'Show'}</button>
       <button type="submit" class="primary" class:busy disabled={busy || !secret.trim()}>Save</button>
     </form>
-    <p class="muted hint">packraven stores this {noun} in {keychain}; it doesn't hold secrets itself.</p>
+    <p class="muted hint">packraven stores this token in {keychain}; it doesn't hold secrets itself.</p>
   {:else}
     <form class="row" onsubmit={(e) => { e.preventDefault(); run(() => api.credentialUseEnv(credential, envName)) }}>
       <label class="grow">

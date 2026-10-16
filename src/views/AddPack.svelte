@@ -308,7 +308,7 @@
               <span class="marker warn" aria-hidden="true"></span>
               <div>
                 This packraven build has no CurseForge API key, so we can't recognize jars you added by hand and will track them in git
-                directly instead of in the mod list. Use a release build of packraven to keep them out of git.
+                directly instead of in the mod list. Build packraven with <code>PACKRAVEN_CF_API_KEY</code> set to keep them out of git.
               </div>
             </li>
           {/if}

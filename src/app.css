@@ -386,6 +386,11 @@ label > select {
   font-variant-numeric: tabular-nums;
 }
 
+code {
+  font-family: var(--font-log);
+  font-size: 0.9em;
+}
+
 kbd {
   font-family: var(--font-log);
   font-size: 0.8em;
