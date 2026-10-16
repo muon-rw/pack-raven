@@ -14,7 +14,11 @@ pub static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
 });
 
 pub async fn download(url: &str, dest: &Path, sha1: Option<&str>) -> Result<()> {
-    let response = CLIENT.get(url).send().await?.error_for_status().with_context(|| format!("downloading {url}"))?;
+    let mut request = CLIENT.get(url);
+    if let Some(key) = curseforge_cdn_key(url) {
+        request = request.header("x-api-key", key);
+    }
+    let response = request.send().await?.error_for_status().with_context(|| format!("downloading {url}"))?;
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -38,4 +42,13 @@ pub async fn download(url: &str, dest: &Path, sha1: Option<&str>) -> Result<()> 
     }
     tokio::fs::rename(&temp, dest).await?;
     Ok(())
+}
+
+// CurseForge rejects keyless downloads from edge.forgecdn.net with a 401. Its other CDN hosts
+// don't need the key, so we keep it off them.
+fn curseforge_cdn_key(url: &str) -> Option<&'static str> {
+    if reqwest::Url::parse(url).ok()?.host_str()? != "edge.forgecdn.net" {
+        return None;
+    }
+    crate::curseforge::core_key()
 }
