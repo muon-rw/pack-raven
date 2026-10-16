@@ -19,6 +19,7 @@
   import { dirtyCount, startWatching } from './lib/workspace.svelte'
   import DefenderNotice from './components/DefenderNotice.svelte'
   import GitNotice from './components/GitNotice.svelte'
+  import IgnoreDialog from './components/IgnoreDialog.svelte'
   import { ask, message } from '@tauri-apps/plugin-dialog'
   import PackSwitcher from './components/PackSwitcher.svelte'
   import RavenMark from './components/RavenMark.svelte'
@@ -394,6 +395,8 @@
     </section>
   </main>
 </div>
+
+<IgnoreDialog />
 
 <style>
   .shell {

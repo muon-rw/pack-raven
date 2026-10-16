@@ -2,6 +2,7 @@ import { ask } from '@tauri-apps/plugin-dialog'
 import { api, errorText, type FileChange, type GitStatus } from './api'
 import { LOCKFILE } from './modsync'
 import { showDiff } from './nav.svelte'
+import { openIgnoreDialog, type IgnoreRequest } from './ignoreDialog.svelte'
 import type { MenuItem, Submenu } from './menu'
 
 export async function confirmDiscard(changes: FileChange[]) {
@@ -31,7 +32,7 @@ export async function discardChanges(changes: FileChange[]) {
 
 export type Feedback = { ondone: () => void; onerror: (message: string) => void; onnotice: (message: string) => void }
 
-export function gitMenu(paths: string[], status: GitStatus | null, ignored: (path: string) => boolean, feedback: Feedback): Submenu | null {
+export async function gitMenu(paths: string[], status: GitStatus | null, ignored: (path: string) => boolean, feedback: Feedback): Promise<Submenu | null> {
   if (!status || !paths.length) return null
   const covered = (file: string) => paths.some((p) => file === p || file.startsWith(`${p}/`))
   const unstaged = status.unstaged.filter((c) => covered(c.path))
@@ -44,7 +45,7 @@ export function gitMenu(paths: string[], status: GitStatus | null, ignored: (pat
       ? [{ label: unstaged.length === 1 ? 'Discard changes' : `Discard changes to ${unstaged.length} files`, danger: true, run: () => discard(unstaged, feedback) }]
       : []),
     'separator',
-    ...(ignorable.length ? [{ label: 'Add to .gitignore', run: () => addToGitignore(ignorable, feedback) }] : []),
+    ...(await ignoreItems(ignorable, feedback)),
   ]
   return items.some((item) => item !== 'separator') ? { label: 'Git', items } : null
 }
@@ -59,15 +60,36 @@ async function discard(changes: FileChange[], feedback: Feedback) {
   }
 }
 
-export async function addToGitignore(paths: string[], feedback: Feedback) {
+const MAX_HINT = 32
+
+function patternHint(patterns: string[]) {
+  if (patterns.length > 1) return `${patterns.length} lines`
+  return patterns[0].length > MAX_HINT ? `${patterns[0].slice(0, MAX_HINT - 1)}…` : patterns[0]
+}
+
+export async function ignoreItems(paths: string[], feedback: Feedback): Promise<MenuItem[]> {
+  if (!paths.length) return []
+  const options = await api.gitIgnoreOptions(paths).catch(() => null)
+  if (!options?.length) return []
+  return [
+    ...options.map((option, chosen) => ({
+      label: `Ignore ${option.label[0].toLowerCase()}${option.label.slice(1)}`,
+      shortcut: patternHint(option.patterns),
+      run: () => ignoreWith({ paths, options, chosen, feedback }),
+    })),
+    { label: 'Ignore with a custom pattern…', run: () => openIgnoreDialog({ paths, options, chosen: 0, feedback }) },
+  ]
+}
+
+// Git doesn't apply .gitignore to files it already tracks, so when the pattern matches some, we
+// open the dialog instead, where you can choose to stop tracking them.
+async function ignoreWith(request: IgnoreRequest) {
+  const { patterns } = request.options[request.chosen]
   try {
-    const tracked = await api.gitIgnore(paths)
-    feedback.ondone()
-    if (tracked.length) {
-      const names = tracked.length === 1 ? tracked[0] : `${tracked.length} of these paths`
-      feedback.onnotice(`Git already tracks ${names}, so the new .gitignore line won't apply until you remove it from git with "git rm --cached".`)
-    }
+    if ((await api.gitIgnorePreview(patterns)).tracked.length) return openIgnoreDialog(request)
+    await api.gitIgnore(patterns)
+    request.feedback.ondone()
   } catch (e) {
-    feedback.onerror(errorText(e))
+    request.feedback.onerror(errorText(e))
   }
 }

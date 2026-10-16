@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -149,33 +150,141 @@ pub fn discard(dir: &Path, tracked: &[String], untracked: &[String]) -> Result<(
     Ok(())
 }
 
-fn ignore_pattern(path: &str, is_dir: bool) -> String {
-    let mut pattern = String::from("/");
-    for c in path.chars() {
+fn escape_glob(text: &str) -> String {
+    let mut escaped = String::new();
+    for c in text.chars() {
         if matches!(c, '*' | '?' | '[' | '\\' | '!' | '#') {
-            pattern.push('\\');
+            escaped.push('\\');
         }
-        pattern.push(c);
+        escaped.push(c);
     }
-    if pattern.ends_with(' ') {
-        pattern.insert(pattern.len() - 1, '\\');
-    }
-    if is_dir {
-        pattern.push('/');
-    }
-    pattern
+    escaped
 }
 
-/// Adds the paths to the pack's .gitignore and returns those git still tracks, which the new
-/// lines don't affect until you remove them from the index.
-pub fn ignore(dir: &Path, paths: &[String]) -> Result<Vec<String>> {
-    let lines = paths.iter().map(|p| Ok(ignore_pattern(p, crate::files::resolve(dir, p)?.is_dir()))).collect::<Result<Vec<_>>>()?;
-    crate::setup::ensure_lines(&dir.join(".gitignore"), &lines.iter().map(String::as_str).collect::<Vec<_>>())?;
-    let mut args = vec!["ls-files", "-z", "--"];
-    args.extend(paths.iter().map(String::as_str));
-    let out = git::run(dir, &args)?;
-    let tracked: Vec<&str> = out.split('\0').filter(|p| !p.is_empty()).collect();
-    Ok(paths.iter().filter(|p| tracked.iter().any(|t| t == p || t.starts_with(&format!("{p}/")))).cloned().collect())
+// Git strips unescaped trailing spaces from .gitignore lines.
+fn keep_trailing_space(mut line: String) -> String {
+    if line.ends_with(' ') {
+        line.insert(line.len() - 1, '\\');
+    }
+    line
+}
+
+fn ignore_pattern(path: &str, is_dir: bool) -> String {
+    let pattern = keep_trailing_space(format!("/{}", escape_glob(path)));
+    if is_dir { format!("{pattern}/") } else { pattern }
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct IgnoreOption {
+    pub label: String,
+    pub patterns: Vec<String>,
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct IgnorePreview {
+    pub untracked: Vec<String>,
+    pub tracked: Vec<String>,
+}
+
+pub fn ignore_options(dir: &Path, paths: &[String]) -> Result<Vec<IgnoreOption>> {
+    let dirs = paths.iter().map(|p| Ok(crate::files::resolve(dir, p)?.is_dir())).collect::<Result<Vec<_>>>()?;
+    Ok(ignore_options_for(paths, &dirs))
+}
+
+// We list the exact match for your selection first, then wider patterns, from one folder's files
+// of a type up to that type everywhere.
+fn ignore_options_for(paths: &[String], dirs: &[bool]) -> Vec<IgnoreOption> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    let noun = match (paths.len(), dirs.iter().all(|d| *d), dirs.iter().any(|d| *d)) {
+        (1, true, _) => "this folder".to_string(),
+        (1, ..) => "this file".to_string(),
+        (n, true, _) => format!("these {n} folders"),
+        (n, _, true) => format!("these {n} items"),
+        (n, ..) => format!("these {n} files"),
+    };
+    let mut options = vec![IgnoreOption { label: format!("Only {noun}"), patterns: paths.iter().zip(dirs).map(|(p, d)| ignore_pattern(p, *d)).collect() }];
+    let parent = |path: &str| path.rsplit_once('/').map_or("", |(dir, _)| dir).to_string();
+    let extension = |path: &str| path.rsplit('/').next().and_then(|name| name.rsplit_once('.')).map(|(stem, ext)| (stem, ext.to_string())).filter(|(stem, ext)| !stem.is_empty() && !ext.is_empty()).map(|(_, ext)| ext);
+    let files_only = !dirs.iter().any(|d| *d);
+    let common_ext = files_only.then(|| extension(&paths[0])).flatten().filter(|ext| paths.iter().all(|p| extension(p).as_deref() == Some(ext)));
+    let parents: Vec<String> = paths.iter().map(|p| parent(p)).collect();
+    let same_parent = parents.iter().all(|p| *p == parents[0]).then(|| parents[0].clone()).filter(|p| !p.is_empty());
+    let ancestor = parents.iter().skip(1).fold(parents[0].clone(), |common, p| common_dir(&common, p));
+    let mut push = |label: String, pattern: String| {
+        if !options.iter().any(|o| o.patterns == [pattern.as_str()]) {
+            options.push(IgnoreOption { label, patterns: vec![pattern] });
+        }
+    };
+    if let Some(ext) = &common_ext {
+        match &same_parent {
+            Some(dir) => push(format!("All .{ext} files in {dir}/"), keep_trailing_space(format!("/{}/*.{}", escape_glob(dir), escape_glob(ext)))),
+            None if !ancestor.is_empty() => push(format!("All .{ext} files under {ancestor}/"), keep_trailing_space(format!("/{}/**/*.{}", escape_glob(&ancestor), escape_glob(ext)))),
+            None => {}
+        }
+    }
+    if !ancestor.is_empty() {
+        push(format!("Everything in {ancestor}/"), ignore_pattern(&ancestor, true));
+    }
+    if let Some(ext) = &common_ext {
+        push(format!("All .{ext} files anywhere"), keep_trailing_space(format!("*.{}", escape_glob(ext))));
+    }
+    options
+}
+
+fn common_dir(a: &str, b: &str) -> String {
+    a.split('/').zip(b.split('/')).take_while(|(x, y)| x == y).map(|(x, _)| x).collect::<Vec<_>>().join("/")
+}
+
+fn exclude_args(patterns: &[String]) -> Vec<String> {
+    patterns.iter().map(|p| p.trim_start()).filter(|p| !p.trim().is_empty() && !p.starts_with('#')).map(|p| format!("--exclude={p}")).collect()
+}
+
+fn listed(dir: &Path, args: &[&str]) -> Result<Vec<String>> {
+    Ok(git::run(dir, args)?.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())
+}
+
+fn tracked_matching(dir: &Path, excludes: &[String]) -> Result<Vec<String>> {
+    let mut args = vec!["ls-files", "-z", "-c", "-i"];
+    args.extend(excludes.iter().map(String::as_str));
+    listed(dir, &args)
+}
+
+// We list the untracked files git shows before and after adding the patterns, so we can leave
+// out files your .gitignore already covers.
+pub fn ignore_preview(dir: &Path, patterns: &[String]) -> Result<IgnorePreview> {
+    let excludes = exclude_args(patterns);
+    if excludes.is_empty() {
+        return Ok(IgnorePreview::default());
+    }
+    let before = listed(dir, &["ls-files", "-z", "-o", "--exclude-standard"])?;
+    let mut args = vec!["ls-files", "-z", "-o", "--exclude-standard"];
+    args.extend(excludes.iter().map(String::as_str));
+    let after: HashSet<String> = listed(dir, &args)?.into_iter().collect();
+    Ok(IgnorePreview { untracked: before.into_iter().filter(|p| !after.contains(p)).collect(), tracked: tracked_matching(dir, &excludes)? })
+}
+
+/// Returns the tracked files the new patterns match, since .gitignore doesn't affect those.
+pub fn ignore(dir: &Path, patterns: &[String]) -> Result<Vec<String>> {
+    let excludes = exclude_args(patterns);
+    if excludes.is_empty() {
+        bail!("Enter a pattern to add.");
+    }
+    let lines: Vec<&str> = patterns.iter().map(|p| p.trim_start()).filter(|p| !p.trim().is_empty()).collect();
+    crate::setup::ensure_lines(&dir.join(".gitignore"), &lines)?;
+    tracked_matching(dir, &excludes)
+}
+
+pub fn untrack(dir: &Path, paths: &[String]) -> Result<()> {
+    for chunk in paths.chunks(200) {
+        let mut args = vec!["rm", "-r", "--cached", "--quiet", "--"];
+        args.extend(chunk.iter().map(String::as_str));
+        git::run(dir, &args)?;
+    }
+    Ok(())
 }
 
 pub fn recent_commits(dir: &Path, count: usize) -> Vec<Commit> {
@@ -419,6 +528,56 @@ mod tests {
 
         runtime.block_on(pull(&mine, Some(Prefer::Theirs), &Log::console("pull"))).unwrap();
         assert_eq!(mod_names(&mine), ["base.jar", "shared-2.jar", "theirs.jar"]);
+    }
+
+    fn option_patterns(paths: &[&str], dirs: &[bool]) -> Vec<(String, Vec<String>)> {
+        let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
+        ignore_options_for(&paths, dirs).into_iter().map(|o| (o.label, o.patterns)).collect()
+    }
+
+    #[test]
+    fn suggests_wider_ignore_patterns() {
+        assert_eq!(
+            option_patterns(&["config/sub/a.json"], &[false]),
+            [
+                ("Only this file".to_string(), vec!["/config/sub/a.json".to_string()]),
+                ("All .json files in config/sub/".to_string(), vec!["/config/sub/*.json".to_string()]),
+                ("Everything in config/sub/".to_string(), vec!["/config/sub/".to_string()]),
+                ("All .json files anywhere".to_string(), vec!["*.json".to_string()]),
+            ]
+        );
+        let spread = option_patterns(&["config/a/x.toml", "config/b/y.toml"], &[false, false]);
+        assert_eq!(spread[0].1, ["/config/a/x.toml", "/config/b/y.toml"]);
+        assert_eq!(spread[1], ("All .toml files under config/".to_string(), vec!["/config/**/*.toml".to_string()]));
+        assert_eq!(spread[2].1, ["/config/"]);
+        let mixed = option_patterns(&["saves", "options.txt"], &[true, false]);
+        assert_eq!(mixed, [("Only these 2 items".to_string(), vec!["/saves/".to_string(), "/options.txt".to_string()])]);
+        assert_eq!(option_patterns(&[".env"], &[false]).len(), 1);
+    }
+
+    #[test]
+    fn previews_only_files_the_patterns_newly_ignore() {
+        let dir = std::env::temp_dir().join(format!("packraven-ignore-preview-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for file in ["config/a.json", "config/b.json", "logs/x.log", "top.json"] {
+            let path = dir.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "x").unwrap();
+        }
+        std::fs::write(dir.join(".gitignore"), "/logs/\n").unwrap();
+        git::run(&dir, &["init", "-q"]).unwrap();
+        git::run(&dir, &["add", "config/a.json"]).unwrap();
+
+        let preview = ignore_preview(&dir, &["*.json".into(), "/logs/".into()]).unwrap();
+        assert_eq!(preview.untracked, ["config/b.json", "top.json"]);
+        assert_eq!(preview.tracked, ["config/a.json"]);
+        assert!(ignore_preview(&dir, &["  ".into(), "# note".into()]).unwrap().untracked.is_empty());
+
+        assert_eq!(ignore(&dir, &["/config/".into()]).unwrap(), ["config/a.json"]);
+        untrack(&dir, &["config/a.json".into()]).unwrap();
+        assert!(git::run(&dir, &["ls-files"]).unwrap().is_empty());
+        assert!(dir.join("config/a.json").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

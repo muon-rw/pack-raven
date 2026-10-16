@@ -229,6 +229,16 @@ export interface DefenderView {
   prompt: boolean
 }
 
+export interface IgnoreOption {
+  label: string
+  patterns: string[]
+}
+
+export interface IgnorePreview {
+  untracked: string[]
+  tracked: string[]
+}
+
 export type Credential = 'upload' | 'github'
 export type CredentialSource = { kind: 'none' } | { kind: 'stored' } | { kind: 'env'; name: string }
 
@@ -297,7 +307,10 @@ export const api = {
   gitDiff: (path: string, staged: boolean, untracked: boolean) => invoke<GitDiff>('git_diff', { path, staged, untracked }),
   gitStage: (paths: string[]) => invoke<void>('git_stage', { paths }),
   gitUnstage: (paths: string[]) => invoke<void>('git_unstage', { paths }),
-  gitIgnore: (paths: string[]) => invoke<string[]>('git_ignore', { paths }),
+  gitIgnoreOptions: (paths: string[]) => invoke<IgnoreOption[]>('git_ignore_options', { paths }),
+  gitIgnorePreview: (patterns: string[]) => invoke<IgnorePreview>('git_ignore_preview', { patterns }),
+  gitIgnore: (patterns: string[]) => invoke<string[]>('git_ignore', { patterns }),
+  gitUntrack: (paths: string[]) => invoke<void>('git_untrack', { paths }),
   gitDiscard: (tracked: string[], untracked: string[]) => invoke<void>('git_discard', { tracked, untracked }),
   gitCommit: (message: string) => invoke<void>('git_commit', { message }),
   gitSync: (action: 'fetch' | 'pull' | 'push', prefer: Prefer | null = null) => invoke<void>('git_sync', { action, prefer }),

@@ -347,6 +347,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
       return [from, to]
     }),
   git_ignore: () => [],
+  git_ignore_options: (a) => {
+    const paths = a.paths as string[]
+    return [
+      { label: paths.length === 1 ? 'Only this file' : `Only these ${paths.length} files`, patterns: paths.map((p) => `/${p}`) },
+      { label: 'All .json files anywhere', patterns: ['*.json'] },
+    ]
+  },
+  git_ignore_preview: (a) => ({ untracked: (a.patterns as string[]).filter((p) => p.trim()).map((p) => p.replace(/^\//, '')), tracked: ['config/tracked.json'] }),
+  git_untrack: () => undefined,
   copy_files: () => null,
   copy_paths: (a) => console.info('[mock] copied paths', a),
   open_with_default_app: (a) => console.info('[mock] opened', a.path),

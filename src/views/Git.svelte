@@ -1,24 +1,38 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
   import { api, errorText, type FileChange, type GitCommit, type GitDiff, type GitStatus, type ModConflict, type Prefer } from '../lib/api'
   import { job, onJobEnd } from '../lib/jobs.svelte'
   import { nav, showInFiles } from '../lib/nav.svelte'
-  import { addToGitignore, confirmDiscard, discardChanges } from '../lib/gitActions'
-  import { fileManager, shortcut } from '../lib/platform'
+  import { confirmDiscard, discardChanges, ignoreItems, type Feedback } from '../lib/gitActions'
+  import { openIgnoreDialog } from '../lib/ignoreDialog.svelte'
+  import { changeRows, type ChangeRow } from '../lib/changeTree'
+  import { RangeSelection, isPlainClick } from '../lib/rangeSelection'
+  import { commandKey, fileManager, isMac, shortcut } from '../lib/platform'
   import type { MenuItem } from '../lib/menu'
   import ContextMenu from '../components/ContextMenu.svelte'
+  import Twisty from '../components/Twisty.svelte'
   import Notice from '../components/Notice.svelte'
   import LogView from '../components/LogView.svelte'
   import LinkedText from '../components/LinkedText.svelte'
 
   let { onchange }: { onchange: () => void } = $props()
 
+  type Group = 'staged' | 'unstaged'
+  type Layout = 'list' | 'tree'
   type Selection = { path: string; staged: boolean; untracked: boolean }
+
+  const LAYOUT_KEY = 'packraven.gitLayout'
 
   let status = $state<GitStatus | null>(null)
   let commits = $state<GitCommit[]>([])
-  let selected = $state<Selection | null>(null)
+  // Selection keys are the group and path, with a trailing slash for folder rows in the tree.
+  const keys = new SvelteSet<string>()
+  const picker = new RangeSelection(keys)
+  const collapsed = new SvelteSet<string>()
+  let focused = $state<string | null>(null)
+  let layout = $state<Layout>(storedLayout())
   let diff = $state<GitDiff | null>(null)
   let diffLoading = $state(false)
   let message = $state('')
@@ -51,7 +65,7 @@
         status = result.status
         commits = result.commits
         loadError = null
-        if (selected && !stillListed(selected)) selected = null
+        for (const key of [...keys]) if (!changesFor(key).length) keys.delete(key)
       } catch (e) {
         loadError = errorText(e)
       } finally {
@@ -67,9 +81,47 @@
     load().then(() => selected && loadDiff(selected, false))
   }
 
-  function stillListed(s: Selection) {
-    const list = s.staged ? status?.staged : status?.unstaged
-    return list?.some((c) => c.path === s.path) ?? false
+  function storedLayout(): Layout {
+    try {
+      return localStorage.getItem(LAYOUT_KEY) === 'tree' ? 'tree' : 'list'
+    } catch {
+      return 'list'
+    }
+  }
+
+  // Folder rows only exist in the tree, so we drop them from the selection when you leave it.
+  function setLayout(next: Layout) {
+    layout = next
+    if (next === 'list') for (const key of [...keys]) if (key.endsWith('/')) keys.delete(key)
+    try {
+      localStorage.setItem(LAYOUT_KEY, next)
+    } catch {}
+  }
+
+  function keyOf(group: Group, row: { path: string; isDir: boolean }) {
+    return `${group}:${row.path}${row.isDir ? '/' : ''}`
+  }
+
+  function parseKey(key: string) {
+    const at = key.indexOf(':')
+    const rest = key.slice(at + 1)
+    const isDir = rest.endsWith('/')
+    return { group: key.slice(0, at) as Group, path: isDir ? rest.slice(0, -1) : rest, isDir }
+  }
+
+  function changesFor(key: string): FileChange[] {
+    const { group, path, isDir } = parseKey(key)
+    return groupChanges[group].filter((c) => (isDir ? c.path.startsWith(`${path}/`) : c.path === path))
+  }
+
+  function selectedChanges(group: Group) {
+    const found = new Map<string, FileChange>()
+    for (const key of keys) if (key.startsWith(`${group}:`)) for (const change of changesFor(key)) found.set(change.path, change)
+    return [...found.values()]
+  }
+
+  function selectedPaths() {
+    return [...new Set([...keys].map((key) => parseKey(key).path))]
   }
 
   onMount(() => {
@@ -113,11 +165,13 @@
     const path = nav.diffPath
     if (!path || !status) return
     nav.diffPath = null
-    const unstaged = status.unstaged.find((c) => c.path === path)
-    const change = unstaged ?? status.staged.find((c) => c.path === path)
-    if (!change) return
-    selected = { path, staged: !unstaged, untracked: change.status === '?' }
-    tick().then(() => document.querySelector('.changes li.selected')?.scrollIntoView({ block: 'nearest' }))
+    const group: Group | null = status.unstaged.some((c) => c.path === path) ? 'unstaged' : status.staged.some((c) => c.path === path) ? 'staged' : null
+    if (!group) return
+    for (let at = path.indexOf('/'); at > 0; at = path.indexOf('/', at + 1)) collapsed.delete(`${group}:${path.slice(0, at)}`)
+    const key = keyOf(group, { path, isDir: false })
+    picker.only(key)
+    focused = key
+    tick().then(() => rowElement(key)?.scrollIntoView({ block: 'nearest' }))
   })
 
   async function run(action: () => Promise<void>) {
@@ -133,7 +187,30 @@
   }
 
   async function discard(changes: FileChange[]) {
-    if (await confirmDiscard(changes)) await run(() => discardChanges(changes))
+    if (changes.length && (await confirmDiscard(changes))) await run(() => discardChanges(changes))
+  }
+
+  function stage(changes: FileChange[]) {
+    if (changes.length) run(() => api.gitStage(changes.map((c) => c.path)))
+  }
+
+  function unstage(changes: FileChange[]) {
+    if (changes.length) run(() => api.gitUnstage(changes.map((c) => c.path)))
+  }
+
+  const feedback: Feedback = {
+    ondone: () => (load(), onchange()),
+    onerror: (text) => (error = text),
+    onnotice: (text) => (notice = text),
+  }
+
+  async function ignoreSelection() {
+    const paths = selectedPaths()
+    try {
+      openIgnoreDialog({ paths, options: await api.gitIgnoreOptions(paths), chosen: 0, feedback })
+    } catch (e) {
+      error = errorText(e)
+    }
   }
 
   async function attempt(action: () => Promise<void>) {
@@ -145,52 +222,132 @@
     }
   }
 
-  function select(change: FileChange, staged: boolean) {
-    selected = { path: change.path, staged, untracked: change.status === '?' }
+  function rowElement(key: string) {
+    return document.querySelector<HTMLElement>(`.changes [data-key="${CSS.escape(key)}"]`)
   }
 
-  function onChangeMenu(event: MouseEvent | KeyboardEvent, change: FileChange, staged: boolean) {
+  async function focusKey(key: string) {
+    focused = key
+    await tick()
+    rowElement(key)?.focus()
+  }
+
+  function toggleFolder(group: Group, path: string, open = collapsed.has(`${group}:${path}`)) {
+    if (open) collapsed.delete(`${group}:${path}`)
+    else collapsed.add(`${group}:${path}`)
+  }
+
+  function onRowClick(event: MouseEvent, group: Group, row: ChangeRow) {
+    const key = keyOf(group, row)
+    focused = key
+    picker.click(event, key, order[group])
+    if (isPlainClick(event) && row.isDir) toggleFolder(group, row.path)
+  }
+
+  function onRowDoubleClick(event: MouseEvent, group: Group, row: ChangeRow) {
+    if (row.isDir || !isPlainClick(event)) return
+    const changes = changesFor(keyOf(group, row))
+    if (group === 'staged') unstage(changes)
+    else stage(changes)
+  }
+
+  // We add the focused row to the selection first, so keys act on the row you can see is focused.
+  function onGroupKey(event: KeyboardEvent, group: Group) {
+    const list = order[group]
+    const index = list.indexOf(focused ?? '')
+    const row = rowsByGroup[group][index]
+    if (!row) return
+    const key = list[index]
+    const move = (to: number) => {
+      const target = list[Math.max(0, Math.min(to, list.length - 1))]
+      if (event.shiftKey) picker.range(list, target)
+      else picker.only(target)
+      focusKey(target)
+    }
+    const ensureSelected = () => keys.has(key) || picker.only(key)
+    const folderOpen = row.isDir && !collapsed.has(`${group}:${row.path}`)
+    if (commandKey(event) && event.key.toLowerCase() === 'a') {
+      picker.replace(list)
+    } else if (event.key === 'ArrowDown') {
+      move(index + 1)
+    } else if (event.key === 'ArrowUp') {
+      move(index - 1)
+    } else if (event.key === 'Home') {
+      move(0)
+    } else if (event.key === 'End') {
+      move(list.length - 1)
+    } else if (event.key === 'ArrowRight' && row.isDir) {
+      if (folderOpen) move(index + 1)
+      else toggleFolder(group, row.path, true)
+    } else if (event.key === 'ArrowLeft' && folderOpen) {
+      toggleFolder(group, row.path, false)
+    } else if (event.key === 'ArrowLeft' && row.depth > 0) {
+      move(rowsByGroup[group].findLastIndex((r, i) => i < index && r.depth === row.depth - 1))
+    } else if (event.key === ' ') {
+      if (commandKey(event)) picker.toggle(key)
+      else if (event.shiftKey) picker.range(list, key)
+      else picker.only(key)
+    } else if (event.key === 'Enter') {
+      ensureSelected()
+      if (group === 'staged') unstage(selectedStaged)
+      else stage(selectedUnstaged)
+    } else if (event.key === 'Delete' || (isMac && event.metaKey && event.key === 'Backspace')) {
+      ensureSelected()
+      discard(selectedUnstaged)
+    } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      ensureSelected()
+      const rect = (event.target as HTMLElement).getBoundingClientRect()
+      openSelectionMenu(rect.left + 24, rect.bottom)
+    } else {
+      return
+    }
+    event.preventDefault()
+  }
+
+  function onRowMenu(event: MouseEvent, group: Group, row: ChangeRow) {
     event.preventDefault()
     event.stopPropagation()
-    select(change, staged)
+    const key = keyOf(group, row)
+    if (!keys.has(key)) picker.only(key)
+    focused = key
+    // The keyboard menu key fires contextmenu without pointer coordinates.
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-    const fromKeyboard = !('clientX' in event) || (!event.clientX && !event.clientY)
-    openChangeMenu(fromKeyboard ? rect.left + 24 : event.clientX, fromKeyboard ? rect.bottom : event.clientY, change, staged)
+    const fromKeyboard = !event.clientX && !event.clientY
+    openSelectionMenu(fromKeyboard ? rect.left + 24 : event.clientX, fromKeyboard ? rect.bottom : event.clientY)
   }
 
   // A deleted file has nothing on disk to open or show, but you can still copy its path.
-  function openChangeMenu(x: number, y: number, change: FileChange, staged: boolean) {
-    const path = change.path
-    const exists = change.status !== 'D'
+  async function openSelectionMenu(x: number, y: number) {
+    const staged = selectedStaged
+    const unstaged = selectedUnstaged
+    const paths = selectedPaths()
+    const only = keys.size === 1 ? [...keys][0] : null
+    const single = only ? parseKey(only) : null
+    const exists = single?.isDir || (!!only && changesFor(only)[0]?.status !== 'D')
+    const files = (n: number) => (n === 1 ? '' : ` ${n} files`)
+    const ignore = await ignoreItems(paths, feedback)
     menu = {
       x,
       y,
       items: [
-        staged
-          ? { label: 'Unstage', run: () => run(() => api.gitUnstage([path])) }
-          : { label: 'Stage', run: () => run(() => api.gitStage([path])) },
+        ...(unstaged.length ? [{ label: `Stage${files(unstaged.length)}`, shortcut: 'Enter', run: () => stage(unstaged) }] : []),
+        ...(staged.length ? [{ label: `Unstage${files(staged.length)}`, shortcut: unstaged.length ? undefined : 'Enter', run: () => unstage(staged) }] : []),
         'separator',
-        ...(exists
+        ...(single && exists
           ? [
-              { label: 'Open in Files', run: () => showInFiles(path) },
-              { label: 'Open in default app', run: () => attempt(() => api.openWithDefaultApp(path)) },
-              { label: `Show in ${fileManager}`, run: () => attempt(async () => revealItemInDir(await api.absolutePath(path))) },
+              { label: 'Open in Files', run: () => showInFiles(single.path) },
+              ...(single.isDir ? [] : [{ label: 'Open in default app', run: () => attempt(() => api.openWithDefaultApp(single.path)) }]),
+              { label: `Show in ${fileManager}`, run: () => attempt(async () => revealItemInDir(await api.absolutePath(single.path))) },
             ]
           : []),
         'separator',
-        { label: 'Copy path', run: () => attempt(() => api.copyPaths([path], true)) },
-        { label: 'Copy relative path', run: () => attempt(() => api.copyPaths([path], false)) },
+        { label: paths.length > 1 ? 'Copy paths' : 'Copy path', run: () => attempt(() => api.copyPaths(paths, true)) },
+        { label: paths.length > 1 ? 'Copy relative paths' : 'Copy relative path', run: () => attempt(() => api.copyPaths(paths, false)) },
         'separator',
-        {
-          label: 'Add to .gitignore',
-          run: () =>
-            addToGitignore([path], {
-              ondone: () => (load(), onchange()),
-              onerror: (text) => (error = text),
-              onnotice: (text) => (notice = text),
-            }),
-        },
-        ...(!staged ? ['separator' as const, { label: 'Discard changes', danger: true, run: () => discard([change]) }] : []),
+        ...(ignore.length ? [{ label: 'Add to .gitignore', items: ignore }] : []),
+        ...(unstaged.length
+          ? ['separator' as const, { label: `Discard changes${unstaged.length === 1 ? '' : ` to ${unstaged.length} files`}`, shortcut: shortcut('Delete'), danger: true, run: () => discard(unstaged) }]
+          : []),
       ],
     }
   }
@@ -257,36 +414,78 @@
         : null,
   )
   let diffLines = $derived(diff ? diff.text.split('\n').filter((l) => !l.startsWith('\\ No newline')) : [])
+  let groupChanges = $derived({ staged: status?.staged ?? [], unstaged: status?.unstaged ?? [] })
+  let rowsByGroup = $derived({
+    staged: changeRows(groupChanges.staged, layout === 'tree', (dir) => collapsed.has(`staged:${dir}`)),
+    unstaged: changeRows(groupChanges.unstaged, layout === 'tree', (dir) => collapsed.has(`unstaged:${dir}`)),
+  })
+  let order = $derived({ staged: rowsByGroup.staged.map((r) => keyOf('staged', r)), unstaged: rowsByGroup.unstaged.map((r) => keyOf('unstaged', r)) })
+  let tabStop = $derived({
+    staged: focused && order.staged.includes(focused) ? focused : order.staged[0],
+    unstaged: focused && order.unstaged.includes(focused) ? focused : order.unstaged[0],
+  })
+  let selectedStaged = $derived(selectedChanges('staged'))
+  let selectedUnstaged = $derived(selectedChanges('unstaged'))
+  // We show a diff when you select exactly one file, and read the status untracked so the poll
+  // doesn't reload a diff that's already open.
+  let diffKey = $derived(keys.size === 1 && ![...keys][0].endsWith('/') ? [...keys][0] : null)
+  let selected = $derived.by((): Selection | null => {
+    if (!diffKey) return null
+    const { group, path } = parseKey(diffKey)
+    const change = untrack(() => groupChanges[group].find((c) => c.path === path))
+    return { path, staged: group === 'staged', untracked: change?.status === '?' }
+  })
   let gitJob = $derived(job('git'))
 </script>
 
-{#snippet changeRow(change: FileChange, staged: boolean)}
-  {@const parts = split(change.path)}
-  {@const isSelected = selected?.path === change.path && selected?.staged === staged}
-  <li class:selected={isSelected} oncontextmenu={(e) => onChangeMenu(e, change, staged)}>
-    <button
-      class="file-button"
-      onclick={() => select(change, staged)}
-      onkeydown={(e) => (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && onChangeMenu(e, change, staged)}
-      ondblclick={() => run(() => (staged ? api.gitUnstage([change.path]) : api.gitStage([change.path])))}
-      title="Double-click to {staged ? 'unstage' : 'stage'}"
-      aria-pressed={isSelected}
-    >
-      <span class="badge s{change.status === '?' ? 'N' : change.status}" title={statusNames[change.status] ?? change.status}>{change.status === '?' ? 'N' : change.status}</span>
-      <span class="visually-hidden">{statusNames[change.status] ?? change.status}:</span>
-      <span class="path"><span class="dir">{parts.dir}</span><span class="name">{parts.name}</span></span>
-    </button>
-    <span class="row-actions">
-      {#if staged}
-        <button class="icon" aria-label="Unstage {change.path}" title="Unstage" onclick={() => run(() => api.gitUnstage([change.path]))}>−</button>
+{#snippet changeRow(group: Group, row: ChangeRow)}
+  {@const key = keyOf(group, row)}
+  {@const code = row.change ? (row.change.status === '?' ? 'N' : row.change.status) : null}
+  {@const parts = split(row.path)}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_tabindex (the group handles keys, and Svelte can't read the role) -->
+  <div
+    role={layout === 'tree' ? 'treeitem' : 'option'}
+    aria-selected={keys.has(key)}
+    aria-level={layout === 'tree' ? row.depth + 1 : undefined}
+    aria-expanded={row.isDir ? !collapsed.has(`${group}:${row.path}`) : undefined}
+    tabindex={key === tabStop[group] ? 0 : -1}
+    data-key={key}
+    class="row"
+    class:selected={keys.has(key)}
+    style="--depth: {row.depth}"
+    title={row.isDir ? undefined : `Double-click to ${group === 'staged' ? 'unstage' : 'stage'}`}
+    onclick={(e) => onRowClick(e, group, row)}
+    ondblclick={(e) => onRowDoubleClick(e, group, row)}
+    oncontextmenu={(e) => onRowMenu(e, group, row)}
+    onfocus={() => (focused = key)}
+  >
+    {#if layout === 'tree'}<Twisty open={row.isDir ? !collapsed.has(`${group}:${row.path}`) : null} />{/if}
+    {#if row.isDir}
+      <span class="path"><span class="name folder">{row.name}</span></span>
+      <span class="count">{row.count}</span>
+    {:else if row.change}
+      <span class="badge s{code}" title={statusNames[row.change.status] ?? row.change.status}>{code}</span>
+      <span class="visually-hidden">{statusNames[row.change.status] ?? row.change.status}:</span>
+      <span class="path">{#if layout === 'list'}<span class="dir">{parts.dir}</span>{/if}<span class="name">{parts.name}</span></span>
+    {/if}
+    <!-- svelte-ignore a11y_no_static_element_interactions (only stops the row's double-click) -->
+    <span class="row-actions" ondblclick={(e) => e.stopPropagation()}>
+      {#if group === 'staged'}
+        <button class="icon" tabindex="-1" aria-label="Unstage {row.path}" title="Unstage" onclick={(e) => (e.stopPropagation(), unstage(changesFor(key)))}>−</button>
       {:else}
-        <button class="icon" aria-label="Discard changes to {change.path}" title="Discard changes" onclick={() => discard([change])}>
+        <button class="icon" tabindex="-1" aria-label="Discard changes to {row.path}" title="Discard changes" onclick={(e) => (e.stopPropagation(), discard(changesFor(key)))}>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3 2 6l3 3M2.5 6H10a4 4 0 0 1 0 8H7" /></svg>
         </button>
-        <button class="icon" aria-label="Stage {change.path}" title="Stage" onclick={() => run(() => api.gitStage([change.path]))}>+</button>
+        <button class="icon" tabindex="-1" aria-label="Stage {row.path}" title="Stage" onclick={(e) => (e.stopPropagation(), stage(changesFor(key)))}>+</button>
       {/if}
     </span>
-  </li>
+  </div>
+{/snippet}
+
+{#snippet changeGroup(group: Group, heading: string)}
+  <div class="changes" role={layout === 'tree' ? 'tree' : 'listbox'} aria-multiselectable="true" aria-labelledby={heading} tabindex="-1" onkeydown={(e) => onGroupKey(e, group)}>
+    {#each rowsByGroup[group] as row (keyOf(group, row))}{@render changeRow(group, row)}{/each}
+  </div>
 {/snippet}
 
 <div class="git">
@@ -369,6 +568,14 @@
       <Notice tone="warn"><p>{status.conflicted.length === 1 ? '1 file has a merge conflict' : `${status.conflicted.length} files have merge conflicts`}. Resolve them in an editor, then stage them.</p></Notice>
     {/if}
 
+    <div class="layout-row">
+      <span class="muted small">Shift or {isMac ? '⌘' : 'Ctrl'}+click to select several.</span>
+      <span class="modes" role="group" aria-label="Show changes as">
+        <button class="mode" aria-pressed={layout === 'list'} onclick={() => setLayout('list')}>List</button>
+        <button class="mode" aria-pressed={layout === 'tree'} onclick={() => setLayout('tree')}>Tree</button>
+      </span>
+    </div>
+
     <section class="group" aria-labelledby="staged-heading">
       <div class="group-head">
         <h3 id="staged-heading">Staged <span class="count">{status?.staged.length ?? 0}</span></h3>
@@ -377,7 +584,7 @@
         {/if}
       </div>
       {#if status?.staged.length}
-        <ul class="changes">{#each status.staged as change (change.path)}{@render changeRow(change, true)}{/each}</ul>
+        {@render changeGroup('staged', 'staged-heading')}
       {:else}
         <p class="muted small empty">Staged files will appear here.</p>
       {/if}
@@ -391,7 +598,7 @@
         {/if}
       </div>
       {#if status?.unstaged.length}
-        <ul class="changes">{#each status.unstaged as change (change.path)}{@render changeRow(change, false)}{/each}</ul>
+        {@render changeGroup('unstaged', 'changes-heading')}
       {:else if status}
         <p class="muted small empty">No unstaged changes. Mod changes will only show here as a change to mods.lock.json.</p>
       {/if}
@@ -422,7 +629,30 @@
   </div>
 
   <section class="diff" aria-label="Diff">
-    {#if !selected}
+    {#if !selected && keys.size}
+      {@const total = selectedStaged.length + selectedUnstaged.length}
+      <div class="diff-head">
+        <span class="file">{total === 1 ? '1 file selected' : `${total} files selected`}</span>
+        <span class="muted small state">{[selectedStaged.length && `${selectedStaged.length} staged`, selectedUnstaged.length && `${selectedUnstaged.length} not staged`].filter(Boolean).join(', ')}</span>
+      </div>
+      <div class="pad summary">
+        <div class="summary-actions">
+          {#if selectedUnstaged.length}<button class="primary" onclick={() => stage(selectedUnstaged)}>Stage {selectedUnstaged.length === 1 ? '1 file' : `${selectedUnstaged.length} files`}</button>{/if}
+          {#if selectedStaged.length}<button onclick={() => unstage(selectedStaged)}>Unstage {selectedStaged.length === 1 ? '1 file' : `${selectedStaged.length} files`}</button>{/if}
+          <button onclick={ignoreSelection}>Add to .gitignore…</button>
+          {#if selectedUnstaged.length}<button class="danger" onclick={() => discard(selectedUnstaged)}>Discard changes</button>{/if}
+        </div>
+        <ul class="summary-list" aria-label="Selected files">
+          {#each [...selectedStaged.map((c) => ({ c, group: 'Staged' })), ...selectedUnstaged.map((c) => ({ c, group: 'Not staged' }))] as item (`${item.group}:${item.c.path}`)}
+            <li>
+              <span class="badge s{item.c.status === '?' ? 'N' : item.c.status}" title={statusNames[item.c.status] ?? item.c.status}>{item.c.status === '?' ? 'N' : item.c.status}</span>
+              <span class="file path-text">{item.c.path}</span>
+              <span class="muted small state">{item.group}</span>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {:else if !selected}
       <div class="placeholder">
         <p>Select a file to see what changed.</p>
       </div>
@@ -604,38 +834,50 @@
     border-top: 1px solid var(--line);
   }
 
-  .changes li {
-    display: flex;
-    align-items: center;
-    border-bottom: 1px solid var(--line);
+  .changes {
+    outline: none;
   }
 
-  .changes li:hover,
-  .changes li.selected {
-    background: var(--surface);
-  }
-
-  .changes li.selected {
-    box-shadow: inset 3px 0 0 var(--forest);
-  }
-
-  .file-button {
-    flex: 1;
-    overflow: hidden;
+  .row {
     display: flex;
     align-items: center;
     gap: 8px;
     min-width: 0;
-    padding: 6px 8px;
-    font-weight: 400;
-    text-align: left;
-    background: transparent;
-    border: 0;
-    border-radius: 0;
+    min-height: 34px;
+    padding: 0 0 0 calc(8px + var(--depth) * 16px);
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    user-select: none;
   }
 
-  .file-button:hover:not(:disabled) {
-    background: transparent;
+  .row:hover {
+    background: var(--surface);
+  }
+
+  .row.selected {
+    background: var(--here);
+    box-shadow: inset 3px 0 0 var(--forest);
+  }
+
+  .row:focus-visible {
+    outline: 2px solid var(--forest);
+    outline-offset: -2px;
+  }
+
+  .folder {
+    font-weight: 600;
+  }
+
+  .row .count {
+    flex: none;
+    font-size: var(--step--2);
+  }
+
+  .layout-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
   }
 
   .badge {
@@ -668,6 +910,7 @@
   }
 
   .path {
+    flex: 1;
     display: flex;
     min-width: 0;
     white-space: nowrap;
@@ -702,9 +945,9 @@
     color: inherit;
   }
 
-  .changes li:hover .row-actions,
-  .changes li:focus-within .row-actions,
-  .changes li.selected .row-actions {
+  .row:hover .row-actions,
+  .row:focus-within .row-actions,
+  .row.selected .row-actions {
     color: var(--text);
   }
 
@@ -799,6 +1042,36 @@
 
   .pad {
     padding: 14px;
+  }
+
+  .summary {
+    display: grid;
+    align-content: start;
+    gap: 14px;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .summary-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .summary-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .summary-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 5px 0;
+    font-size: var(--step--1);
+    border-bottom: 1px solid var(--line);
   }
 
   .diff-body {

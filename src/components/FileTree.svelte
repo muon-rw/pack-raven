@@ -7,9 +7,11 @@
   import { fs, moved } from '../lib/workspace.svelte'
   import { drag } from '../lib/drag.svelte'
   import { gitMenu } from '../lib/gitActions'
+  import { RangeSelection, isPlainClick } from '../lib/rangeSelection'
   import { commandKey, fileManager, isMac, shortcut } from '../lib/platform'
   import { isGzip, outerArchive } from '../lib/viewers'
   import ContextMenu from './ContextMenu.svelte'
+  import Twisty from './Twisty.svelte'
   import type { MenuItem } from '../lib/menu'
 
   let {
@@ -43,7 +45,7 @@
   const expanded = new SvelteSet<string>()
   const loading = new SvelteSet<string>()
   let focused = $state<string | null>(null)
-  let anchor: string | null = null
+  const picker = new RangeSelection(untrack(() => selection))
   let loadError = $state<string | null>(null)
   let message = $state<{ text: string; tone: 'fail' | 'note' } | null>(null)
   let edit = $state<{ kind: 'file' | 'folder' | 'rename'; parent: string; path: string | null; error: string | null; busy: boolean } | null>(null)
@@ -265,17 +267,11 @@
   }
 
   function selectOnly(path: string) {
-    selection.clear()
-    selection.add(path)
-    anchor = path
+    picker.only(path)
   }
 
   function selectRange(to: string) {
-    const paths = rows.map((r) => r.entry.path)
-    const end = paths.indexOf(to)
-    const start = anchor && paths.includes(anchor) ? paths.indexOf(anchor) : end
-    selection.clear()
-    for (const path of paths.slice(Math.min(start, end), Math.max(start, end) + 1)) selection.add(path)
+    picker.range(rows.map((r) => r.entry.path), to)
   }
 
   function fromNameField(event: Event) {
@@ -286,20 +282,12 @@
     if (suppressClick || fromNameField(event)) return
     const path = row.entry.path
     focused = path
-    if (event.shiftKey) {
-      selectRange(path)
-    } else if (commandKey(event)) {
-      if (selection.has(path)) selection.delete(path)
-      else selection.add(path)
-      anchor = path
-    } else {
-      selectOnly(path)
-      activate(row)
-    }
+    picker.click(event, path, rows.map((r) => r.entry.path))
+    if (isPlainClick(event)) activate(row)
   }
 
   function onRowDoubleClick(event: MouseEvent, row: Row) {
-    if (suppressClick || fromNameField(event) || row.entry.isDir || event.shiftKey || commandKey(event)) return
+    if (suppressClick || fromNameField(event) || row.entry.isDir || !isPlainClick(event)) return
     onopen(row.entry.path, true)
   }
 
@@ -397,7 +385,7 @@
     const count = paths.length > 1 ? ` ${paths.length} items` : ''
     const single = paths.length === 1 ? rows.find((r) => r.entry.path === paths[0])?.entry : undefined
     const folder = single?.isDir ? single.path : row ? null : ''
-    const git = gitMenu(paths, status, (path) => rows.find((r) => r.entry.path === path)?.entry.ignored ?? false, {
+    const git = await gitMenu(paths, status, (path) => rows.find((r) => r.entry.path === path)?.entry.ignored ?? false, {
       ondone: ongitchange,
       onerror: (text) => report(text),
       onnotice: (text) => report(text, 'note'),
@@ -594,9 +582,7 @@
       else await refresh()
       const shown = [...outcome.added, ...outcome.moved.map(([, to]) => to)]
       for (const path of shown) await revealInTree(path)
-      selection.clear()
-      for (const path of shown) selection.add(path)
-      anchor = shown[0] ?? null
+      picker.replace(shown)
       if (shown[0]) focusRow(shown[0])
       report(`${redo ? 'Redid' : 'Undid'}: ${outcome.label}`, 'note')
     } catch (e) {
@@ -610,9 +596,7 @@
       const pairs = await api.movePaths(paths, dir)
       await expandDir(dir)
       await afterMove(pairs)
-      selection.clear()
-      for (const [, to] of pairs) selection.add(to)
-      anchor = pairs[0]?.[1] ?? null
+      picker.replace(pairs.map(([, to]) => to))
     } catch (e) {
       report(errorText(e))
     }
@@ -644,9 +628,7 @@
     await expandDir(dir)
     if (moved.length) await afterMove(moved)
     else await load(dir)
-    selection.clear()
-    for (const path of created) selection.add(path)
-    anchor = created[0] ?? null
+    picker.replace(created)
     if (created[0]) focusRow(created[0])
   }
 
@@ -876,7 +858,7 @@
   {#each lines as line ('draft' in line ? '\0draft' : line.entry.path)}
     {#if 'draft' in line}
       <div class="row editing" style="--depth: {line.depth}">
-        <span class="twisty" aria-hidden="true"></span>
+        <Twisty open={null} />
         {@render nameInput()}
       </div>
       {#if edit?.error}<p class="failed small edit-error" style="--depth: {line.depth}">{edit.error}</p>{/if}
@@ -908,11 +890,7 @@
         onlostpointercapture={cancelDrag}
         onfocus={() => (focused = row.entry.path)}
       >
-        <span class="twisty" aria-hidden="true">
-          {#if expandable(row.entry)}
-            <svg viewBox="0 0 12 12" class:open={expanded.has(row.entry.path)}><path d="M4.5 3l3 3-3 3" /></svg>
-          {/if}
-        </span>
+        <Twisty open={expandable(row.entry) ? expanded.has(row.entry.path) : null} />
         {#if renaming}
           {@render nameInput()}
         {:else}
@@ -1063,27 +1041,6 @@
     border-color: transparent;
   }
 
-  .twisty {
-    flex: none;
-    width: 14px;
-    height: 14px;
-    display: grid;
-    place-items: center;
-  }
-
-  .twisty svg {
-    width: 12px;
-    height: 12px;
-    fill: none;
-    stroke: var(--muted);
-    stroke-width: 1.6;
-    transition: transform 0.1s ease;
-  }
-
-  .twisty svg.open {
-    transform: rotate(90deg);
-  }
-
   .name {
     flex: 1;
     min-width: 0;
@@ -1162,11 +1119,5 @@
     border-radius: var(--radius-control);
     box-shadow: 0 6px 16px var(--shadow);
     pointer-events: none;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .twisty svg {
-      transition: none;
-    }
   }
 </style>
