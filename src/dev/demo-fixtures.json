@@ -1,0 +1,4044 @@
+{
+ "instance": "C:/Users/you/curseforge/minecraft/Instances/Raven's High Fantasy",
+ "version": "0.1.0",
+ "minecraft": "1.21.1",
+ "loader": "neoforge-21.1.259",
+ "lockCount": 436,
+ "dirs": {
+  "": [
+   {
+    "name": ".githooks",
+    "path": ".githooks",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": ".mixin.out",
+    "path": ".mixin.out",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": ".prof",
+    "path": ".prof",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": ".sable",
+    "path": ".sable",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "ami-icon-cache",
+    "path": "ami-icon-cache",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "bivrik",
+    "path": "bivrik",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "cache",
+    "path": "cache",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "config",
+    "path": "config",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "crash-reports",
+    "path": "crash-reports",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "data",
+    "path": "data",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "datapacks",
+    "path": "datapacks",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "debug",
+    "path": "debug",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "defaultconfigs",
+    "path": "defaultconfigs",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "downloads",
+    "path": "downloads",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "dynamic-data-pack-cache",
+    "path": "dynamic-data-pack-cache",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "dynamic-resource-pack-cache",
+    "path": "dynamic-resource-pack-cache",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "fancymenu_data",
+    "path": "fancymenu_data",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "journeymap",
+    "path": "journeymap",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "local",
+    "path": "local",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "logs",
+    "path": "logs",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "midi_files",
+    "path": "midi_files",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "moddata",
+    "path": "moddata",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "mods",
+    "path": "mods",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "moonlight-global-datapacks",
+    "path": "moonlight-global-datapacks",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "patchouli_books",
+    "path": "patchouli_books",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "raven_apoth_dumps",
+    "path": "raven_apoth_dumps",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "raven_core_books",
+    "path": "raven_core_books",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "raven_core_dumps",
+    "path": "raven_core_dumps",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "resourcepacks",
+    "path": "resourcepacks",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "saves",
+    "path": "saves",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "schematics",
+    "path": "schematics",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "screenshots",
+    "path": "screenshots",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "shaderpacks",
+    "path": "shaderpacks",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "shelved",
+    "path": "shelved",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "soundfonts",
+    "path": "soundfonts",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": ".curseclient",
+    "path": ".curseclient",
+    "isDir": false,
+    "size": 36,
+    "ignored": true
+   },
+   {
+    "name": ".gitattributes",
+    "path": ".gitattributes",
+    "isDir": false,
+    "size": 86,
+    "ignored": false
+   },
+   {
+    "name": ".gitignore",
+    "path": ".gitignore",
+    "isDir": false,
+    "size": 3219,
+    "ignored": false
+   },
+   {
+    "name": "command_history.txt",
+    "path": "command_history.txt",
+    "isDir": false,
+    "size": 1461,
+    "ignored": true
+   },
+   {
+    "name": "EffekseerNativeForJava.dll",
+    "path": "EffekseerNativeForJava.dll",
+    "isDir": false,
+    "size": 2356736,
+    "ignored": true
+   },
+   {
+    "name": "minecraftinstance.json",
+    "path": "minecraftinstance.json",
+    "isDir": false,
+    "size": 2383362,
+    "ignored": true
+   },
+   {
+    "name": "mods.lock.json",
+    "path": "mods.lock.json",
+    "isDir": false,
+    "size": 111068,
+    "ignored": false
+   },
+   {
+    "name": "options.txt",
+    "path": "options.txt",
+    "isDir": false,
+    "size": 24296,
+    "ignored": false
+   },
+   {
+    "name": "packraven.toml",
+    "path": "packraven.toml",
+    "isDir": false,
+    "size": 280,
+    "ignored": false
+   },
+   {
+    "name": "patchouli_data.json",
+    "path": "patchouli_data.json",
+    "isDir": false,
+    "size": 70,
+    "ignored": true
+   },
+   {
+    "name": "ponders_watched.json",
+    "path": "ponders_watched.json",
+    "isDir": false,
+    "size": 2,
+    "ignored": true
+   },
+   {
+    "name": "servers.dat",
+    "path": "servers.dat",
+    "isDir": false,
+    "size": 100,
+    "ignored": true
+   },
+   {
+    "name": "user-prefs.json",
+    "path": "user-prefs.json",
+    "isDir": false,
+    "size": 3559748,
+    "ignored": true
+   },
+   {
+    "name": "usercache.json",
+    "path": "usercache.json",
+    "isDir": false,
+    "size": 208,
+    "ignored": true
+   },
+   {
+    "name": "usernamecache.json",
+    "path": "usernamecache.json",
+    "isDir": false,
+    "size": 105,
+    "ignored": true
+   }
+  ],
+  "config": [
+   {
+    "name": "accessorify",
+    "path": "config/accessorify",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "aether",
+    "path": "config/aether",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "ali",
+    "path": "config/ali",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "ami",
+    "path": "config/ami",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "apotheosis",
+    "path": "config/apotheosis",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "archers",
+    "path": "config/archers",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "archers_expansion",
+    "path": "config/archers_expansion",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "armory_rpgs",
+    "path": "config/armory_rpgs",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "arsenal",
+    "path": "config/arsenal",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "asynclogger",
+    "path": "config/asynclogger",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "attributefix",
+    "path": "config/attributefix",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "awi",
+    "path": "config/awi",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "bclib",
+    "path": "config/bclib",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "berserker_rpg",
+    "path": "config/berserker_rpg",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "bettercombat",
+    "path": "config/bettercombat",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "betterend",
+    "path": "config/betterend",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "betternether",
+    "path": "config/betternether",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "biomeswevegone",
+    "path": "config/biomeswevegone",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "bountiful",
+    "path": "config/bountiful",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "burnt",
+    "path": "config/burnt",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "collective",
+    "path": "config/collective",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "combat_roll",
+    "path": "config/combat_roll",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "CoroUtil",
+    "path": "config/CoroUtil",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "crash_assistant",
+    "path": "config/crash_assistant",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "drippyloadingscreen",
+    "path": "config/drippyloadingscreen",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "dynamic_difficulty",
+    "path": "config/dynamic_difficulty",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "euphoria_patcher",
+    "path": "config/euphoria_patcher",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "fabric",
+    "path": "config/fabric",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "fancymenu",
+    "path": "config/fancymenu",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "fancytoasts",
+    "path": "config/fancytoasts",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "fdbosses",
+    "path": "config/fdbosses",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "fdlib",
+    "path": "config/fdlib",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "forcemaster_rpg",
+    "path": "config/forcemaster_rpg",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "ftb-quests-entity-vis",
+    "path": "config/ftb-quests-entity-vis",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "ftbquests",
+    "path": "config/ftbquests",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "ftbquestsentityvis",
+    "path": "config/ftbquestsentityvis",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "fzzy_config",
+    "path": "config/fzzy_config",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "iceandfire",
+    "path": "config/iceandfire",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "incontrol",
+    "path": "config/incontrol",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "irons_spellbooks_spell_config",
+    "path": "config/irons_spellbooks_spell_config",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "jade",
+    "path": "config/jade",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "jei",
+    "path": "config/jei",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "jei_trim_hider",
+    "path": "config/jei_trim_hider",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "JLFork",
+    "path": "config/JLFork",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "konkrete",
+    "path": "config/konkrete",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "legendarysurvivaloverhaul",
+    "path": "config/legendarysurvivaloverhaul",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "legendarytabs",
+    "path": "config/legendarytabs",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "lootbeams",
+    "path": "config/lootbeams",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "mezz_config",
+    "path": "config/mezz_config",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "misctweaks",
+    "path": "config/misctweaks",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "modpack-update-checker",
+    "path": "config/modpack-update-checker",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "more_rpg_classes",
+    "path": "config/more_rpg_classes",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "NoChatReports",
+    "path": "config/NoChatReports",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "obscuria",
+    "path": "config/obscuria",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "paxi",
+    "path": "config/paxi",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "pickupnotifier",
+    "path": "config/pickupnotifier",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "punchy",
+    "path": "config/punchy",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "quark_emotes",
+    "path": "config/quark_emotes",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "raidsenhanced",
+    "path": "config/raidsenhanced",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "raven_core",
+    "path": "config/raven_core",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "raven_dnd_origins",
+    "path": "config/raven_dnd_origins",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "regions_unexplored",
+    "path": "config/regions_unexplored",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "reliable_recipes",
+    "path": "config/reliable_recipes",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "reliable_remover",
+    "path": "config/reliable_remover",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "rogues",
+    "path": "config/rogues",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "rpg_series",
+    "path": "config/rpg_series",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "servercore",
+    "path": "config/servercore",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "simple-rpc",
+    "path": "config/simple-rpc",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "simplybows",
+    "path": "config/simplybows",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "simplyswords",
+    "path": "config/simplyswords",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "simplytooltips",
+    "path": "config/simplytooltips",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "sound_physics_remastered",
+    "path": "config/sound_physics_remastered",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "spark",
+    "path": "config/spark",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "spell_engine",
+    "path": "config/spell_engine",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "spell_power",
+    "path": "config/spell_power",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "streamsreflowing",
+    "path": "config/streamsreflowing",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "subtle_effects",
+    "path": "config/subtle_effects",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "tooltipoverhaul",
+    "path": "config/tooltipoverhaul",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "valoria",
+    "path": "config/valoria",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "villagernames",
+    "path": "config/villagernames",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "wover",
+    "path": "config/wover",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "wyrmroost",
+    "path": "config/wyrmroost",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "aaa_particles-client.toml",
+    "path": "config/aaa_particles-client.toml",
+    "isDir": false,
+    "size": 103,
+    "ignored": false
+   },
+   {
+    "name": "abridged.json",
+    "path": "config/abridged.json",
+    "isDir": false,
+    "size": 396,
+    "ignored": false
+   },
+   {
+    "name": "accessories.json5",
+    "path": "config/accessories.json5",
+    "isDir": false,
+    "size": 925,
+    "ignored": false
+   },
+   {
+    "name": "accessories_compat.json5",
+    "path": "config/accessories_compat.json5",
+    "isDir": false,
+    "size": 224,
+    "ignored": false
+   },
+   {
+    "name": "aces_spell_utils-common.toml",
+    "path": "config/aces_spell_utils-common.toml",
+    "isDir": false,
+    "size": 660,
+    "ignored": false
+   },
+   {
+    "name": "aeroblender-common.toml",
+    "path": "config/aeroblender-common.toml",
+    "isDir": false,
+    "size": 197,
+    "ignored": false
+   },
+   {
+    "name": "aeroclaims-server-1.toml.bak",
+    "path": "config/aeroclaims-server-1.toml.bak",
+    "isDir": false,
+    "size": 1494,
+    "ignored": true
+   },
+   {
+    "name": "aeroclaims-server.toml",
+    "path": "config/aeroclaims-server.toml",
+    "isDir": false,
+    "size": 2089,
+    "ignored": false
+   },
+   {
+    "name": "aeronautics-server.toml",
+    "path": "config/aeronautics-server.toml",
+    "isDir": false,
+    "size": 3066,
+    "ignored": false
+   },
+   {
+    "name": "aeroworks-client.toml",
+    "path": "config/aeroworks-client.toml",
+    "isDir": false,
+    "size": 291,
+    "ignored": false
+   },
+   {
+    "name": "aeroworks-common.toml",
+    "path": "config/aeroworks-common.toml",
+    "isDir": false,
+    "size": 2769,
+    "ignored": false
+   },
+   {
+    "name": "aether-client.toml",
+    "path": "config/aether-client.toml",
+    "isDir": false,
+    "size": 3609,
+    "ignored": false
+   },
+   {
+    "name": "aether-common.toml",
+    "path": "config/aether-common.toml",
+    "isDir": false,
+    "size": 1377,
+    "ignored": false
+   },
+   {
+    "name": "aether-server.toml",
+    "path": "config/aether-server.toml",
+    "isDir": false,
+    "size": 3793,
+    "ignored": false
+   },
+   {
+    "name": "aether-startup.toml",
+    "path": "config/aether-startup.toml",
+    "isDir": false,
+    "size": 105,
+    "ignored": false
+   },
+   {
+    "name": "alltheleaks.json",
+    "path": "config/alltheleaks.json",
+    "isDir": false,
+    "size": 396,
+    "ignored": false
+   },
+   {
+    "name": "alshanex_familiars-server.toml",
+    "path": "config/alshanex_familiars-server.toml",
+    "isDir": false,
+    "size": 145,
+    "ignored": false
+   },
+   {
+    "name": "ambientsounds-client.json",
+    "path": "config/ambientsounds-client.json",
+    "isDir": false,
+    "size": 4198,
+    "ignored": false
+   },
+   {
+    "name": "amendments-client-1.toml.bak",
+    "path": "config/amendments-client-1.toml.bak",
+    "isDir": false,
+    "size": 5329,
+    "ignored": true
+   },
+   {
+    "name": "amendments-client-2.toml.bak",
+    "path": "config/amendments-client-2.toml.bak",
+    "isDir": false,
+    "size": 5213,
+    "ignored": true
+   },
+   {
+    "name": "amendments-client-3.toml.bak",
+    "path": "config/amendments-client-3.toml.bak",
+    "isDir": false,
+    "size": 5329,
+    "ignored": true
+   },
+   {
+    "name": "amendments-client-4.toml.bak",
+    "path": "config/amendments-client-4.toml.bak",
+    "isDir": false,
+    "size": 5213,
+    "ignored": true
+   },
+   {
+    "name": "amendments-client.toml",
+    "path": "config/amendments-client.toml",
+    "isDir": false,
+    "size": 5099,
+    "ignored": false
+   },
+   {
+    "name": "amendments-common.toml",
+    "path": "config/amendments-common.toml",
+    "isDir": false,
+    "size": 4960,
+    "ignored": false
+   },
+   {
+    "name": "ami-client.json",
+    "path": "config/ami-client.json",
+    "isDir": false,
+    "size": 5331,
+    "ignored": false
+   },
+   {
+    "name": "ami_view_preferences.json",
+    "path": "config/ami_view_preferences.json",
+    "isDir": false,
+    "size": 25,
+    "ignored": false
+   },
+   {
+    "name": "apoli-client.json",
+    "path": "config/apoli-client.json",
+    "isDir": false,
+    "size": 2,
+    "ignored": false
+   },
+   {
+    "name": "apoli-scripts.json",
+    "path": "config/apoli-scripts.json",
+    "isDir": false,
+    "size": 2,
+    "ignored": false
+   },
+   {
+    "name": "apothic_spawners.cfg",
+    "path": "config/apothic_spawners.cfg",
+    "isDir": false,
+    "size": 1145,
+    "ignored": false
+   },
+   {
+    "name": "appleskin-client.toml",
+    "path": "config/appleskin-client.toml",
+    "isDir": false,
+    "size": 1378,
+    "ignored": false
+   },
+   {
+    "name": "apprenticecodex-client.toml",
+    "path": "config/apprenticecodex-client.toml",
+    "isDir": false,
+    "size": 3506,
+    "ignored": false
+   },
+   {
+    "name": "apprenticecodex-common.toml",
+    "path": "config/apprenticecodex-common.toml",
+    "isDir": false,
+    "size": 370,
+    "ignored": false
+   },
+   {
+    "name": "apprenticecodex-server-1.toml.bak",
+    "path": "config/apprenticecodex-server-1.toml.bak",
+    "isDir": false,
+    "size": 43601,
+    "ignored": true
+   },
+   {
+    "name": "apprenticecodex-server.toml",
+    "path": "config/apprenticecodex-server.toml",
+    "isDir": false,
+    "size": 44754,
+    "ignored": false
+   },
+   {
+    "name": "ArmorDamageLimit.toml",
+    "path": "config/ArmorDamageLimit.toml",
+    "isDir": false,
+    "size": 222,
+    "ignored": false
+   },
+   {
+    "name": "asynclogger.toml",
+    "path": "config/asynclogger.toml",
+    "isDir": false,
+    "size": 2464,
+    "ignored": false
+   },
+   {
+    "name": "attributesetter-server.toml",
+    "path": "config/attributesetter-server.toml",
+    "isDir": false,
+    "size": 495,
+    "ignored": false
+   },
+   {
+    "name": "azurelib.json",
+    "path": "config/azurelib.json",
+    "isDir": false,
+    "size": 509,
+    "ignored": false
+   },
+   {
+    "name": "bathymetry.json5",
+    "path": "config/bathymetry.json5",
+    "isDir": false,
+    "size": 246,
+    "ignored": false
+   },
+   {
+    "name": "bcc-common.toml",
+    "path": "config/bcc-common.toml",
+    "isDir": false,
+    "size": 387,
+    "ignored": false
+   },
+   {
+    "name": "beltborne_lanterns_lamps.json",
+    "path": "config/beltborne_lanterns_lamps.json",
+    "isDir": false,
+    "size": 26,
+    "ignored": false
+   },
+   {
+    "name": "betteradvancements-client.toml",
+    "path": "config/betteradvancements-client.toml",
+    "isDir": false,
+    "size": 939,
+    "ignored": false
+   },
+   {
+    "name": "betterclouds-v1.json",
+    "path": "config/betterclouds-v1.json",
+    "isDir": false,
+    "size": 8927,
+    "ignored": false
+   },
+   {
+    "name": "betterworldloadingnf21.json",
+    "path": "config/betterworldloadingnf21.json",
+    "isDir": false,
+    "size": 59,
+    "ignored": false
+   },
+   {
+    "name": "bl_accessories_layer.json",
+    "path": "config/bl_accessories_layer.json",
+    "isDir": false,
+    "size": 39,
+    "ignored": false
+   },
+   {
+    "name": "block_factorys_bosses-client.toml",
+    "path": "config/block_factorys_bosses-client.toml",
+    "isDir": false,
+    "size": 2637,
+    "ignored": false
+   },
+   {
+    "name": "block_factorys_bosses-server.toml",
+    "path": "config/block_factorys_bosses-server.toml",
+    "isDir": false,
+    "size": 848,
+    "ignored": false
+   },
+   {
+    "name": "blueprint-client.toml",
+    "path": "config/blueprint-client.toml",
+    "isDir": false,
+    "size": 1035,
+    "ignored": false
+   },
+   {
+    "name": "blueprint-common.toml",
+    "path": "config/blueprint-common.toml",
+    "isDir": false,
+    "size": 523,
+    "ignored": false
+   },
+   {
+    "name": "bountiful_npc-common.toml",
+    "path": "config/bountiful_npc-common.toml",
+    "isDir": false,
+    "size": 601,
+    "ignored": false
+   },
+   {
+    "name": "brewinandchewin-client.toml",
+    "path": "config/brewinandchewin-client.toml",
+    "isDir": false,
+    "size": 1076,
+    "ignored": false
+   },
+   {
+    "name": "brewinandchewin-common.toml",
+    "path": "config/brewinandchewin-common.toml",
+    "isDir": false,
+    "size": 1346,
+    "ignored": false
+   },
+   {
+    "name": "burnt_additions.json",
+    "path": "config/burnt_additions.json",
+    "isDir": false,
+    "size": 875,
+    "ignored": false
+   },
+   {
+    "name": "burnt_basic.json",
+    "path": "config/burnt_basic.json",
+    "isDir": false,
+    "size": 1390,
+    "ignored": false
+   },
+   {
+    "name": "Butchery-1.toml.bak",
+    "path": "config/Butchery-1.toml.bak",
+    "isDir": false,
+    "size": 4676,
+    "ignored": true
+   },
+   {
+    "name": "Butchery.toml",
+    "path": "config/Butchery.toml",
+    "isDir": false,
+    "size": 5263,
+    "ignored": false
+   },
+   {
+    "name": "byepregen.toml",
+    "path": "config/byepregen.toml",
+    "isDir": false,
+    "size": 5041,
+    "ignored": false
+   },
+   {
+    "name": "c2me.toml",
+    "path": "config/c2me.toml",
+    "isDir": false,
+    "size": 12573,
+    "ignored": false
+   },
+   {
+    "name": "carryon-client.toml",
+    "path": "config/carryon-client.toml",
+    "isDir": false,
+    "size": 588,
+    "ignored": false
+   },
+   {
+    "name": "carryon-common-1.toml.bak",
+    "path": "config/carryon-common-1.toml.bak",
+    "isDir": false,
+    "size": 9108,
+    "ignored": true
+   },
+   {
+    "name": "carryon-common.toml",
+    "path": "config/carryon-common.toml",
+    "isDir": false,
+    "size": 9109,
+    "ignored": false
+   },
+   {
+    "name": "cataclysm-client.toml",
+    "path": "config/cataclysm-client.toml",
+    "isDir": false,
+    "size": 539,
+    "ignored": false
+   },
+   {
+    "name": "cataclysm-common.toml",
+    "path": "config/cataclysm-common.toml",
+    "isDir": false,
+    "size": 30664,
+    "ignored": false
+   },
+   {
+    "name": "cataclysm-redurable-config.json",
+    "path": "config/cataclysm-redurable-config.json",
+    "isDir": false,
+    "size": 8712,
+    "ignored": false
+   },
+   {
+    "name": "cataclysm_spellbooks-server.toml",
+    "path": "config/cataclysm_spellbooks-server.toml",
+    "isDir": false,
+    "size": 123,
+    "ignored": false
+   },
+   {
+    "name": "cerulean-client.toml",
+    "path": "config/cerulean-client.toml",
+    "isDir": false,
+    "size": 166,
+    "ignored": false
+   },
+   {
+    "name": "cerulean-common.toml",
+    "path": "config/cerulean-common.toml",
+    "isDir": false,
+    "size": 49,
+    "ignored": false
+   },
+   {
+    "name": "cerulean-server.toml",
+    "path": "config/cerulean-server.toml",
+    "isDir": false,
+    "size": 44,
+    "ignored": false
+   },
+   {
+    "name": "cerulean.yml",
+    "path": "config/cerulean.yml",
+    "isDir": false,
+    "size": 2475,
+    "ignored": false
+   },
+   {
+    "name": "champions-server-1.toml.bak",
+    "path": "config/champions-server-1.toml.bak",
+    "isDir": false,
+    "size": 3782,
+    "ignored": true
+   },
+   {
+    "name": "champions-server.toml",
+    "path": "config/champions-server.toml",
+    "isDir": false,
+    "size": 6415,
+    "ignored": false
+   },
+   {
+    "name": "chat_heads.json5",
+    "path": "config/chat_heads.json5",
+    "isDir": false,
+    "size": 229,
+    "ignored": false
+   },
+   {
+    "name": "chefsdelight-common.toml",
+    "path": "config/chefsdelight-common.toml",
+    "isDir": false,
+    "size": 728,
+    "ignored": false
+   },
+   {
+    "name": "clientsort-server.json",
+    "path": "config/clientsort-server.json",
+    "isDir": false,
+    "size": 1220,
+    "ignored": false
+   },
+   {
+    "name": "clientsort.json",
+    "path": "config/clientsort.json",
+    "isDir": false,
+    "size": 5881,
+    "ignored": false
+   },
+   {
+    "name": "clockwork.toml",
+    "path": "config/clockwork.toml",
+    "isDir": false,
+    "size": 2833,
+    "ignored": false
+   },
+   {
+    "name": "collective.json5",
+    "path": "config/collective.json5",
+    "isDir": false,
+    "size": 2471,
+    "ignored": false
+   },
+   {
+    "name": "colorwheel-client.toml",
+    "path": "config/colorwheel-client.toml",
+    "isDir": false,
+    "size": 273,
+    "ignored": false
+   },
+   {
+    "name": "comforts-common.toml",
+    "path": "config/comforts-common.toml",
+    "isDir": false,
+    "size": 189,
+    "ignored": false
+   },
+   {
+    "name": "comforts-server.toml",
+    "path": "config/comforts-server.toml",
+    "isDir": false,
+    "size": 1851,
+    "ignored": false
+   },
+   {
+    "name": "connectivity.json",
+    "path": "config/connectivity.json",
+    "isDir": false,
+    "size": 1721,
+    "ignored": false
+   },
+   {
+    "name": "connector.json",
+    "path": "config/connector.json",
+    "isDir": false,
+    "size": 176,
+    "ignored": false
+   },
+   {
+    "name": "connectorextras_energy_bridge-common.toml",
+    "path": "config/connectorextras_energy_bridge-common.toml",
+    "isDir": false,
+    "size": 375,
+    "ignored": false
+   },
+   {
+    "name": "crawl.properties",
+    "path": "config/crawl.properties",
+    "isDir": false,
+    "size": 61,
+    "ignored": false
+   },
+   {
+    "name": "create-client.toml",
+    "path": "config/create-client.toml",
+    "isDir": false,
+    "size": 4795,
+    "ignored": false
+   },
+   {
+    "name": "create-common.toml",
+    "path": "config/create-common.toml",
+    "isDir": false,
+    "size": 153,
+    "ignored": false
+   },
+   {
+    "name": "create-server.toml",
+    "path": "config/create-server.toml",
+    "isDir": false,
+    "size": 16890,
+    "ignored": false
+   },
+   {
+    "name": "create_aeronautics_throwable_rope_connector-common.toml",
+    "path": "config/create_aeronautics_throwable_rope_connector-common.toml",
+    "isDir": false,
+    "size": 2221,
+    "ignored": false
+   },
+   {
+    "name": "create_lnl-server.toml",
+    "path": "config/create_lnl-server.toml",
+    "isDir": false,
+    "size": 434,
+    "ignored": false
+   },
+   {
+    "name": "create_wizardry-common.toml",
+    "path": "config/create_wizardry-common.toml",
+    "isDir": false,
+    "size": 4753,
+    "ignored": false
+   },
+   {
+    "name": "createpolyphony-common.toml",
+    "path": "config/createpolyphony-common.toml",
+    "isDir": false,
+    "size": 3369,
+    "ignored": false
+   },
+   {
+    "name": "creativecore-client.json",
+    "path": "config/creativecore-client.json",
+    "isDir": false,
+    "size": 23,
+    "ignored": false
+   },
+   {
+    "name": "creativecore.json",
+    "path": "config/creativecore.json",
+    "isDir": false,
+    "size": 274,
+    "ignored": false
+   },
+   {
+    "name": "crittersandcompanions-common.json5",
+    "path": "config/crittersandcompanions-common.json5",
+    "isDir": false,
+    "size": 3836,
+    "ignored": false
+   },
+   {
+    "name": "cumulus_menus-client.toml",
+    "path": "config/cumulus_menus-client.toml",
+    "isDir": false,
+    "size": 750,
+    "ignored": false
+   },
+   {
+    "name": "cupboard.json",
+    "path": "config/cupboard.json",
+    "isDir": false,
+    "size": 1277,
+    "ignored": false
+   },
+   {
+    "name": "curios-client.toml",
+    "path": "config/curios-client.toml",
+    "isDir": false,
+    "size": 766,
+    "ignored": false
+   },
+   {
+    "name": "curios-common.toml",
+    "path": "config/curios-common.toml",
+    "isDir": false,
+    "size": 234,
+    "ignored": false
+   },
+   {
+    "name": "curios-server.toml",
+    "path": "config/curios-server.toml",
+    "isDir": false,
+    "size": 483,
+    "ignored": false
+   },
+   {
+    "name": "darkdoppelganger-common.toml",
+    "path": "config/darkdoppelganger-common.toml",
+    "isDir": false,
+    "size": 4706,
+    "ignored": false
+   },
+   {
+    "name": "deep_aether-client.toml",
+    "path": "config/deep_aether-client.toml",
+    "isDir": false,
+    "size": 550,
+    "ignored": false
+   },
+   {
+    "name": "deep_aether-common-1.toml.bak",
+    "path": "config/deep_aether-common-1.toml.bak",
+    "isDir": false,
+    "size": 2657,
+    "ignored": true
+   },
+   {
+    "name": "deep_aether-common.toml",
+    "path": "config/deep_aether-common.toml",
+    "isDir": false,
+    "size": 3191,
+    "ignored": false
+   },
+   {
+    "name": "deep_aether-server.toml",
+    "path": "config/deep_aether-server.toml",
+    "isDir": false,
+    "size": 454,
+    "ignored": false
+   },
+   {
+    "name": "discerning_the_eldritch-common-1.toml.bak",
+    "path": "config/discerning_the_eldritch-common-1.toml.bak",
+    "isDir": false,
+    "size": 2386,
+    "ignored": true
+   },
+   {
+    "name": "discerning_the_eldritch-common-2.toml.bak",
+    "path": "config/discerning_the_eldritch-common-2.toml.bak",
+    "isDir": false,
+    "size": 2386,
+    "ignored": true
+   },
+   {
+    "name": "discerning_the_eldritch-common-3.toml.bak",
+    "path": "config/discerning_the_eldritch-common-3.toml.bak",
+    "isDir": false,
+    "size": 2386,
+    "ignored": true
+   },
+   {
+    "name": "discerning_the_eldritch-common-4.toml.bak",
+    "path": "config/discerning_the_eldritch-common-4.toml.bak",
+    "isDir": false,
+    "size": 2386,
+    "ignored": true
+   },
+   {
+    "name": "discerning_the_eldritch-common-5.toml.bak",
+    "path": "config/discerning_the_eldritch-common-5.toml.bak",
+    "isDir": false,
+    "size": 2386,
+    "ignored": true
+   },
+   {
+    "name": "discerning_the_eldritch-common.toml",
+    "path": "config/discerning_the_eldritch-common.toml",
+    "isDir": false,
+    "size": 2386,
+    "ignored": false
+   },
+   {
+    "name": "dndesires-client.toml",
+    "path": "config/dndesires-client.toml",
+    "isDir": false,
+    "size": 1156,
+    "ignored": false
+   },
+   {
+    "name": "dndesires-server.toml",
+    "path": "config/dndesires-server.toml",
+    "isDir": false,
+    "size": 1971,
+    "ignored": false
+   },
+   {
+    "name": "doubledoors.json5",
+    "path": "config/doubledoors.json5",
+    "isDir": false,
+    "size": 981,
+    "ignored": false
+   },
+   {
+    "name": "dragonfight.json",
+    "path": "config/dragonfight.json",
+    "isDir": false,
+    "size": 3951,
+    "ignored": false
+   },
+   {
+    "name": "dramaticdoors-startup.toml",
+    "path": "config/dramaticdoors-startup.toml",
+    "isDir": false,
+    "size": 609,
+    "ignored": false
+   },
+   {
+    "name": "dummmmmmy-client.toml",
+    "path": "config/dummmmmmy-client.toml",
+    "isDir": false,
+    "size": 2410,
+    "ignored": false
+   },
+   {
+    "name": "dummmmmmy-common.toml",
+    "path": "config/dummmmmmy-common.toml",
+    "isDir": false,
+    "size": 1511,
+    "ignored": false
+   },
+   {
+    "name": "dungeonsdelight-client-config.toml",
+    "path": "config/dungeonsdelight-client-config.toml",
+    "isDir": false,
+    "size": 752,
+    "ignored": false
+   },
+   {
+    "name": "dungeonsdelight-config.toml",
+    "path": "config/dungeonsdelight-config.toml",
+    "isDir": false,
+    "size": 884,
+    "ignored": false
+   },
+   {
+    "name": "dynamic_resource_bars-client.json",
+    "path": "config/dynamic_resource_bars-client.json",
+    "isDir": false,
+    "size": 4230,
+    "ignored": false
+   },
+   {
+    "name": "dynamicvillage-common-1.toml.bak",
+    "path": "config/dynamicvillage-common-1.toml.bak",
+    "isDir": false,
+    "size": 680,
+    "ignored": true
+   },
+   {
+    "name": "dynamicvillage-common.toml",
+    "path": "config/dynamicvillage-common.toml",
+    "isDir": false,
+    "size": 3966,
+    "ignored": false
+   },
+   {
+    "name": "elemental_synergies-common.toml",
+    "path": "config/elemental_synergies-common.toml",
+    "isDir": false,
+    "size": 123,
+    "ignored": false
+   },
+   {
+    "name": "emf_compat.json",
+    "path": "config/emf_compat.json",
+    "isDir": false,
+    "size": 59,
+    "ignored": false
+   },
+   {
+    "name": "ender_trigon_unofficial-common.toml",
+    "path": "config/ender_trigon_unofficial-common.toml",
+    "isDir": false,
+    "size": 784,
+    "ignored": false
+   },
+   {
+    "name": "entity_model_features.json",
+    "path": "config/entity_model_features.json",
+    "isDir": false,
+    "size": 1255,
+    "ignored": false
+   },
+   {
+    "name": "entity_texture_features.json",
+    "path": "config/entity_texture_features.json",
+    "isDir": false,
+    "size": 1452,
+    "ignored": false
+   },
+   {
+    "name": "entityculling.json",
+    "path": "config/entityculling.json",
+    "isDir": false,
+    "size": 2247,
+    "ignored": false
+   },
+   {
+    "name": "ess_requiem-common.toml",
+    "path": "config/ess_requiem-common.toml",
+    "isDir": false,
+    "size": 330,
+    "ignored": false
+   },
+   {
+    "name": "etf_warnings.json",
+    "path": "config/etf_warnings.json",
+    "isDir": false,
+    "size": 28,
+    "ignored": false
+   },
+   {
+    "name": "familiarslib-server.toml",
+    "path": "config/familiarslib-server.toml",
+    "isDir": false,
+    "size": 142,
+    "ignored": false
+   },
+   {
+    "name": "farmersdelight-client.toml",
+    "path": "config/farmersdelight-client.toml",
+    "isDir": false,
+    "size": 476,
+    "ignored": false
+   },
+   {
+    "name": "farmersdelight-common.toml",
+    "path": "config/farmersdelight-common.toml",
+    "isDir": false,
+    "size": 3817,
+    "ignored": false
+   },
+   {
+    "name": "ferritecore-mixin.toml",
+    "path": "config/ferritecore-mixin.toml",
+    "isDir": false,
+    "size": 1603,
+    "ignored": false
+   },
+   {
+    "name": "flerovium.json",
+    "path": "config/flerovium.json",
+    "isDir": false,
+    "size": 234,
+    "ignored": false
+   },
+   {
+    "name": "flywheel-client.toml",
+    "path": "config/flywheel-client.toml",
+    "isDir": false,
+    "size": 637,
+    "ignored": false
+   },
+   {
+    "name": "fml.toml",
+    "path": "config/fml.toml",
+    "isDir": false,
+    "size": 2083,
+    "ignored": false
+   },
+   {
+    "name": "ftbchunks-client.snbt",
+    "path": "config/ftbchunks-client.snbt",
+    "isDir": false,
+    "size": 8002,
+    "ignored": false
+   },
+   {
+    "name": "ftbchunks-world.snbt",
+    "path": "config/ftbchunks-world.snbt",
+    "isDir": false,
+    "size": 9334,
+    "ignored": false
+   },
+   {
+    "name": "ftblibrary-client.snbt",
+    "path": "config/ftblibrary-client.snbt",
+    "isDir": false,
+    "size": 1799,
+    "ignored": false
+   },
+   {
+    "name": "ftbquests-client.snbt",
+    "path": "config/ftbquests-client.snbt",
+    "isDir": false,
+    "size": 1551,
+    "ignored": false
+   },
+   {
+    "name": "ftbteams-server.snbt",
+    "path": "config/ftbteams-server.snbt",
+    "isDir": false,
+    "size": 1112,
+    "ignored": false
+   },
+   {
+    "name": "ftbxmodcompat.snbt",
+    "path": "config/ftbxmodcompat.snbt",
+    "isDir": false,
+    "size": 880,
+    "ignored": false
+   },
+   {
+    "name": "fwa.json",
+    "path": "config/fwa.json",
+    "isDir": false,
+    "size": 2,
+    "ignored": false
+   },
+   {
+    "name": "gbf.json",
+    "path": "config/gbf.json",
+    "isDir": false,
+    "size": 104,
+    "ignored": false
+   },
+   {
+    "name": "gnetum.json",
+    "path": "config/gnetum.json",
+    "isDir": false,
+    "size": 9119,
+    "ignored": false
+   },
+   {
+    "name": "gnkinetics-client.toml",
+    "path": "config/gnkinetics-client.toml",
+    "isDir": false,
+    "size": 214,
+    "ignored": false
+   },
+   {
+    "name": "gnkinetics-server.toml",
+    "path": "config/gnkinetics-server.toml",
+    "isDir": false,
+    "size": 1863,
+    "ignored": false
+   },
+   {
+    "name": "goblintraders-entities.toml",
+    "path": "config/goblintraders-entities.toml",
+    "isDir": false,
+    "size": 7017,
+    "ignored": false
+   },
+   {
+    "name": "golemoverhaul.jsonc",
+    "path": "config/golemoverhaul.jsonc",
+    "isDir": false,
+    "size": 332,
+    "ignored": false
+   },
+   {
+    "name": "guardvillagers-client.toml",
+    "path": "config/guardvillagers-client.toml",
+    "isDir": false,
+    "size": 340,
+    "ignored": false
+   },
+   {
+    "name": "guardvillagers-common.toml",
+    "path": "config/guardvillagers-common.toml",
+    "isDir": false,
+    "size": 6189,
+    "ignored": false
+   },
+   {
+    "name": "guardvillagers-startup.toml",
+    "path": "config/guardvillagers-startup.toml",
+    "isDir": false,
+    "size": 195,
+    "ignored": false
+   },
+   {
+    "name": "hackersandslashers-client.toml",
+    "path": "config/hackersandslashers-client.toml",
+    "isDir": false,
+    "size": 682,
+    "ignored": false
+   },
+   {
+    "name": "hackersandslashers-server.toml",
+    "path": "config/hackersandslashers-server.toml",
+    "isDir": false,
+    "size": 4500,
+    "ignored": false
+   },
+   {
+    "name": "hardcorerevival-common.toml",
+    "path": "config/hardcorerevival-common.toml",
+    "isDir": false,
+    "size": 2713,
+    "ignored": false
+   },
+   {
+    "name": "hazennstuff-common.toml",
+    "path": "config/hazennstuff-common.toml",
+    "isDir": false,
+    "size": 232,
+    "ignored": false
+   },
+   {
+    "name": "healthbars-client-1.toml.bak",
+    "path": "config/healthbars-client-1.toml.bak",
+    "isDir": false,
+    "size": 10542,
+    "ignored": true
+   },
+   {
+    "name": "healthbars-client.toml",
+    "path": "config/healthbars-client.toml",
+    "isDir": false,
+    "size": 10546,
+    "ignored": false
+   },
+   {
+    "name": "healthbars_dd_compat-client.toml",
+    "path": "config/healthbars_dd_compat-client.toml",
+    "isDir": false,
+    "size": 80,
+    "ignored": false
+   },
+   {
+    "name": "horseman-client.toml",
+    "path": "config/horseman-client.toml",
+    "isDir": false,
+    "size": 2455,
+    "ignored": false
+   },
+   {
+    "name": "horseman-common.toml",
+    "path": "config/horseman-common.toml",
+    "isDir": false,
+    "size": 137,
+    "ignored": false
+   },
+   {
+    "name": "horseman-server.toml",
+    "path": "config/horseman-server.toml",
+    "isDir": false,
+    "size": 6271,
+    "ignored": false
+   },
+   {
+    "name": "hybrid_aquatic.json",
+    "path": "config/hybrid_aquatic.json",
+    "isDir": false,
+    "size": 82746,
+    "ignored": false
+   },
+   {
+    "name": "icarus.jsonc",
+    "path": "config/icarus.jsonc",
+    "isDir": false,
+    "size": 820,
+    "ignored": false
+   },
+   {
+    "name": "idas-neoforge-1_21.toml",
+    "path": "config/idas-neoforge-1_21.toml",
+    "isDir": false,
+    "size": 689,
+    "ignored": false
+   },
+   {
+    "name": "immediatelyfast.json",
+    "path": "config/immediatelyfast.json",
+    "isDir": false,
+    "size": 1114,
+    "ignored": false
+   },
+   {
+    "name": "immersive_melodies.json",
+    "path": "config/immersive_melodies.json",
+    "isDir": false,
+    "size": 1187,
+    "ignored": false
+   },
+   {
+    "name": "incontrol-server.toml",
+    "path": "config/incontrol-server.toml",
+    "isDir": false,
+    "size": 388,
+    "ignored": false
+   },
+   {
+    "name": "integrated_villages-neoforge-1_21.toml",
+    "path": "config/integrated_villages-neoforge-1_21.toml",
+    "isDir": false,
+    "size": 604,
+    "ignored": false
+   },
+   {
+    "name": "iris-excluded.json",
+    "path": "config/iris-excluded.json",
+    "isDir": false,
+    "size": 31,
+    "ignored": false
+   },
+   {
+    "name": "iris.properties",
+    "path": "config/iris.properties",
+    "isDir": false,
+    "size": 334,
+    "ignored": false
+   },
+   {
+    "name": "iris_shader_folder.properties",
+    "path": "config/iris_shader_folder.properties",
+    "isDir": false,
+    "size": 6646,
+    "ignored": false
+   },
+   {
+    "name": "irisSearchSettings.toml",
+    "path": "config/irisSearchSettings.toml",
+    "isDir": false,
+    "size": 834,
+    "ignored": false
+   },
+   {
+    "name": "irons_jewelry-server.toml",
+    "path": "config/irons_jewelry-server.toml",
+    "isDir": false,
+    "size": 356,
+    "ignored": false
+   },
+   {
+    "name": "irons_spellbooks-client.toml",
+    "path": "config/irons_spellbooks-client.toml",
+    "isDir": false,
+    "size": 3572,
+    "ignored": false
+   },
+   {
+    "name": "irons_spellbooks-server.toml",
+    "path": "config/irons_spellbooks-server.toml",
+    "isDir": false,
+    "size": 5334,
+    "ignored": false
+   },
+   {
+    "name": "iss_magicfromtheeast-server.toml",
+    "path": "config/iss_magicfromtheeast-server.toml",
+    "isDir": false,
+    "size": 787,
+    "ignored": false
+   },
+   {
+    "name": "itemphysic-client.json",
+    "path": "config/itemphysic-client.json",
+    "isDir": false,
+    "size": 654,
+    "ignored": false
+   },
+   {
+    "name": "itemphysic.json",
+    "path": "config/itemphysic.json",
+    "isDir": false,
+    "size": 10655,
+    "ignored": false
+   },
+   {
+    "name": "ixeris.toml",
+    "path": "config/ixeris.toml",
+    "isDir": false,
+    "size": 2346,
+    "ignored": false
+   },
+   {
+    "name": "jasione.toml",
+    "path": "config/jasione.toml",
+    "isDir": false,
+    "size": 550,
+    "ignored": false
+   },
+   {
+    "name": "jei-server.toml",
+    "path": "config/jei-server.toml",
+    "isDir": false,
+    "size": 324,
+    "ignored": false
+   },
+   {
+    "name": "jmi-client.toml",
+    "path": "config/jmi-client.toml",
+    "isDir": false,
+    "size": 1067,
+    "ignored": false
+   },
+   {
+    "name": "journeymap-server.toml",
+    "path": "config/journeymap-server.toml",
+    "isDir": false,
+    "size": 550,
+    "ignored": false
+   },
+   {
+    "name": "jupiter.json",
+    "path": "config/jupiter.json",
+    "isDir": false,
+    "size": 171,
+    "ignored": false
+   },
+   {
+    "name": "kaleidoscope_tavern-common.toml",
+    "path": "config/kaleidoscope_tavern-common.toml",
+    "isDir": false,
+    "size": 867,
+    "ignored": false
+   },
+   {
+    "name": "kerria.json",
+    "path": "config/kerria.json",
+    "isDir": false,
+    "size": 119,
+    "ignored": false
+   },
+   {
+    "name": "keybindatlas-client.toml",
+    "path": "config/keybindatlas-client.toml",
+    "isDir": false,
+    "size": 2572,
+    "ignored": false
+   },
+   {
+    "name": "knightlib.toml",
+    "path": "config/knightlib.toml",
+    "isDir": false,
+    "size": 919,
+    "ignored": false
+   },
+   {
+    "name": "krypton_fnp.yaml",
+    "path": "config/krypton_fnp.yaml",
+    "isDir": false,
+    "size": 947,
+    "ignored": false
+   },
+   {
+    "name": "lambdynlights.toml",
+    "path": "config/lambdynlights.toml",
+    "isDir": false,
+    "size": 55934,
+    "ignored": false
+   },
+   {
+    "name": "leavesbegone-server.toml",
+    "path": "config/leavesbegone-server.toml",
+    "isDir": false,
+    "size": 442,
+    "ignored": false
+   },
+   {
+    "name": "legendary_monsters-common.toml",
+    "path": "config/legendary_monsters-common.toml",
+    "isDir": false,
+    "size": 23995,
+    "ignored": false
+   },
+   {
+    "name": "legendary_monsters-common.toml.bak",
+    "path": "config/legendary_monsters-common.toml.bak",
+    "isDir": false,
+    "size": 23995,
+    "ignored": true
+   },
+   {
+    "name": "legendarysurvivaloverhaul-client.toml",
+    "path": "config/legendarysurvivaloverhaul-client.toml",
+    "isDir": false,
+    "size": 5407,
+    "ignored": false
+   },
+   {
+    "name": "legendarysurvivaloverhaul-common.toml",
+    "path": "config/legendarysurvivaloverhaul-common.toml",
+    "isDir": false,
+    "size": 35964,
+    "ignored": false
+   },
+   {
+    "name": "legendarysurvivaloverhaul-common.toml.pre-bodydamage",
+    "path": "config/legendarysurvivaloverhaul-common.toml.pre-bodydamage",
+    "isDir": false,
+    "size": 36775,
+    "ignored": false
+   },
+   {
+    "name": "legendarysurvivaloverhaul-common.toml.pre-tempscale",
+    "path": "config/legendarysurvivaloverhaul-common.toml.pre-tempscale",
+    "isDir": false,
+    "size": 35967,
+    "ignored": false
+   },
+   {
+    "name": "legendarytooltips.toml",
+    "path": "config/legendarytooltips.toml",
+    "isDir": false,
+    "size": 9333,
+    "ignored": false
+   },
+   {
+    "name": "lithium.properties",
+    "path": "config/lithium.properties",
+    "isDir": false,
+    "size": 267,
+    "ignored": false
+   },
+   {
+    "name": "lithostitched.json",
+    "path": "config/lithostitched.json",
+    "isDir": false,
+    "size": 242,
+    "ignored": false
+   },
+   {
+    "name": "lmft.json",
+    "path": "config/lmft.json",
+    "isDir": false,
+    "size": 65,
+    "ignored": false
+   },
+   {
+    "name": "logbegone.json",
+    "path": "config/logbegone.json",
+    "isDir": false,
+    "size": 216,
+    "ignored": false
+   },
+   {
+    "name": "lootintegrations.json",
+    "path": "config/lootintegrations.json",
+    "isDir": false,
+    "size": 968,
+    "ignored": false
+   },
+   {
+    "name": "Luminous_Beasts_Configuration.toml",
+    "path": "config/Luminous_Beasts_Configuration.toml",
+    "isDir": false,
+    "size": 3714,
+    "ignored": false
+   },
+   {
+    "name": "Luminous_Nether_Server_Configuration.toml",
+    "path": "config/Luminous_Nether_Server_Configuration.toml",
+    "isDir": false,
+    "size": 3161,
+    "ignored": false
+   },
+   {
+    "name": "magic_realms-common-1.toml.bak",
+    "path": "config/magic_realms-common-1.toml.bak",
+    "isDir": false,
+    "size": 3446,
+    "ignored": true
+   },
+   {
+    "name": "magic_realms-common-2.toml.bak",
+    "path": "config/magic_realms-common-2.toml.bak",
+    "isDir": false,
+    "size": 4283,
+    "ignored": true
+   },
+   {
+    "name": "magic_realms-common.toml",
+    "path": "config/magic_realms-common.toml",
+    "isDir": false,
+    "size": 3621,
+    "ignored": false
+   },
+   {
+    "name": "maxhealthfix.json",
+    "path": "config/maxhealthfix.json",
+    "isDir": false,
+    "size": 132,
+    "ignored": false
+   },
+   {
+    "name": "midnightlib.json",
+    "path": "config/midnightlib.json",
+    "isDir": false,
+    "size": 37,
+    "ignored": false
+   },
+   {
+    "name": "minecraft-cursor.json",
+    "path": "config/minecraft-cursor.json",
+    "isDir": false,
+    "size": 1990,
+    "ignored": false
+   },
+   {
+    "name": "modernfix-common.toml",
+    "path": "config/modernfix-common.toml",
+    "isDir": false,
+    "size": 105,
+    "ignored": false
+   },
+   {
+    "name": "modernfix-mixins.properties",
+    "path": "config/modernfix-mixins.properties",
+    "isDir": false,
+    "size": 5582,
+    "ignored": false
+   },
+   {
+    "name": "modonomicon-client.toml",
+    "path": "config/modonomicon-client.toml",
+    "isDir": false,
+    "size": 563,
+    "ignored": false
+   },
+   {
+    "name": "moogs_structures.json",
+    "path": "config/moogs_structures.json",
+    "isDir": false,
+    "size": 637,
+    "ignored": false
+   },
+   {
+    "name": "moonlight-client-1.toml.bak",
+    "path": "config/moonlight-client-1.toml.bak",
+    "isDir": false,
+    "size": 2136,
+    "ignored": true
+   },
+   {
+    "name": "moonlight-client.toml",
+    "path": "config/moonlight-client.toml",
+    "isDir": false,
+    "size": 2320,
+    "ignored": false
+   },
+   {
+    "name": "moonlight-common.toml",
+    "path": "config/moonlight-common.toml",
+    "isDir": false,
+    "size": 960,
+    "ignored": false
+   },
+   {
+    "name": "MouseTweaks.cfg",
+    "path": "config/MouseTweaks.cfg",
+    "isDir": false,
+    "size": 135,
+    "ignored": false
+   },
+   {
+    "name": "mowziesmobs-client.toml",
+    "path": "config/mowziesmobs-client.toml",
+    "isDir": false,
+    "size": 980,
+    "ignored": false
+   },
+   {
+    "name": "mowziesmobs-common.toml",
+    "path": "config/mowziesmobs-common.toml",
+    "isDir": false,
+    "size": 37854,
+    "ignored": false
+   },
+   {
+    "name": "mynethersdelight-common.toml",
+    "path": "config/mynethersdelight-common.toml",
+    "isDir": false,
+    "size": 1912,
+    "ignored": false
+   },
+   {
+    "name": "mythsandlegends-common-1.toml.bak",
+    "path": "config/mythsandlegends-common-1.toml.bak",
+    "isDir": false,
+    "size": 6071,
+    "ignored": true
+   },
+   {
+    "name": "mythsandlegends-common.toml",
+    "path": "config/mythsandlegends-common.toml",
+    "isDir": false,
+    "size": 8506,
+    "ignored": false
+   },
+   {
+    "name": "naturalist-client.toml",
+    "path": "config/naturalist-client.toml",
+    "isDir": false,
+    "size": 26,
+    "ignored": false
+   },
+   {
+    "name": "naturalist-server.toml",
+    "path": "config/naturalist-server.toml",
+    "isDir": false,
+    "size": 1525,
+    "ignored": false
+   },
+   {
+    "name": "naturescompass-client.toml",
+    "path": "config/naturescompass-client.toml",
+    "isDir": false,
+    "size": 444,
+    "ignored": false
+   },
+   {
+    "name": "naturescompass-common.toml",
+    "path": "config/naturescompass-common.toml",
+    "isDir": false,
+    "size": 2227,
+    "ignored": false
+   },
+   {
+    "name": "neoforge-client.toml",
+    "path": "config/neoforge-client.toml",
+    "isDir": false,
+    "size": 578,
+    "ignored": false
+   },
+   {
+    "name": "neoforge-common.toml",
+    "path": "config/neoforge-common.toml",
+    "isDir": false,
+    "size": 772,
+    "ignored": false
+   },
+   {
+    "name": "neoforge-server.toml",
+    "path": "config/neoforge-server.toml",
+    "isDir": false,
+    "size": 1177,
+    "ignored": false
+   },
+   {
+    "name": "neruina.json5",
+    "path": "config/neruina.json5",
+    "isDir": false,
+    "size": 352,
+    "ignored": false
+   },
+   {
+    "name": "notenoughanimations.json",
+    "path": "config/notenoughanimations.json",
+    "isDir": false,
+    "size": 8931,
+    "ignored": false
+   },
+   {
+    "name": "nowheel.json",
+    "path": "config/nowheel.json",
+    "isDir": false,
+    "size": 113,
+    "ignored": false
+   },
+   {
+    "name": "numismaticoverhaul-client.toml",
+    "path": "config/numismaticoverhaul-client.toml",
+    "isDir": false,
+    "size": 361,
+    "ignored": false
+   },
+   {
+    "name": "numismaticoverhaul-startup.toml",
+    "path": "config/numismaticoverhaul-startup.toml",
+    "isDir": false,
+    "size": 1352,
+    "ignored": false
+   },
+   {
+    "name": "obscuraspanoramica-client.toml",
+    "path": "config/obscuraspanoramica-client.toml",
+    "isDir": false,
+    "size": 376,
+    "ignored": false
+   },
+   {
+    "name": "offroad-server.toml",
+    "path": "config/offroad-server.toml",
+    "isDir": false,
+    "size": 1167,
+    "ignored": false
+   },
+   {
+    "name": "openpartiesandclaims-server.toml",
+    "path": "config/openpartiesandclaims-server.toml",
+    "isDir": false,
+    "size": 49698,
+    "ignored": false
+   },
+   {
+    "name": "origins-client.toml",
+    "path": "config/origins-client.toml",
+    "isDir": false,
+    "size": 388,
+    "ignored": false
+   },
+   {
+    "name": "overflowingbars-client.toml",
+    "path": "config/overflowingbars-client.toml",
+    "isDir": false,
+    "size": 3868,
+    "ignored": false
+   },
+   {
+    "name": "packetfixer.properties",
+    "path": "config/packetfixer.properties",
+    "isDir": false,
+    "size": 493,
+    "ignored": true
+   },
+   {
+    "name": "particle_core_config.toml",
+    "path": "config/particle_core_config.toml",
+    "isDir": false,
+    "size": 419,
+    "ignored": false
+   },
+   {
+    "name": "particle_core_disabled_optimizations_v2.json",
+    "path": "config/particle_core_disabled_optimizations_v2.json",
+    "isDir": false,
+    "size": 1558,
+    "ignored": false
+   },
+   {
+    "name": "particle_effects.json5",
+    "path": "config/particle_effects.json5",
+    "isDir": false,
+    "size": 25,
+    "ignored": false
+   },
+   {
+    "name": "patchouli-client.toml",
+    "path": "config/patchouli-client.toml",
+    "isDir": false,
+    "size": 1089,
+    "ignored": false
+   },
+   {
+    "name": "paxi-neoforge-1_21.toml",
+    "path": "config/paxi-neoforge-1_21.toml",
+    "isDir": false,
+    "size": 523,
+    "ignored": false
+   },
+   {
+    "name": "perception.yaml",
+    "path": "config/perception.yaml",
+    "isDir": false,
+    "size": 776,
+    "ignored": false
+   },
+   {
+    "name": "pipeorgans-client.toml",
+    "path": "config/pipeorgans-client.toml",
+    "isDir": false,
+    "size": 216,
+    "ignored": false
+   },
+   {
+    "name": "pipeorgans-server.toml",
+    "path": "config/pipeorgans-server.toml",
+    "isDir": false,
+    "size": 568,
+    "ignored": false
+   },
+   {
+    "name": "placebo.cfg",
+    "path": "config/placebo.cfg",
+    "isDir": false,
+    "size": 495,
+    "ignored": false
+   },
+   {
+    "name": "ponder-client.toml",
+    "path": "config/ponder-client.toml",
+    "isDir": false,
+    "size": 635,
+    "ignored": false
+   },
+   {
+    "name": "quark-common-1.toml.bak",
+    "path": "config/quark-common-1.toml.bak",
+    "isDir": false,
+    "size": 84969,
+    "ignored": true
+   },
+   {
+    "name": "quark-common-2.toml.bak",
+    "path": "config/quark-common-2.toml.bak",
+    "isDir": false,
+    "size": 84781,
+    "ignored": true
+   },
+   {
+    "name": "quark-common-3.toml.bak",
+    "path": "config/quark-common-3.toml.bak",
+    "isDir": false,
+    "size": 82663,
+    "ignored": true
+   },
+   {
+    "name": "quark-common.toml",
+    "path": "config/quark-common.toml",
+    "isDir": false,
+    "size": 85147,
+    "ignored": false
+   },
+   {
+    "name": "raven_core.json5",
+    "path": "config/raven_core.json5",
+    "isDir": false,
+    "size": 2825,
+    "ignored": false
+   },
+   {
+    "name": "ReactiveMusic.json5",
+    "path": "config/ReactiveMusic.json5",
+    "isDir": false,
+    "size": 1386,
+    "ignored": false
+   },
+   {
+    "name": "ReactiveMusic.json5.bak",
+    "path": "config/ReactiveMusic.json5.bak",
+    "isDir": false,
+    "size": 356,
+    "ignored": true
+   },
+   {
+    "name": "reliable_recipes.json",
+    "path": "config/reliable_recipes.json",
+    "isDir": false,
+    "size": 161,
+    "ignored": false
+   },
+   {
+    "name": "reliable_remover.json",
+    "path": "config/reliable_remover.json",
+    "isDir": false,
+    "size": 607,
+    "ignored": false
+   },
+   {
+    "name": "resourceful-config-web.json",
+    "path": "config/resourceful-config-web.json",
+    "isDir": false,
+    "size": 196,
+    "ignored": false
+   },
+   {
+    "name": "resourcepackoverrides.json",
+    "path": "config/resourcepackoverrides.json",
+    "isDir": false,
+    "size": 3388,
+    "ignored": false
+   },
+   {
+    "name": "resourcepackoverrides.json.bak",
+    "path": "config/resourcepackoverrides.json.bak",
+    "isDir": false,
+    "size": 27,
+    "ignored": true
+   },
+   {
+    "name": "ribbits-neoforge-1_21_1.toml",
+    "path": "config/ribbits-neoforge-1_21_1.toml",
+    "isDir": false,
+    "size": 403,
+    "ignored": false
+   },
+   {
+    "name": "ribbits-options.json",
+    "path": "config/ribbits-options.json",
+    "isDir": false,
+    "size": 33,
+    "ignored": false
+   },
+   {
+    "name": "rpg_dialogue.properties",
+    "path": "config/rpg_dialogue.properties",
+    "isDir": false,
+    "size": 1162,
+    "ignored": false
+   },
+   {
+    "name": "runiclib.json",
+    "path": "config/runiclib.json",
+    "isDir": false,
+    "size": 31,
+    "ignored": false
+   },
+   {
+    "name": "sable-client.toml",
+    "path": "config/sable-client.toml",
+    "isDir": false,
+    "size": 946,
+    "ignored": false
+   },
+   {
+    "name": "sable-common.toml",
+    "path": "config/sable-common.toml",
+    "isDir": false,
+    "size": 2243,
+    "ignored": false
+   },
+   {
+    "name": "sable-server.toml",
+    "path": "config/sable-server.toml",
+    "isDir": false,
+    "size": 328,
+    "ignored": false
+   },
+   {
+    "name": "sawmill-common-1.toml.bak",
+    "path": "config/sawmill-common-1.toml.bak",
+    "isDir": false,
+    "size": 2478,
+    "ignored": true
+   },
+   {
+    "name": "sawmill-common.toml",
+    "path": "config/sawmill-common.toml",
+    "isDir": false,
+    "size": 3017,
+    "ignored": false
+   },
+   {
+    "name": "scholar-client.toml",
+    "path": "config/scholar-client.toml",
+    "isDir": false,
+    "size": 850,
+    "ignored": false
+   },
+   {
+    "name": "scholar-common.toml",
+    "path": "config/scholar-common.toml",
+    "isDir": false,
+    "size": 2567,
+    "ignored": false
+   },
+   {
+    "name": "shouldersurfing-client-1.toml.bak",
+    "path": "config/shouldersurfing-client-1.toml.bak",
+    "isDir": false,
+    "size": 17953,
+    "ignored": true
+   },
+   {
+    "name": "shouldersurfing-client-2.toml.bak",
+    "path": "config/shouldersurfing-client-2.toml.bak",
+    "isDir": false,
+    "size": 17682,
+    "ignored": true
+   },
+   {
+    "name": "shouldersurfing-client.toml",
+    "path": "config/shouldersurfing-client.toml",
+    "isDir": false,
+    "size": 19930,
+    "ignored": false
+   },
+   {
+    "name": "simulated-client.toml",
+    "path": "config/simulated-client.toml",
+    "isDir": false,
+    "size": 1045,
+    "ignored": false
+   },
+   {
+    "name": "simulated-server.toml",
+    "path": "config/simulated-server.toml",
+    "isDir": false,
+    "size": 7249,
+    "ignored": false
+   },
+   {
+    "name": "skinlayers.json",
+    "path": "config/skinlayers.json",
+    "isDir": false,
+    "size": 498,
+    "ignored": false
+   },
+   {
+    "name": "sodium-fingerprint.json",
+    "path": "config/sodium-fingerprint.json",
+    "isDir": false,
+    "size": 427,
+    "ignored": true
+   },
+   {
+    "name": "sodium-mixins.properties",
+    "path": "config/sodium-mixins.properties",
+    "isDir": false,
+    "size": 258,
+    "ignored": false
+   },
+   {
+    "name": "sodium-options.json",
+    "path": "config/sodium-options.json",
+    "isDir": false,
+    "size": 761,
+    "ignored": false
+   },
+   {
+    "name": "sophisticatedbackpacks-common.toml",
+    "path": "config/sophisticatedbackpacks-common.toml",
+    "isDir": false,
+    "size": 118,
+    "ignored": false
+   },
+   {
+    "name": "sophisticatedbackpacks-server.toml",
+    "path": "config/sophisticatedbackpacks-server.toml",
+    "isDir": false,
+    "size": 24153,
+    "ignored": false
+   },
+   {
+    "name": "sophisticatedcore-client.toml",
+    "path": "config/sophisticatedcore-client.toml",
+    "isDir": false,
+    "size": 478,
+    "ignored": false
+   },
+   {
+    "name": "sophisticatedcore-common.toml",
+    "path": "config/sophisticatedcore-common.toml",
+    "isDir": false,
+    "size": 12151,
+    "ignored": false
+   },
+   {
+    "name": "sophisticatedstorage-client.toml",
+    "path": "config/sophisticatedstorage-client.toml",
+    "isDir": false,
+    "size": 447,
+    "ignored": false
+   },
+   {
+    "name": "sophisticatedstorage-common.toml",
+    "path": "config/sophisticatedstorage-common.toml",
+    "isDir": false,
+    "size": 186,
+    "ignored": false
+   },
+   {
+    "name": "sophisticatedstorage-server.toml",
+    "path": "config/sophisticatedstorage-server.toml",
+    "isDir": false,
+    "size": 25915,
+    "ignored": false
+   },
+   {
+    "name": "streamsreflowing-client-1.toml.bak",
+    "path": "config/streamsreflowing-client-1.toml.bak",
+    "isDir": false,
+    "size": 267,
+    "ignored": true
+   },
+   {
+    "name": "streamsreflowing-client-2.toml.bak",
+    "path": "config/streamsreflowing-client-2.toml.bak",
+    "isDir": false,
+    "size": 5224,
+    "ignored": true
+   },
+   {
+    "name": "streamsreflowing-client.properties",
+    "path": "config/streamsreflowing-client.properties",
+    "isDir": false,
+    "size": 1943,
+    "ignored": false
+   },
+   {
+    "name": "streamsreflowing-common-1.toml.bak",
+    "path": "config/streamsreflowing-common-1.toml.bak",
+    "isDir": false,
+    "size": 14279,
+    "ignored": true
+   },
+   {
+    "name": "streamsreflowing-common-2.toml.bak",
+    "path": "config/streamsreflowing-common-2.toml.bak",
+    "isDir": false,
+    "size": 2060,
+    "ignored": true
+   },
+   {
+    "name": "streamsreflowing-common-3.toml.bak",
+    "path": "config/streamsreflowing-common-3.toml.bak",
+    "isDir": false,
+    "size": 40244,
+    "ignored": true
+   },
+   {
+    "name": "streamsreflowing-common-4.toml.bak",
+    "path": "config/streamsreflowing-common-4.toml.bak",
+    "isDir": false,
+    "size": 33201,
+    "ignored": true
+   },
+   {
+    "name": "streamsreflowing.properties",
+    "path": "config/streamsreflowing.properties",
+    "isDir": false,
+    "size": 14438,
+    "ignored": false
+   },
+   {
+    "name": "structure_layout_optimizer.jsonc",
+    "path": "config/structure_layout_optimizer.jsonc",
+    "isDir": false,
+    "size": 1058,
+    "ignored": false
+   },
+   {
+    "name": "structurify.json",
+    "path": "config/structurify.json",
+    "isDir": false,
+    "size": 1072,
+    "ignored": false
+   },
+   {
+    "name": "supplementaries-client-1.toml.bak",
+    "path": "config/supplementaries-client-1.toml.bak",
+    "isDir": false,
+    "size": 9605,
+    "ignored": true
+   },
+   {
+    "name": "supplementaries-client-2.toml.bak",
+    "path": "config/supplementaries-client-2.toml.bak",
+    "isDir": false,
+    "size": 9113,
+    "ignored": true
+   },
+   {
+    "name": "supplementaries-client-3.toml.bak",
+    "path": "config/supplementaries-client-3.toml.bak",
+    "isDir": false,
+    "size": 9605,
+    "ignored": true
+   },
+   {
+    "name": "supplementaries-client-4.toml.bak",
+    "path": "config/supplementaries-client-4.toml.bak",
+    "isDir": false,
+    "size": 9292,
+    "ignored": true
+   },
+   {
+    "name": "supplementaries-client.toml",
+    "path": "config/supplementaries-client.toml",
+    "isDir": false,
+    "size": 9113,
+    "ignored": false
+   },
+   {
+    "name": "supplementaries-common-1.toml.bak",
+    "path": "config/supplementaries-common-1.toml.bak",
+    "isDir": false,
+    "size": 31682,
+    "ignored": true
+   },
+   {
+    "name": "supplementaries-common-2.toml.bak",
+    "path": "config/supplementaries-common-2.toml.bak",
+    "isDir": false,
+    "size": 31834,
+    "ignored": true
+   },
+   {
+    "name": "supplementaries-common-3.toml.bak",
+    "path": "config/supplementaries-common-3.toml.bak",
+    "isDir": false,
+    "size": 31682,
+    "ignored": true
+   },
+   {
+    "name": "supplementaries-common-4.toml.bak",
+    "path": "config/supplementaries-common-4.toml.bak",
+    "isDir": false,
+    "size": 30372,
+    "ignored": true
+   },
+   {
+    "name": "supplementaries-common-5.toml.bak",
+    "path": "config/supplementaries-common-5.toml.bak",
+    "isDir": false,
+    "size": 27799,
+    "ignored": true
+   },
+   {
+    "name": "supplementaries-common.toml",
+    "path": "config/supplementaries-common.toml",
+    "isDir": false,
+    "size": 31834,
+    "ignored": false
+   },
+   {
+    "name": "teamsfriendlyfire.snbt",
+    "path": "config/teamsfriendlyfire.snbt",
+    "isDir": false,
+    "size": 228,
+    "ignored": false
+   },
+   {
+    "name": "tectonic.json",
+    "path": "config/tectonic.json",
+    "isDir": false,
+    "size": 4366,
+    "ignored": false
+   },
+   {
+    "name": "terrablender.toml",
+    "path": "config/terrablender.toml",
+    "isDir": false,
+    "size": 988,
+    "ignored": false
+   },
+   {
+    "name": "thief-client.toml",
+    "path": "config/thief-client.toml",
+    "isDir": false,
+    "size": 279,
+    "ignored": false
+   },
+   {
+    "name": "thief-server.toml",
+    "path": "config/thief-server.toml",
+    "isDir": false,
+    "size": 4348,
+    "ignored": false
+   },
+   {
+    "name": "toms_storage-common-1.toml.bak",
+    "path": "config/toms_storage-common-1.toml.bak",
+    "isDir": false,
+    "size": 910,
+    "ignored": true
+   },
+   {
+    "name": "toms_storage-common.toml",
+    "path": "config/toms_storage-common.toml",
+    "isDir": false,
+    "size": 848,
+    "ignored": false
+   },
+   {
+    "name": "toms_storage-server.toml",
+    "path": "config/toms_storage-server.toml",
+    "isDir": false,
+    "size": 1933,
+    "ignored": false
+   },
+   {
+    "name": "transition.json",
+    "path": "config/transition.json",
+    "isDir": false,
+    "size": 97,
+    "ignored": false
+   },
+   {
+    "name": "transmog.json",
+    "path": "config/transmog.json",
+    "isDir": false,
+    "size": 91,
+    "ignored": false
+   },
+   {
+    "name": "travelerstitles-neoforge-1_21.toml",
+    "path": "config/travelerstitles-neoforge-1_21.toml",
+    "isDir": false,
+    "size": 10680,
+    "ignored": false
+   },
+   {
+    "name": "trender.json",
+    "path": "config/trender.json",
+    "isDir": false,
+    "size": 44,
+    "ignored": false
+   },
+   {
+    "name": "tridot-client.toml",
+    "path": "config/tridot-client.toml",
+    "isDir": false,
+    "size": 669,
+    "ignored": false
+   },
+   {
+    "name": "tridot-common.toml",
+    "path": "config/tridot-common.toml",
+    "isDir": false,
+    "size": 314,
+    "ignored": false
+   },
+   {
+    "name": "tunes_n_tomes-server.toml",
+    "path": "config/tunes_n_tomes-server.toml",
+    "isDir": false,
+    "size": 727,
+    "ignored": false
+   },
+   {
+    "name": "vanillabackport-client.toml",
+    "path": "config/vanillabackport-client.toml",
+    "isDir": false,
+    "size": 344,
+    "ignored": false
+   },
+   {
+    "name": "vanillabackport-common.toml",
+    "path": "config/vanillabackport-common.toml",
+    "isDir": false,
+    "size": 3260,
+    "ignored": false
+   },
+   {
+    "name": "villagernames.json5",
+    "path": "config/villagernames.json5",
+    "isDir": false,
+    "size": 1323,
+    "ignored": false
+   },
+   {
+    "name": "villagespawnpoint.json5",
+    "path": "config/villagespawnpoint.json5",
+    "isDir": false,
+    "size": 398,
+    "ignored": false
+   },
+   {
+    "name": "visualworkbench-client.toml",
+    "path": "config/visualworkbench-client.toml",
+    "isDir": false,
+    "size": 459,
+    "ignored": false
+   },
+   {
+    "name": "visualworkbench-common.toml",
+    "path": "config/visualworkbench-common.toml",
+    "isDir": false,
+    "size": 350,
+    "ignored": false
+   },
+   {
+    "name": "visualworkbench-server.toml",
+    "path": "config/visualworkbench-server.toml",
+    "isDir": false,
+    "size": 148,
+    "ignored": false
+   },
+   {
+    "name": "wakes-client-1.toml.bak",
+    "path": "config/wakes-client-1.toml.bak",
+    "isDir": false,
+    "size": 2724,
+    "ignored": true
+   },
+   {
+    "name": "wakes-client-2.toml.bak",
+    "path": "config/wakes-client-2.toml.bak",
+    "isDir": false,
+    "size": 2724,
+    "ignored": true
+   },
+   {
+    "name": "wakes-client.toml",
+    "path": "config/wakes-client.toml",
+    "isDir": false,
+    "size": 3055,
+    "ignored": false
+   },
+   {
+    "name": "watut-client.toml",
+    "path": "config/watut-client.toml",
+    "isDir": false,
+    "size": 3444,
+    "ignored": false
+   },
+   {
+    "name": "watut-common.toml",
+    "path": "config/watut-common.toml",
+    "isDir": false,
+    "size": 169,
+    "ignored": false
+   },
+   {
+    "name": "watut-item-arm-adjustments.json",
+    "path": "config/watut-item-arm-adjustments.json",
+    "isDir": false,
+    "size": 3367,
+    "ignored": false
+   },
+   {
+    "name": "watut-server.toml",
+    "path": "config/watut-server.toml",
+    "isDir": false,
+    "size": 2945,
+    "ignored": false
+   },
+   {
+    "name": "waystones-common.toml",
+    "path": "config/waystones-common.toml",
+    "isDir": false,
+    "size": 6646,
+    "ignored": false
+   },
+   {
+    "name": "weaponmaster_ydm-common.toml",
+    "path": "config/weaponmaster_ydm-common.toml",
+    "isDir": false,
+    "size": 9424,
+    "ignored": false
+   },
+   {
+    "name": "wind_spellbooks-server.toml",
+    "path": "config/wind_spellbooks-server.toml",
+    "isDir": false,
+    "size": 93,
+    "ignored": false
+   },
+   {
+    "name": "witchery-common.toml",
+    "path": "config/witchery-common.toml",
+    "isDir": false,
+    "size": 2211,
+    "ignored": false
+   },
+   {
+    "name": "yacl.json5",
+    "path": "config/yacl.json5",
+    "isDir": false,
+    "size": 250,
+    "ignored": false
+   },
+   {
+    "name": "zeta-common.toml",
+    "path": "config/zeta-common.toml",
+    "isDir": false,
+    "size": 1908,
+    "ignored": false
+   }
+  ],
+  "datapacks": [
+   {
+    "name": "AetherCompat1.0.zip",
+    "path": "datapacks/AetherCompat1.0.zip",
+    "isDir": false,
+    "size": 6419,
+    "ignored": true
+   },
+   {
+    "name": "CataclysmCompat1.0.zip",
+    "path": "datapacks/CataclysmCompat1.0.zip",
+    "isDir": false,
+    "size": 5513,
+    "ignored": true
+   },
+   {
+    "name": "Irons_Spellbooks_Compat_1.0.0.zip",
+    "path": "datapacks/Irons_Spellbooks_Compat_1.0.0.zip",
+    "isDir": false,
+    "size": 4619,
+    "ignored": true
+   },
+   {
+    "name": "MalfuCombatDatapack-1.21.1+_V3.1.zip",
+    "path": "datapacks/MalfuCombatDatapack-1.21.1+_V3.1.zip",
+    "isDir": false,
+    "size": 244082,
+    "ignored": true
+   },
+   {
+    "name": "QuarkCompat1.0.zip",
+    "path": "datapacks/QuarkCompat1.0.zip",
+    "isDir": false,
+    "size": 5333,
+    "ignored": true
+   },
+   {
+    "name": "Supplementaries Compat 1.2 [1.21.1+].zip",
+    "path": "datapacks/Supplementaries Compat 1.2 [1.21.1+].zip",
+    "isDir": false,
+    "size": 55512,
+    "ignored": true
+   }
+  ],
+  "defaultconfigs": [
+   {
+    "name": "biolith",
+    "path": "defaultconfigs/biolith",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "certain_questing_additions",
+    "path": "defaultconfigs/certain_questing_additions",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "teamsfriendlyfire",
+    "path": "defaultconfigs/teamsfriendlyfire",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   }
+  ],
+  "journeymap": [
+   {
+    "name": "config",
+    "path": "journeymap/config",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "data",
+    "path": "journeymap/data",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "icon",
+    "path": "journeymap/icon",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "server",
+    "path": "journeymap/server",
+    "isDir": true,
+    "size": 0,
+    "ignored": true
+   },
+   {
+    "name": "defaultconfig.json",
+    "path": "journeymap/defaultconfig.json",
+    "isDir": false,
+    "size": 19,
+    "ignored": true
+   },
+   {
+    "name": "journeymap.log",
+    "path": "journeymap/journeymap.log",
+    "isDir": false,
+    "size": 23108,
+    "ignored": true
+   }
+  ],
+  "resourcepacks": [
+   {
+    "name": "Raven's BD Mob Filter",
+    "path": "resourcepacks/Raven's BD Mob Filter",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "Raven's Resources",
+    "path": "resourcepacks/Raven's Resources",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "Aether Regenerated v1.3.1.zip",
+    "path": "resourcepacks/Aether Regenerated v1.3.1.zip",
+    "isDir": false,
+    "size": 715265,
+    "ignored": true
+   },
+   {
+    "name": "AetherAdornments v.1.0.zip",
+    "path": "resourcepacks/AetherAdornments v.1.0.zip",
+    "isDir": false,
+    "size": 79700,
+    "ignored": true
+   },
+   {
+    "name": "Armors.zip",
+    "path": "resourcepacks/Armors.zip",
+    "isDir": false,
+    "size": 192178,
+    "ignored": true
+   },
+   {
+    "name": "BC Particle Enhancement (1.21.1) (1.0).zip",
+    "path": "resourcepacks/BC Particle Enhancement (1.21.1) (1.0).zip",
+    "isDir": false,
+    "size": 56158,
+    "ignored": true
+   },
+   {
+    "name": "boss-refreshed-v2-1.19-1.21.zip",
+    "path": "resourcepacks/boss-refreshed-v2-1.19-1.21.zip",
+    "isDir": false,
+    "size": 237777,
+    "ignored": true
+   },
+   {
+    "name": "CoffeeGUI_1.20.2-26.2_release_v2.2.1.zip",
+    "path": "resourcepacks/CoffeeGUI_1.20.2-26.2_release_v2.2.1.zip",
+    "isDir": false,
+    "size": 385821,
+    "ignored": true
+   },
+   {
+    "name": "CoffeeGUI_NormalHunger.zip",
+    "path": "resourcepacks/CoffeeGUI_NormalHunger.zip",
+    "isDir": false,
+    "size": 60047,
+    "ignored": true
+   },
+   {
+    "name": "CreateSophBackpacks.zip",
+    "path": "resourcepacks/CreateSophBackpacks.zip",
+    "isDir": false,
+    "size": 557473,
+    "ignored": true
+   },
+   {
+    "name": "cubic-sun-moon-v1.8.5.zip",
+    "path": "resourcepacks/cubic-sun-moon-v1.8.5.zip",
+    "isDir": false,
+    "size": 16194897,
+    "ignored": true
+   },
+   {
+    "name": "Ender_Dragon_Reborn-1.1.zip",
+    "path": "resourcepacks/Ender_Dragon_Reborn-1.1.zip",
+    "isDir": false,
+    "size": 515764,
+    "ignored": true
+   },
+   {
+    "name": "FA+Player-v1.1.zip",
+    "path": "resourcepacks/FA+Player-v1.1.zip",
+    "isDir": false,
+    "size": 110203,
+    "ignored": true
+   },
+   {
+    "name": "Fancy_Beds-v4.2.zip",
+    "path": "resourcepacks/Fancy_Beds-v4.2.zip",
+    "isDir": false,
+    "size": 271419,
+    "ignored": true
+   },
+   {
+    "name": "FreshAnimations_v1.10.4.zip",
+    "path": "resourcepacks/FreshAnimations_v1.10.4.zip",
+    "isDir": false,
+    "size": 850941,
+    "ignored": true
+   },
+   {
+    "name": "Freshly Modded 3.0.4.zip",
+    "path": "resourcepacks/Freshly Modded 3.0.4.zip",
+    "isDir": false,
+    "size": 619427,
+    "ignored": true
+   },
+   {
+    "name": "golems-refreshed-fa-v2.1.zip",
+    "path": "resourcepacks/golems-refreshed-fa-v2.1.zip",
+    "isDir": false,
+    "size": 544126,
+    "ignored": true
+   },
+   {
+    "name": "MCA_resourcepack-1.21.1+_V3.1.1.zip",
+    "path": "resourcepacks/MCA_resourcepack-1.21.1+_V3.1.1.zip",
+    "isDir": false,
+    "size": 247783,
+    "ignored": true
+   },
+   {
+    "name": "MickeyJoesBarelyDefaultV15.18.zip",
+    "path": "resourcepacks/MickeyJoesBarelyDefaultV15.18.zip",
+    "isDir": false,
+    "size": 25627902,
+    "ignored": true
+   },
+   {
+    "name": "MMC_Songpack.zip",
+    "path": "resourcepacks/MMC_Songpack.zip",
+    "isDir": false,
+    "size": 522971965,
+    "ignored": true
+   },
+   {
+    "name": "mobs-refreshed-fa-v2.2.zip",
+    "path": "resourcepacks/mobs-refreshed-fa-v2.2.zip",
+    "isDir": false,
+    "size": 658048,
+    "ignored": true
+   },
+   {
+    "name": "ModdedCoffeeGUI_Release_v1.16.0.zip",
+    "path": "resourcepacks/ModdedCoffeeGUI_Release_v1.16.0.zip",
+    "isDir": false,
+    "size": 1946327,
+    "ignored": true
+   },
+   {
+    "name": "Nerf's Fancy Cursor.zip",
+    "path": "resourcepacks/Nerf's Fancy Cursor.zip",
+    "isDir": false,
+    "size": 10834,
+    "ignored": true
+   },
+   {
+    "name": "Re-Simple-Storage.zip",
+    "path": "resourcepacks/Re-Simple-Storage.zip",
+    "isDir": false,
+    "size": 40885,
+    "ignored": true
+   },
+   {
+    "name": "Semos Animations Lib 2.0.3.zip",
+    "path": "resourcepacks/Semos Animations Lib 2.0.3.zip",
+    "isDir": false,
+    "size": 92394,
+    "ignored": true
+   },
+   {
+    "name": "Suren FTB Quests 1.0.1 1.21.1.zip",
+    "path": "resourcepacks/Suren FTB Quests 1.0.1 1.21.1.zip",
+    "isDir": false,
+    "size": 160345,
+    "ignored": true
+   },
+   {
+    "name": "Suren Sophisticated Storage v3.0 Universal.zip",
+    "path": "resourcepacks/Suren Sophisticated Storage v3.0 Universal.zip",
+    "isDir": false,
+    "size": 417819,
+    "ignored": true
+   },
+   {
+    "name": "The-RCP.zip",
+    "path": "resourcepacks/The-RCP.zip",
+    "isDir": false,
+    "size": 2649686,
+    "ignored": true
+   },
+   {
+    "name": "True Dovah.zip",
+    "path": "resourcepacks/True Dovah.zip",
+    "isDir": false,
+    "size": 7012423,
+    "ignored": true
+   },
+   {
+    "name": "Visual Titles 1.3.zip",
+    "path": "resourcepacks/Visual Titles 1.3.zip",
+    "isDir": false,
+    "size": 444982,
+    "ignored": true
+   },
+   {
+    "name": "waystones_1.21.1.zip",
+    "path": "resourcepacks/waystones_1.21.1.zip",
+    "isDir": false,
+    "size": 228331,
+    "ignored": true
+   }
+  ],
+  "config/apotheosis": [
+   {
+    "name": "apotheosis.cfg",
+    "path": "config/apotheosis/apotheosis.cfg",
+    "isDir": false,
+    "size": 4351,
+    "ignored": false
+   },
+   {
+    "name": "apothic_attributes.cfg",
+    "path": "config/apotheosis/apothic_attributes.cfg",
+    "isDir": false,
+    "size": 5184,
+    "ignored": false
+   },
+   {
+    "name": "apothic_enchanting.cfg",
+    "path": "config/apotheosis/apothic_enchanting.cfg",
+    "isDir": false,
+    "size": 718,
+    "ignored": false
+   },
+   {
+    "name": "enchantments.cfg",
+    "path": "config/apotheosis/enchantments.cfg",
+    "isDir": false,
+    "size": 130063,
+    "ignored": false
+   },
+   {
+    "name": "extra_apoth_compat.cfg",
+    "path": "config/apotheosis/extra_apoth_compat.cfg",
+    "isDir": false,
+    "size": 753,
+    "ignored": false
+   },
+   {
+    "name": "extra_apoth_compat_mixins.cfg",
+    "path": "config/apotheosis/extra_apoth_compat_mixins.cfg",
+    "isDir": false,
+    "size": 960,
+    "ignored": false
+   },
+   {
+    "name": "name_generation.cfg",
+    "path": "config/apotheosis/name_generation.cfg",
+    "isDir": false,
+    "size": 189348,
+    "ignored": false
+   },
+   {
+    "name": "raven_apoth.cfg",
+    "path": "config/apotheosis/raven_apoth.cfg",
+    "isDir": false,
+    "size": 6119,
+    "ignored": false
+   }
+  ],
+  "config/raven_dnd_origins": [
+   {
+    "name": "kits",
+    "path": "config/raven_dnd_origins/kits",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   },
+   {
+    "name": "config.toml",
+    "path": "config/raven_dnd_origins/config.toml",
+    "isDir": false,
+    "size": 1820,
+    "ignored": false
+   },
+   {
+    "name": "spells.json",
+    "path": "config/raven_dnd_origins/spells.json",
+    "isDir": false,
+    "size": 279093,
+    "ignored": false
+   }
+  ],
+  "journeymap/config": [
+   {
+    "name": "6.0",
+    "path": "journeymap/config/6.0",
+    "isDir": true,
+    "size": 0,
+    "ignored": false
+   }
+  ]
+ },
+ "files": {
+  "config/fml.toml": {
+   "text": "#Disables File Watcher. Used to automatically update config if its file has been modified.\ndisableConfigWatcher = false\n#Should we control the window. Disabling this disables new GL features and can be bad for mods that rely on them.\nearlyWindowControl = true\n#Max threads for early initialization parallelism,  -1 is based on processor count\nmaxThreads = -1\n#Enable NeoForge global version checking\nversionCheck = false\n#Default config path for servers\ndefaultConfigPath = \"defaultconfigs\"\n#Disables Optimized DFU client-side - already disabled on servers\ndisableOptimizedDFU = true\n#Early window provider\nearlyWindowProvider = \"\"\n#Early window width\nearlyWindowWidth = 1024\n#Early window height\nearlyWindowHeight = 768\n#Early window framebuffer scale\nearlyWindowFBScale = 1\n#Early window starts maximized\nearlyWindowMaximized = false\n#Skip specific GL versions, may help with buggy graphics card drivers\nearlyWindowSkipGLVersions = []\n#Squir?\nearlyWindowSquir = false\n\n#Define dependency overrides below\n#Dependency overrides can be used to forcibly remove a dependency constraint from a mod or to force a mod to load AFTER another mod\n#Using dependency overrides can cause issues. Use at your own risk.\n#Example dependency override for the mod with the id 'targetMod': dependency constraints (incompatibility clauses or restrictive version ranges) against mod 'dep1' are removed, and the mod will now load after the mod 'dep2'\n#dependencyOverrides.targetMod = [\"-dep1\", \"+dep2\"]\n[dependencyOverrides]\n\t#Define dependency overrides below\n\t#Dependency overrides can be used to forcibly remove a dependency constraint from a mod or to force a mod to load AFTER another mod\n\t#Using dependency overrides can cause issues. Use at your own risk.\n\t#Example dependency override for the mod with the id 'targetMod': dependency constraints (incompatibility clauses or restrictive version ranges) against mod 'dep1' are removed, and the mod will now load after the mod 'dep2'\n\t#dependencyOverrides.targetMod = [\"-dep1\", \"+dep2\"]\n\tfancymenu = [\"-wakes\"]\n",
+   "size": 2044,
+   "unreadable": null,
+   "crlf": false,
+   "bom": false
+  },
+  "config/bcc-common.toml": {
+   "text": "#General settings\n[general]\n\t#modpackProjectID is now deprecated and will be removed soon\n\t# Default: 0\n\t# Range: > 0\n\tmodpackProjectID = 0\n\t#The name of the modpack\n\tmodpackName = \"Raven's High Fantasy\"\n\t#The version of the modpack\n\tmodpackVersion = \"0.1.0\"\n\t#Use the metadata.json to determine the modpack version\n\t#ONLY ENABLE THIS IF YOU KNOW WHAT YOU ARE DOING\n\tuseMetadata = false\n",
+   "size": 387,
+   "unreadable": null,
+   "crlf": false,
+   "bom": false
+  },
+  "config/iris.properties": {
+   "text": "#This file stores configuration options for Iris, such as the currently active shaderpack\n#Mon Oct 12 12:20:05 PDT 2026\nallowUnknownShaders=false\ncolorSpace=SRGB\ndisableUpdateMessage=false\nenableDebugOptions=false\nenableShaders=false\nmaxShadowRenderDistance=32\nshaderPack=ComplementaryUnbound_r5.9.3 + EuphoriaPatches_1.10.5\n",
+   "size": 325,
+   "unreadable": null,
+   "crlf": false,
+   "bom": false
+  },
+  "packraven.toml": {
+   "text": "[export]\nexclude = [\n    \".githooks/**\",\n    \".gitignore\",\n    \".gitattributes\",\n    \"mods.lock.json\",\n    \"packraven.toml\",\n    \"changelog.md\",\n    \"changelogs/**\",\n    \"README*\",\n    \"raven_core_books/**\",\n]\n\n[export.properties.\"config/iris.properties\"]\nenableShaders = \"false\"\n",
+   "size": 280,
+   "unreadable": null,
+   "crlf": false,
+   "bom": false
+  },
+  ".gitignore": {
+   "text": ".curseclient\n.idea\n.vscode\n*.dat\n*.log\n*.nps\nminecraft.bat\nmodUpdates.bat\n\nmodpackager/.mp-cache.json\nmodpackager/changelog-export-curseforge.md\nmodpackager/changelog-export-modrinth.md\nmodpackager/mod-changes.html\nmodpackager/server_run/\nmodpackager/ServerPackCreator/server-packs/\nmodpackager/ServerPackCreator/configs/ServerPackCreator.conf\nmodpackager/ServerPackCreator.jar\n\n.mixin.out\n.probe\n.ReAuth.cfg\n.rhino_cache\n*.bak\nastralsorcery\nbackups\ncraftpresence\ndebug/\ndownloads\nemojiful\nfancymenu_data/last_world.fmdata\njourneymap/*\n!journeymap/config/\nknownkeys.txt\n\nllibrary\nlocal\nmappy\nminecolonies\npatchouli_books\npatchouli_data.json\nreauth.toml\nstructurize\nTombManyGraves\nWhat is this.txt\n\n# Minecraft\ncache/\ncommand_history.txt\ncoremods\ncrash-reports\nhotbar.nbt\nlogs\nminecraftinstance.json\nrealms_persistence.json\nsaves\nscreenshots\nserver-resource-packs\ntexturepacks\nusercache.json\nusernamecache.json\nservers.dat_old\nimmersivetips.json\n\n# Config\nconfig/jade/jade.json\nconfig/jei/jei-client.ini\nconfig/Mekanism/client.toml\nconfig/rgp_client/cached_menus/\nconfig/almostunified/debug.json\nconfig/pneumaticcraft/ArmorFeatureStatus.cfg\nconfig/worldedit/\nconfig/justzoom/\nconfig/solonion-client.json\nconfig/jade/sort-order.json\nconfig/fabric/indigo-renderer.properties\nconfig/rgp_client/\nconfig/sodium-fingerprint.json\nconfig/ars_nouveau/search_index/\nconfig/jei/ingredient-list-mod-sort-order.ini\n\n# KubeJS\nkubejs/client_scripts/jsconfig.json\nkubejs/config/probe-settings.json\nkubejs/server_scripts/jsconfig.json\nkubejs/startup_scripts/jsconfig.json\n\nspark-modernfix/tmp/about.txt\n\nshaderpacks/ComplementaryReimagined_r* \\+ EuphoriaPatches_*/\nshaderpacks/ComplementaryUnbound_r* \\+ EuphoriaPatches_*/\n\nuser-prefs.json\nmanifest.json\nmodlist.html\n.mp-cache.json\n.fabric/\n\nstackdeobf_mappings/\n.bobby/\nxaero/\nXaeroWaypoints_*/\n\nmodernfix/structureCacheV1/\n\nconfigureddefaults/README.md\n\nmodpackager/ServerPackCreator/work/\n\nmodpackager/ServerPackCreator/manifests/\n\nmodpackager/ServerPackCreator/log4j2.xml\n\nserver/\n\n.lazyyyyy/\n\nEffekseerNativeForJava.dll\n\nmods/.connector/\n\n\nconfig/packetfixer.properties\n\nconfig/oculus.properties\n\nconfig/everycomp-hazardous.properties\n\nconfig/xenon-fingerprint.json\n\nexports/*/*_server_pack.zip\n\nexports/*/serverpack/\n\nmodpackager/ServerPackCreator/serverpackcreator.properties\n\nexports/*/*\n\nblueprints/\n\nmods/zmedievalmusic-1.21-2.1.jar\n\nconfig/inventoryprofilesnext/*\nconfig/InventoryHUD/curios.json\n!config/inventoryprofilesnext/integrationHints/\n!config/inventoryprofilesnext/*.json\n\nmodpackager/ServerPackCreator/CHANGELOG.md\nmodpackager/ServerPackCreator/README.md\nmodpackager/ServerPackCreator/LICENSE\nmodpackager/ServerPackCreator/HELP.md\nmodpackager/ServerPackCreator/themes\nmodpackager/ServerPackCreator/server_files/server.properties\nconfig/spark/activity.json\nwin_event*.txt\nemi.json\nfoolproof.json\ndynamic-data-pack-cache\ndynamic-data-pack-cache\ndynamic-resource-pack-cache\nami-icon-cache\n.sable\n.prof\nbivrik\nfancymenu_data\nraven_core_dumps\nraven_apoth_dumps\nponders_watched.json\n\n# Binaries are synced from CurseForge via mods.lock.json (.githooks/modsync.py)\nmods/*.jar\nmods/*.disabled\nresourcepacks/*.zip\nshaderpacks/*.zip\ndatapacks/*.zip\nconfig/spark/\n__pycache__/\n",
+   "size": 3219,
+   "unreadable": null,
+   "crlf": false,
+   "bom": false
+  },
+  "config/shouldersurfing-client.toml": {
+   "text": "[camera]\n\t#The distance multiplier on whether to hide the player model if the camera gets too close to it. Set to 0 to disable.\n\t# Default: 0.75\n\t# Range: 0.0 ~ 1.7976931348623157E308\n\tkeep_camera_out_of_head_distance_multiplier = 0.75\n\t#The speed multiplier at which the camera transitions between positions.\n\t# Default: 0.25\n\t# Range: 0.05 ~ 1.0\n\tcamera_transition_speed_multiplier = 0.25\n\t#The angle at which the camera will be centered when looking down. Set to 0 to disable.\n\t# Default: 1.0\n\t# Range: 0.0 ~ 90.0\n\tcenter_camera_when_looking_down_angle = 1.0\n\t#Whether to decouple the camera rotation from the player rotation.\n\tdecoupled_camera = true\n\t#Whether to orient the camera rotation when the player is teleported. This includes passenger (dis-)mounting and traveling through portals.\n\torient_camera_on_teleport = true\n\t#Whether to apply view bobbing in shoulder surfing perspective. Set to INHERIT to inherit vanilla setting.\n\t#Allowed Values: INHERIT, ON, OFF\n\tview_bobbing_mode = \"INHERIT\"\n\t#Whether to turn the camera with the player when camera is decoupled.\n\tturn_with_player = false\n\t#The delay in ticks after which the camera will turn with the player.\n\t# Default: 40\n\t# Range: > 1\n\tturn_with_player_delay = 40\n\t#The list of blocks that do not collide with the camera. Must be transparent blocks or blocks that do not take up a full block. This config option supports regular expressions. Example: 'minecraft:.*leaves' matches 'minecraft:oak_leaves' and 'minecraft:spruce_leaves'.\n\tnon_collidable_blocks = []\n\n\t[camera.offset]\n\t\t#Third person camera x-offset.\n\t\t# Default: -0.75\n\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\toffset_x = -1.5999999999999983\n\t\t#Third person camera y-offset.\n\t\t# Default: 0.0\n\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\toffset_y = -0.025\n\t\t#Third person camera z-offset.\n\t\t# Default: 4.0\n\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\toffset_z = 2.7750000000000044\n\t\t#Whether to dynamically adjust camera offsets depending on space constraints.\n\t\tdynamic_offsets = true\n\t\t#Size of the offset adjustment per step.\n\t\t# Default: 0.025\n\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\tstep_size = 0.025\n\n\t\t[camera.offset.min]\n\t\t\t#When x-offset is limited this is the minimum amount.\n\t\t\t# Default: -3.0\n\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\tmin_offset_x = -3.0\n\t\t\t#When y-offset is limited this is the minimum amount.\n\t\t\t# Default: -1.0\n\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\tmin_offset_y = -1.0\n\t\t\t#When z-offset is limited this is the minimum amount.\n\t\t\t# Default: -3.0\n\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\tmin_offset_z = -3.0\n\n\t\t[camera.offset.max]\n\t\t\t#When x-offset is limited this is the maximum amount.\n\t\t\t# Default: 3.0\n\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\tmax_offset_x = 3.0\n\t\t\t#When y-offset is limited this is the maximum amount.\n\t\t\t# Default: 1.5\n\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\tmax_offset_y = 1.5\n\t\t\t#When z-offset is limited this is the maximum amount.\n\t\t\t# Default: 5.0\n\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\tmax_offset_z = 5.0\n\n\t\t[camera.offset.limits]\n\t\t\t#Whether x-offset adjustment has limits.\n\t\t\tunlimited_offset_x = false\n\t\t\t#Whether y-offset adjustment has limits.\n\t\t\tunlimited_offset_y = false\n\t\t\t#Whether z-offset adjustment has limits.\n\t\t\tunlimited_offset_z = false\n\n\t\t\t[camera.offset.multiplier.passenger]\n\t\t\t\t#x-offset multiplier for when the player is a passenger.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_x = 1.0\n\t\t\t\t#y-offset multiplier for when the player is a passenger.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_y = 1.0\n\t\t\t\t#z-offset multiplier for when the player is a passenger.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_z = 1.0\n\n\t\t\t[camera.offset.multiplier.sprint]\n\t\t\t\t#x-offset multiplier for when the player is sprinting.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_x = 1.0\n\t\t\t\t#y-offset multiplier for when the player is sprinting.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_y = 1.0\n\t\t\t\t#z-offset multiplier for when the player is sprinting.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_z = 1.0\n\n\t\t\t[camera.offset.multiplier.aiming]\n\t\t\t\t#x-offset multiplier for when the player is aiming.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_x = 1.0\n\t\t\t\t#y-offset multiplier for when the player is aiming.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_y = 1.0\n\t\t\t\t#z-offset multiplier for when the player is aiming.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_z = 1.0\n\n\t\t\t[camera.offset.multiplier.fall_flying]\n\t\t\t\t#x-offset multiplier for when using Elytra.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_x = 1.0\n\t\t\t\t#y-offset multiplier for when using Elytra.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_y = 1.0\n\t\t\t\t#z-offset multiplier for when using Elytra.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_z = 1.0\n\n\t\t\t[camera.offset.multiplier.climbing]\n\t\t\t\t#x-offset multiplier for when the player is climbing.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_x = 0.0\n\t\t\t\t#y-offset multiplier for when the player is climbing.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_y = 1.0\n\t\t\t\t#z-offset multiplier for when the player is climbing.\n\t\t\t\t# Default: 1.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmultiplier_offset_z = 1.0\n\n\t\t\t[camera.offset.modifiers.passenger]\n\t\t\t\t#x-offset modifier for when the player is a passenger.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_x = 0.0\n\t\t\t\t#y-offset modifier for when the player is a passenger.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_y = 0.0\n\t\t\t\t#z-offset modifier for when the player is a passenger.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_z = 0.0\n\n\t\t\t[camera.offset.modifiers.sprint]\n\t\t\t\t#x-offset modifier for when the player is sprinting.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_x = 0.0\n\t\t\t\t#y-offset modifier for when the player is sprinting.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_y = 0.0\n\t\t\t\t#z-offset modifier for when the player is sprinting.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_z = 0.0\n\n\t\t\t[camera.offset.modifiers.aiming]\n\t\t\t\t#x-offset modifier for when the player is aiming.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_x = 0.0\n\t\t\t\t#y-offset modifier for when the player is aiming.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_y = 0.0\n\t\t\t\t#z-offset modifier for when the player is aiming.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_z = 0.0\n\n\t\t\t[camera.offset.modifiers.fall_flying]\n\t\t\t\t#x-offset modifier for when using Elytra.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_x = 0.0\n\t\t\t\t#y-offset modifier for when using Elytra.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_y = 0.0\n\t\t\t\t#z-offset modifier for when using Elytra.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_z = 0.0\n\n\t\t\t[camera.offset.modifiers.climbing]\n\t\t\t\t#x-offset modifier for when the player is climbing.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_x = 0.0\n\t\t\t\t#y-offset modifier for when the player is climbing.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_y = 0.0\n\t\t\t\t#z-offset modifier for when the player is climbing.\n\t\t\t\t# Default: 0.0\n\t\t\t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n\t\t\t\tmodifier_offset_z = 0.0\n\n\t\t[camera.offset.presets]\n\t\t\t#A list of x-offset presets that can be toggled via the 'Toggle X-Offset Presets' keybind. WARNING: Duplicate entries can result in undefined behavior!\n\t\t\tpresets_offset_x = []\n\t\t\t#A list of y-offset presets that can be toggled via the 'Toggle Y-Offset Presets' keybind. WARNING: Duplicate entries can result in undefined behavior!\n\t\t\tpresets_offset_y = []\n\t\t\t#A list of z-offset presets that can be toggled via the 'Toggle Z-Offset Presets' keybind. WARNING: Duplicate entries can result in undefined behavior!\n\t\t\tpresets_offset_z = []\n\n\t[camera.camera_drag]\n\t\t#x-axis multiplier for camera drag.\n\t\t# Default: 0.0\n\t\t# Range: 0.0 ~ 5.0\n\t\tmultiplier_axis_x = 0.0\n\t\t#y-axis multiplier for camera drag.\n\t\t# Default: 0.0\n\t\t# Range: 0.0 ~ 5.0\n\t\tmultiplier_axis_y = 0.0\n\t\t#z-axis multiplier for camera drag.\n\t\t# Default: 0.0\n\t\t# Range: 0.0 ~ 5.0\n\t\tmultiplier_axis_z = 0.0\n\n\t[camera.camera_sway]\n\t\t#The maximum x-axis angle in degrees. Set to 0 to disable.\n\t\t# Default: 0.0\n\t\t# Range: -30.0 ~ 30.0\n\t\tmax_angle_axis_x = 0.0\n\t\t#The maximum x-axis angle in degrees. Set to 0 to disable.\n\t\t# Default: 0.0\n\t\t# Range: -30.0 ~ 30.0\n\t\tmax_angle_axis_z = 0.0\n\t\t#The velocity of the player in blocks per second, where the maximum camera x-axis sway is applied.\n\t\t# Default: 5.0\n\t\t# Range: 0.05 ~ 1000.0\n\t\tmax_velocity_axis_x = 5.0\n\t\t#The velocity of the player in blocks per second, where the maximum camera z-axis sway is applied.\n\t\t# Default: 5.0\n\t\t# Range: 0.05 ~ 1000.0\n\t\tmax_velocity_axis_z = 5.0\n\n\t[camera.fov]\n\t\t#Whether to apply the FOV override when in shoulder surfing perspective.\n\t\tfov_override_enabled = false\n\t\t#The camera FOV when in shoulder surfing perspective. Depends on config option 'fov_override_enabled'.\n\t\t# Default: 70.0\n\t\t# Range: 30.0 ~ 110.0\n\t\tfov_override = 70.0\n\n[perspective]\n\t#The default perspective when you load the game.\n\t#Allowed Values: FIRST_PERSON, THIRD_PERSON_BACK, THIRD_PERSON_FRONT, SHOULDER_SURFING\n\tdefault_perspective = \"SHOULDER_SURFING\"\n\t#Whether to remember the last perspective used.\n\tremember_last_perspective = true\n\t#Whether to replace the default third person perspective.\n\treplace_default_perspective = true\n\t#Whether the first person perspective is enabled.\n\tfirst_person_enabled = true\n\t#Whether the third person front perspective is enabled.\n\tthird_person_front_enabled = false\n\t#Whether the third person back perspective is enabled.\n\tthird_person_back_enabled = false\n\n\t[perspective.temporary_first_person_in_constrained_spaces]\n\t\t#Whether to switch to first person temporarily when space constrained.\n\t\tenabled = false\n\t\t#The minium time in ticks the temporary first will be active when entering a constrained space.\n\t\t# Default: 60\n\t\t# Range: > 0\n\t\tminimum_time = 60\n\t\t#The additional time in ticks the perspective will stay in temporary first person after leaving a constrained space.\n\t\t# Default: 20\n\t\t# Range: > 0\n\t\tadditional_time = 20\n\t\t#The time in ticks the temporary first will be on cooldown before it can be entered again.\n\t\t# Default: 60\n\t\t# Range: > 0\n\t\tcooldown_time = 60\n\n\t\t[perspective.temporary_first_person_in_constrained_spaces.offset_threshold]\n\t\t\t#The x-axis camera offset threshold. When the x-axis camera offset falls below the configured threshold, the perspective will switch to temporary first person.\n\t\t\t# Default: 0.1\n\t\t\t# Range: 0.0 ~ 1.7976931348623157E308\n\t\t\toffset_x = 0.1\n\t\t\t#The y-axis camera offset threshold. When the y-axis camera offset falls below the configured threshold, the perspective will switch to temporary first person.\n\t\t\t# Default: 0.0\n\t\t\t# Range: 0.0 ~ 1.7976931348623157E308\n\t\t\toffset_y = 0.0\n\t\t\t#The z-axis camera offset threshold. When the z-axis camera offset falls below the configured threshold, the perspective will switch to temporary first person.\n\t\t\t# Default: 0.1\n\t\t\t# Range: 0.0 ~ 1.7976931348623157E308\n\t\t\toffset_z = 0.1\n\n[player]\n\t#The angle at which the player will no longer be rendered when looking up. Set to 0 to disable.\n\t# Default: 0.0\n\t# Range: 0.0 ~ 90.0\n\thide_player_when_looking_up_angle = 0.0\n\n\t[player.turning]\n\t\t#Whether to turn the player when using an item. This config option only applies when camera is decoupled.\n\t\t#Allowed Values: ALWAYS, NEVER, REQUIRES_TARGET\n\t\twhen_using_item = \"ALWAYS\"\n\t\t#Whether to turn the player when attacking. This config option only applies when camera is decoupled.\n\t\t#Allowed Values: ALWAYS, NEVER, REQUIRES_TARGET\n\t\twhen_attacking = \"ALWAYS\"\n\t\t#Whether to turn the player when interacting with blocks. This config option only applies when camera is decoupled.\n\t\t#Allowed Values: ALWAYS, NEVER, REQUIRES_TARGET\n\t\twhen_interacting = \"ALWAYS\"\n\t\t#Whether to turn the player when picking blocks or entities. This config option only applies when camera is decoupled.\n\t\t#Allowed Values: ALWAYS, NEVER, REQUIRES_TARGET\n\t\twhen_picking = \"ALWAYS\"\n\t\t#The time in ticks the player will remain turned after the interaction has ended. Set to 0 to disable. This config option only applies when camera is decoupled.\n\t\t# Default: 4\n\t\t# Range: > 0\n\t\tturning_lock_time = 4\n\t\t#The speed multiplier at which the player rotation converges to the movement direction of the player.\n\t\t# Default: 0.25\n\t\t# Range: 0.05000000074505806 ~ 1.0\n\t\tturning_speed_multiplier = 0.25\n\t\t#Whether the x-rot of the player turns with the camera. This config option only applies when camera is decoupled.\n\t\tturn_player_x_rot_with_camera = true\n\t\t#Whether the y-rot of the player turns with the camera. This config option only applies when camera is decoupled.\n\t\tturn_player_y_rot_with_camera = true\n\t\t#The maximum angle to turn the player y-rot with the camera. This config option only applies when 'Turn player y-rot with camera' is enabled.\n\t\t# Default: 90.0\n\t\t# Range: 0.0 ~ 180.0\n\t\tturn_player_y_rot_angle_limit = 90.0\n\t\t#Whether the x-rot of the player turns such that it is always facing the camera. This config option only applies when camera is decoupled and player x-rot turning with camera is enabled.\n\t\tturn_player_x_rot_to_camera = false\n\n\t[player.transparency]\n\t\t#Whether to adjust the player model transparency when view is obstructed. Changing this value may require a game restart to take full effect.\n\t\tadjust_transparency = true\n\t\t#Whether to turn the player model transparent when aiming. This config option only applies when adjust player transparency is enabled.\n\t\twhen_aiming = false\n\t\t#Whether to turn the player model transparent when climbing. This config option only applies when adjust player transparency is enabled.\n\t\twhen_climbing = false\n\n[object_picker]\n\t#The raytrace distance used for the dynamic crosshair.\n\t# Default: 400.0\n\t# Range: 0.0 ~ 1.7976931348623157E308\n\tcustom_raytrace_distance = 400.0\n\t#Whether to use the custom raytrace distance used for the dynamic crosshair.\n\tuse_custom_raytrace_distance = true\n\n\t[object_picker.pick_origin]\n\t\t#The origin where the entity pick starts when using the static crosshair.\n\t\t#Allowed Values: PLAYER, CAMERA\n\t\tentity_pick_origin = \"PLAYER\"\n\t\t#The origin where the block pick starts when using the static crosshair.\n\t\t#Allowed Values: PLAYER, CAMERA\n\t\tblock_pick_origin = \"PLAYER\"\n\n\t[object_picker.pick_vector]\n\t\t#The vector direction of the raytrace when picking objects. This config option only applies when using the dynamic crosshair.\n\t\t#Allowed Values: PLAYER, CAMERA\n\t\tpick_vector = \"CAMERA\"\n\n[crosshair]\n\t#Crosshair type to use for shoulder surfing.\n\t#Allowed Values: ADAPTIVE, DYNAMIC, STATIC, STATIC_WITH_1PP, DYNAMIC_WITH_1PP\n\tcrosshair_type = \"STATIC\"\n\t#Items that when held, trigger the dynamic crosshair in adaptive mode. This config option supports regular expressions. Example: 'minecraft:.*sword' matches 'minecraft:wooden_sword' and 'minecraft:netherite_sword'.\n\tadaptive_crosshair_hold_items = [\"minecraft:snowball\", \"minecraft:egg\", \"minecraft:experience_bottle\", \"minecraft:ender_pearl\", \"minecraft:splash_potion\", \"minecraft:fishing_rod\", \"minecraft:lingering_potion\"]\n\t#Items that when used, trigger the dynamic crosshair in adaptive mode. This config option supports regular expressions. Example: 'minecraft:.*sword' matches 'minecraft:wooden_sword' and 'minecraft:netherite_sword'.\n\tadaptive_crosshair_use_items = []\n\t#Item properties of an item, that when held, trigger the dynamic crosshair in adaptive mode.\n\tadaptive_crosshair_hold_item_properties = [\"minecraft:charged\"]\n\t#Item properties of an item, that when used, trigger the dynamic crosshair in adaptive mode.\n\tadaptive_crosshair_use_item_properties = [\"minecraft:pull\", \"minecraft:throwing\"]\n\n\t[crosshair.obstruction]\n\t\t#Only show the obstruction indicator when using items that would trigger the adaptive crosshair.\n\t\tonly_when_aiming = true\n\t\t#Hide the obstruction indicator when it is too close to the main crosshair. Distance measured in scaled pixels.\n\t\t# Default: 8\n\t\t# Range: > 0\n\t\tmin_distance_to_crosshair = 8\n\t\t#Ignore obstructions that are too far away from the player. Distance measured in blocks. Set to 0 to disable.\n\t\t# Default: 20.0\n\t\t# Range: 0.0 ~ 1.7976931348623157E308\n\t\tmax_distance_to_obstruction = 20.0\n\t\t#When the crosshair type is static, shows an additional indicator on obstacles that stand between you and your target.\n\t\tobstruction_indicator = true\n\n\t[crosshair.visibility]\n\t\t#Crosshair visibility for first person.\n\t\t#Allowed Values: ALWAYS, NEVER, WHEN_AIMING, WHEN_IN_RANGE, WHEN_AIMING_OR_IN_RANGE\n\t\tfirst_person = \"ALWAYS\"\n\t\t#Crosshair visibility for third person back.\n\t\t#Allowed Values: ALWAYS, NEVER, WHEN_AIMING, WHEN_IN_RANGE, WHEN_AIMING_OR_IN_RANGE\n\t\tthird_person_back = \"NEVER\"\n\t\t#Crosshair visibility for third person front.\n\t\t#Allowed Values: ALWAYS, NEVER, WHEN_AIMING, WHEN_IN_RANGE, WHEN_AIMING_OR_IN_RANGE\n\t\tthird_person_front = \"NEVER\"\n\t\t#Crosshair visibility for shoulder surfing.\n\t\t#Allowed Values: ALWAYS, NEVER, WHEN_AIMING, WHEN_IN_RANGE, WHEN_AIMING_OR_IN_RANGE\n\t\tshoulder_surfing = \"ALWAYS\"\n\n[audio]\n\t#Whether to center sounds made by the player.\n\tcenter_player_sounds = false\n\n\t[integrations.epicfight]\n\t\t#Whether to allow target lock-on when camera is decoupled.\n\t\tdecoupled_camera_lock_on = false\n\n\t[integrations.curios]\n\t\t#Items that when equipped in a curios slot, trigger the dynamic crosshair in adaptive mode. This config option supports regular expressions. The curios slot must be specified before the expression and is separated by an '@' character. Example: 'ring@angelring:.*_ring' matches 'angelring:diamond_ring' and 'angelring:angel_ring' when equipped in the 'ring' slot.\n\t\tadaptive_crosshair_items = []\n\t\t#Item properties of an item, that when equipped in a curios slot, trigger the dynamic crosshair in adaptive mode. Example: 'necklace@charged'\n\t\tadaptive_crosshair_item_properties = []\n",
+   "size": 19491,
+   "unreadable": null,
+   "crlf": false,
+   "bom": false
+  }
+ },
+ "status": {
+  "branch": "master",
+  "upstream": "origin/master",
+  "ahead": 1,
+  "behind": 0,
+  "hasCommits": true,
+  "hasRemote": true,
+  "staged": [],
+  "unstaged": [
+   {
+    "path": "config/biomeswevegone/world_generation.json",
+    "origPath": null,
+    "status": "M"
+   },
+   {
+    "path": "config/crash_assistant/modlist.json",
+    "origPath": null,
+    "status": "M"
+   },
+   {
+    "path": "config/fancymenu/customizablemenus.txt",
+    "origPath": null,
+    "status": "M"
+   },
+   {
+    "path": "config/shouldersurfing-client.toml",
+    "origPath": null,
+    "status": "M"
+   },
+   {
+    "path": "options.txt",
+    "origPath": null,
+    "status": "M"
+   },
+   {
+    "path": "shaderpacks/ComplementaryUnbound_r5.9.3 + EuphoriaPatches_1.10.5.txt",
+    "origPath": null,
+    "status": "M"
+   },
+   {
+    "path": "config/fancymenu/customization/join_multiplayer_screen_layout.txt",
+    "origPath": null,
+    "status": "?"
+   }
+  ],
+  "conflicted": []
+ },
+ "commits": [
+  {
+   "hash": "92c493cfeb58c7bb81ae90092ab07de096cc528b",
+   "short": "92c493c",
+   "author": "muon-rw",
+   "when": "67 minutes ago",
+   "subject": "add journeymap configs, fml, iris. updates for packraven"
+  },
+  {
+   "hash": "efdb52dd52d4088a62f4f970551d24c5c6ea8e5f",
+   "short": "efdb52d",
+   "author": "muon-rw",
+   "when": "6 hours ago",
+   "subject": "Sync binaries from CurseForge via mods.lock.json"
+  },
+  {
+   "hash": "e2ea7d2109af53d4665da7723b9b415e99d731bd",
+   "short": "e2ea7d2",
+   "author": "muon-rw",
+   "when": "6 hours ago",
+   "subject": "quest stuff"
+  },
+  {
+   "hash": "8e419982761fbdec581a5f6c78559c1c9f5c1aff",
+   "short": "8e41998",
+   "author": "muon-rw",
+   "when": "6 hours ago",
+   "subject": "perf tweaks"
+  },
+  {
+   "hash": "7354f3181a0335749760173cef4a2c3e79a72033",
+   "short": "7354f31",
+   "author": "muon-rw",
+   "when": "6 hours ago",
+   "subject": "mod bumps"
+  },
+  {
+   "hash": "bf092aba4b0341105e73bb361dd690472407577e",
+   "short": "bf092ab",
+   "author": "muon-rw",
+   "when": "2 days ago",
+   "subject": "texture patches"
+  },
+  {
+   "hash": "7127ab0f95d9015918b38d3c59dc29268e4c883e",
+   "short": "7127ab0",
+   "author": "muon-rw",
+   "when": "2 days ago",
+   "subject": "bumps"
+  },
+  {
+   "hash": "1818163fd87efea42b44390495a2b556b8ede928",
+   "short": "1818163",
+   "author": "muon-rw",
+   "when": "2 days ago",
+   "subject": "the damagepocalypse"
+  },
+  {
+   "hash": "6591607527ea42217d808b87cf426728b0087cf1",
+   "short": "6591607",
+   "author": "muon-rw",
+   "when": "2 days ago",
+   "subject": "checkpoint these are goodskies"
+  },
+  {
+   "hash": "375689a9e61143139ccb71bc73b70b158901183a",
+   "short": "375689a",
+   "author": "muon-rw",
+   "when": "2 days ago",
+   "subject": "gem balancing, reduce scraps, match ascended lvl"
+  },
+  {
+   "hash": "b8ab0ede62f8fb2ceb017fb0a87623ad9a9a6b13",
+   "short": "b8ab0ed",
+   "author": "muon-rw",
+   "when": "2 days ago",
+   "subject": "quest updots"
+  },
+  {
+   "hash": "6b451f8538d8113ea341f85233d57dfb5b920edc",
+   "short": "6b451f8",
+   "author": "muon-rw",
+   "when": "3 days ago",
+   "subject": "bumps"
+  },
+  {
+   "hash": "60c896a94919e9f99efa5bc616b0e8cf57b7ebf4",
+   "short": "60c896a",
+   "author": "muon-rw",
+   "when": "3 days ago",
+   "subject": "latest keys from bumps"
+  },
+  {
+   "hash": "849906a5804110602726351729c7f2341c25465b",
+   "short": "849906a",
+   "author": "muon-rw",
+   "when": "3 days ago",
+   "subject": "misc configs"
+  },
+  {
+   "hash": "69e9d801144648bf1e321a7e77a6cc2fea2def23",
+   "short": "69e9d80",
+   "author": "muon-rw",
+   "when": "3 days ago",
+   "subject": "levels"
+  }
+ ],
+ "diffs": {
+  "u:config/biomeswevegone/world_generation.json": {
+   "text": "",
+   "binary": false,
+   "truncated": false
+  },
+  "u:config/crash_assistant/modlist.json": {
+   "text": "diff --git a/config/crash_assistant/modlist.json b/config/crash_assistant/modlist.json\nindex 6f1e7a7..e4be2c6 100644\n--- a/config/crash_assistant/modlist.json\n+++ b/config/crash_assistant/modlist.json\n@@ -5,6 +5,14 @@\n     \"name\": \"neoforge\",\n     \"version\": \"neoforge-21.1.259\"\n   },\n+  \"aaa_particles-neoforge-1.21.1-2.3.3.jar\": {\n+    \"jarName\": \"aaa_particles-neoforge-1.21.1-2.3.3.jar\",\n+    \"modId\": \"aaa_particles\",\n+    \"name\": \"AAA Particles\",\n+    \"version\": \"2.3.3\",\n+    \"curseForgeHash\": 3753880489,\n+    \"modrinthHash\": \"3e66c196fe9d9e60718235bb1472b5f760cf7313\"\n+  },\n   \"abridged-2.0.2-neoforge-21.1.jar\": {\n     \"jarName\": \"abridged-2.0.2-neoforge-21.1.jar\",\n     \"modId\": \"abridged\",\n@@ -69,6 +77,22 @@\n     \"curseForgeHash\": 3079423735,\n     \"modrinthHash\": \"dee32c9fa84a9b3796e39846608f8f77591ea56f\"\n   },\n+  \"aeroclaims-0.9.4.jar\": {\n+    \"jarName\": \"aeroclaims-0.9.4.jar\",\n+    \"modId\": \"aeroclaims\",\n+    \"name\": \"Aeronautics Claims\",\n+    \"version\": \"0.9.4\",\n+    \"curseForgeHash\": 1932971671,\n+    \"modrinthHash\": \"83b48a5a406f4adab9f320a4d91d0dda27f5beb5\"\n+  },\n+  \"aeroworks-1.5.0.jar\": {\n+    \"jarName\": \"aeroworks-1.5.0.jar\",\n+    \"modId\": \"aeroworks\",\n+    \"name\": \"Create: Aeroworks\",\n+    \"version\": \"1.5.0\",\n+    \"curseForgeHash\": 2686966127,\n+    \"modrinthHash\": \"a14ff1c30f3c824b36ee6e2e711a47fd537a5c5f\"\n+  },\n   \"aether-1.21.1-1.5.10-neoforge.jar\": {\n     \"jarName\": \"aether-1.21.1-1.5.10-neoforge.jar\",\n     \"modId\": \"aether\",\n@@ -197,6 +221,14 @@\n     \"curseForgeHash\": 236660485,\n     \"modrinthHash\": \"8038c9427b4ceebccc650510ed715d856ccd5946\"\n   },\n+  \"archaion-1.21.1-1.4.4.jar\": {\n+    \"jarName\": \"archaion-1.21.1-1.4.4.jar\",\n+    \"modId\": \"archaion\",\n+    \"name\": \"Archaion\",\n+    \"version\": \"1.21.1-1.4.4\",\n+    \"curseForgeHash\": 763726001,\n+    \"modrinthHash\": \"157513c36b59ebb275fc8176fc7ace4d118c5d75\"\n+  },\n   \"archers-neoforge-3.1.1+1.21.1.jar\": {\n     \"jarName\": \"archers-neoforge-3.1.1+1.21.1.jar\",\n     \"modId\": \"archers\",\n@@ -786,6 +818,22 @@\n     \"curseForgeHash\": 522093599,\n     \"modrinthHash\": \"0e97e49837bed766e6f28a4c95b04885d6acc353\"\n   },\n+  \"create-aeronautics-bundled-1.21.1-1.3.2.jar\": {\n+    \"jarName\": \"create-aeronautics-bundled-1.21.1-1.3.2.jar\",\n+    \"modId\": \"aeronautics_bundled\",\n+    \"name\": \"Create Aeronautics\",\n+    \"version\": \"1.3.2\",\n+    \"curseForgeHash\": 634506361,\n+    \"modrinthHash\": \"ddbe9cbc25e8f663218aa1e9fdfc4b99f0e11e4b\"\n+  },\n+  \"create_aeronautics_throwable_rope_connector-0.4.3.jar\": {\n+    \"jarName\": \"create_aeronautics_throwable_rope_connector-0.4.3.jar\",\n+    \"modId\": \"create_aeronautics_throwable_rope_connector\",\n+    \"name\": \"Create Aeronautics: Throwable Rope Connector\",\n+    \"version\": \"0.4.3\",\n+    \"curseForgeHash\": 2791260394,\n+    \"modrinthHash\": \"63fcbbc960461d42a59b417665fb938c79919514\"\n+  },\n   \"create_wizardry-1.21.1-0.5.1-pre1.jar\": {\n     \"jarName\": \"create_wizardry-1.21.1-0.5.1-pre1.jar\",\n     \"modId\": \"create_wizardry\",\n@@ -1666,6 +1714,22 @@\n     \"curseForgeHash\": 3740544067,\n     \"modrinthHash\": \"017fd8140c477f9ae602cf95594f1c23bef1d6e3\"\n   },\n+  \"ironsable-1.2.1.jar\": {\n+    \"jarName\": \"ironsable-1.2.1.jar\",\n+    \"modId\": \"ironsable\",\n+    \"name\": \"Ironsable\",\n+    \"version\": \"1.2.1\",\n+    \"curseForgeHash\": 1211600649,\n+    \"modrinthHash\": \"326a119843cd31c99a4f25b62075c8dd59c88e50\"\n+  },\n+  \"ironsable-wind-1.0.0.jar\": {\n+    \"jarName\": \"ironsable-wind-1.0.0.jar\",\n+    \"modId\": \"ironsable_wind\",\n+    \"name\": \"Ironsable x Wind\\u0027s Spellbooks\",\n+    \"version\": \"1.0.0\",\n+    \"curseForgeHash\": 3964964580,\n+    \"modrinthHash\": \"c09c73a83deaf6439f2d33652898eb610dbfa4f3\"\n+  },\n   \"isometric-renders-forked-0.3.0.jar\": {\n     \"jarName\": \"isometric-renders-forked-0.3.0.jar\",\n     \"modId\": \"isometric_renders_forked\",\n@@ -2596,6 +2660,19 @@\n     \"curseForgeHash\": 178635769,\n     \"modrinthHash\": \"edd45e186cc238b14945a48739ae9e10c8a03227\"\n   },\n+  \"sable-neoforge-1.21.1-2.0.6.jar\": {\n+    \"jarName\": \"sable-neoforge-1.21.1-2.0.6.jar\",\n+    \"modId\": \"sable\",\n+    \"name\": \"Sable\",\n+    \"version\": \"2.0.6\",\n+    \"curseForgeHash\": 492654774,\n+    \"modrinthHash\": \"cf46f7e8c1511f170abcdbee739944f0540549bf\"\n+  },\n+  \"sablescalablelux-1.21.1-NeoForge-1.0.0.jar\": {\n+    \"jarName\": \"sablescalablelux-1.21.1-NeoForge-1.0.0.jar\",\n+    \"curseForgeHash\": 456803001,\n+    \"modrinthHash\": \"69938340b9747c6c46f94fb6882f8a8dc76dcf30\"\n+  },\n   \"sawmill-1.21-1.8.1-neoforge.jar\": {\n     \"jarName\": \"sawmill-1.21-1.8.1-neoforge.jar\",\n     \"modId\": \"sawmill\",\n@@ -3052,6 +3129,14 @@\n     \"curseForgeHash\": 3029398592,\n     \"modrinthHash\": \"75718161662d9ec957ba22e10e497788ec1687ba\"\n   },\n+  \"waystonessable-1.0.7.jar\": {\n+    \"jarName\": \"waystonessable-1.0.7.jar\",\n+    \"modId\": \"waystonessable\",\n+    \"name\": \"WaystonesSable\",\n+    \"version\": \"1.0.7\",\n+    \"curseForgeHash\": 1534281127,\n+    \"modrinthHash\": \"cebbc2cf9a7a8b2255caff04f2109d9611b28091\"\n+  },\n   \"weaponmaster_ydm-1.21.1-neoforge-4.2.7.jar\": {\n     \"jarName\": \"weaponmaster_ydm-1.21.1-neoforge-4.2.7.jar\",\n     \"modId\": \"weaponmaster_ydm\",\n",
+   "binary": false,
+   "truncated": false
+  },
+  "u:config/fancymenu/customizablemenus.txt": {
+   "text": "diff --git a/config/fancymenu/customizablemenus.txt b/config/fancymenu/customizablemenus.txt\nindex fa97427..b60af69 100644\n--- a/config/fancymenu/customizablemenus.txt\n+++ b/config/fancymenu/customizablemenus.txt\n@@ -15,3 +15,6 @@ net.minecraft.client.gui.screens.options.OptionsScreen {\n com.jab125.mpuc.client.gui.screen.changelog.NewChangelogScreen {\n }\n \n+net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen {\n+}\n+\n",
+   "binary": false,
+   "truncated": false
+  },
+  "u:config/shouldersurfing-client.toml": {
+   "text": "diff --git a/config/shouldersurfing-client.toml b/config/shouldersurfing-client.toml\nindex eaf2230..a4117e3 100644\n--- a/config/shouldersurfing-client.toml\n+++ b/config/shouldersurfing-client.toml\n@@ -39,7 +39,7 @@\n \t\t#Third person camera z-offset.\n \t\t# Default: 4.0\n \t\t# Range: -1.7976931348623157E308 ~ 1.7976931348623157E308\n-\t\toffset_z = 2.8000000000000043\n+\t\toffset_z = 2.7750000000000044\n \t\t#Whether to dynamically adjust camera offsets depending on space constraints.\n \t\tdynamic_offsets = true\n \t\t#Size of the offset adjustment per step.\n",
+   "binary": false,
+   "truncated": false
+  },
+  "u:options.txt": {
+   "text": "diff --git a/options.txt b/options.txt\nindex 698425a..3e6a6ea 100644\n--- a/options.txt\n+++ b/options.txt\n@@ -133,7 +133,38 @@ key_iris.keybind.toggleShaders:key.keyboard.unknown\n key_iris.keybind.shaderPackSelection:key.keyboard.unknown\n key_iris.keybind.wireframe:key.keyboard.unknown\n key_key.reliable_remover.emi_delete:key.keyboard.delete\n+key_quark.keybind.autorun:key.keyboard.unknown\n+key_quark.keybind.back:key.keyboard.unknown\n+key_quark.keybind.camera_mode:key.keyboard.f12\n+key_quark.keybind.transfer_insert:key.keyboard.unknown\n+key_quark.keybind.transfer_extract:key.keyboard.unknown\n+key_quark.keybind.shift_lock:key.keyboard.unknown\n+key_quark.emote.no:key.keyboard.unknown\n+key_quark.emote.yes:key.keyboard.unknown\n+key_quark.emote.wave:key.keyboard.unknown\n+key_quark.emote.salute:key.keyboard.unknown\n+key_quark.emote.cheer:key.keyboard.unknown\n+key_quark.emote.clap:key.keyboard.unknown\n+key_quark.emote.think:key.keyboard.unknown\n+key_quark.emote.point:key.keyboard.unknown\n+key_quark.emote.shrug:key.keyboard.unknown\n+key_quark.emote.headbang:key.keyboard.unknown\n+key_quark.emote.weep:key.keyboard.unknown\n+key_quark.emote.facepalm:key.keyboard.unknown\n+key_quark.keybind.patreon_emote.dance:key.keyboard.unknown\n+key_quark.keybind.patreon_emote.tpose:key.keyboard.unknown\n+key_quark.keybind.patreon_emote.dab:key.keyboard.unknown\n+key_quark.keybind.patreon_emote.jet:key.keyboard.unknown\n+key_quark.keybind.patreon_emote.exorcist:key.keyboard.unknown\n+key_quark.keybind.patreon_emote.zombie:key.keyboard.unknown\n key_supplementaries.keybind.quiver:key.keyboard.unknown\n+key_quark.keybind.change_hotbar:key.keyboard.unknown\n+key_quark.keybind.sort_player:key.keyboard.unknown\n+key_quark.keybind.sort_container:key.keyboard.unknown\n+key_quark.keybind.lock_rotation:key.keyboard.unknown\n+key_quark.keybind.narrator_readout:key.keyboard.unknown\n+key_quark.keybind.narrator_full_readout:key.keyboard.unknown\n+key_quark.keybind.variant_selector:key.keyboard.r\n key_key.block_factorys_bosses.dodge_roll:key.keyboard.unknown\n key_accessories.key.open_accessories_screen:key.keyboard.unknown\n key_key.toms_storage.open_terminal:key.keyboard.b\n@@ -190,10 +221,10 @@ key_placebo.toggleWings:key.keyboard.keypad.8\n key_key.sophisticatedbackpacks.open_backpack:key.keyboard.b\n key_key.sophisticatedbackpacks.inventory_interaction:key.keyboard.u\n key_key.sophisticatedbackpacks.tool_swap:key.keyboard.unknown\n-key_key.sophisticatedbackpacks.toggle_upgrade_2:key.keyboard.unknown\n-key_key.sophisticatedbackpacks.toggle_upgrade_1:key.keyboard.unknown\n-key_key.sophisticatedbackpacks.toggle_upgrade_5:key.keyboard.unknown\n key_key.sophisticatedbackpacks.toggle_upgrade_4:key.keyboard.unknown\n+key_key.sophisticatedbackpacks.toggle_upgrade_5:key.keyboard.unknown\n+key_key.sophisticatedbackpacks.toggle_upgrade_1:key.keyboard.unknown\n+key_key.sophisticatedbackpacks.toggle_upgrade_2:key.keyboard.unknown\n key_key.sophisticatedbackpacks.toggle_upgrade_3:key.keyboard.unknown\n key_key.carry.desc:key.keyboard.left.shift\n key_key.toggle_health_bars:key.keyboard.unknown\n@@ -290,9 +321,6 @@ key_key.aether.invisibility_toggle.desc:key.keyboard.unknown\n key_key.deep_aether.stratus_dash_ability.desc:key.keyboard.y\n key_key.deep_aether.slider_eye_ability:key.keyboard.i\n key_key.deep_aether.toggle_skyjade_transparency:key.keyboard.unknown\n-key_simulated.keyinfo.rotate_mode:key.keyboard.tab\n-key_simulated.keyinfo.scroll_up:key.keyboard.unknown\n-key_simulated.keyinfo.scroll_down:key.keyboard.unknown\n key_key.gtbcs_spell_lib.lore_item_previous:key.keyboard.left\n key_key.gtbcs_spell_lib.lore_item_next:key.keyboard.right\n key_key.legendarysurvivaloverhaul.added_desc:key.keyboard.left.shift\n@@ -395,37 +423,8 @@ key_key.beltborne_lanterns.open_config:key.keyboard.unknown\n key_key.beltborne_lanterns.toggle_debug:key.keyboard.unknown\n key_key.beltborne_lanterns.open_debug:key.keyboard.unknown\n key_key.beltborne_lanterns.toggle_lantern:key.keyboard.unknown\n-key_quark.keybind.autorun:key.keyboard.unknown\n-key_quark.keybind.back:key.keyboard.unknown\n-key_quark.keybind.camera_mode:key.keyboard.f12\n-key_quark.keybind.transfer_insert:key.keyboard.unknown\n-key_quark.keybind.transfer_extract:key.keyboard.unknown\n-key_quark.keybind.shift_lock:key.keyboard.unknown\n-key_quark.emote.no:key.keyboard.unknown\n-key_quark.emote.yes:key.keyboard.unknown\n-key_quark.emote.wave:key.keyboard.unknown\n-key_quark.emote.salute:key.keyboard.unknown\n-key_quark.emote.cheer:key.keyboard.unknown\n-key_quark.emote.clap:key.keyboard.unknown\n-key_quark.emote.think:key.keyboard.unknown\n-key_quark.emote.point:key.keyboard.unknown\n-key_quark.emote.shrug:key.keyboard.unknown\n-key_quark.emote.headbang:key.keyboard.unknown\n-key_quark.emote.weep:key.keyboard.unknown\n-key_quark.emote.facepalm:key.keyboard.unknown\n-key_quark.keybind.patreon_emote.dance:key.keyboard.unknown\n-key_quark.keybind.patreon_emote.tpose:key.keyboard.unknown\n-key_quark.keybind.patreon_emote.dab:key.keyboard.unknown\n-key_quark.keybind.patreon_emote.jet:key.keyboard.unknown\n-key_quark.keybind.patreon_emote.exorcist:key.keyboard.unknown\n-key_quark.keybind.patreon_emote.zombie:key.keyboard.unknown\n-key_quark.keybind.change_hotbar:key.keyboard.unknown\n-key_quark.keybind.sort_player:key.keyboard.unknown\n-key_quark.keybind.sort_container:key.keyboard.unknown\n-key_quark.keybind.lock_rotation:key.keyboard.unknown\n-key_quark.keybind.narrator_readout:key.keyboard.unknown\n-key_quark.keybind.narrator_full_readout:key.keyboard.unknown\n-key_quark.keybind.variant_selector:key.keyboard.r\n+key_key.valoria.bag_menu:key.keyboard.b\n+key_key.valoria.jewelry:key.keyboard.z\n key_key.legendary_monsters.fiery_boots_ability:key.keyboard.i\n key_key.legendary_monsters.mossy_chestplate_ability:key.keyboard.y\n key_key.legendary_monsters.roar_ability:key.keyboard.unknown\n@@ -445,7 +444,6 @@ key_create.keyinfo.ctrl_modifier:key.keyboard.left.control\n key_create.keyinfo.alt_modifier:key.keyboard.left.alt\n key_dndesires.keyinfo.saw_active:key.keyboard.left.alt\n key_dndesires.keyinfo.drill_active:key.keyboard.left.alt\n-key_key.aeroworks.joystick.free_camera:key.keyboard.left.shift\n key_key.pipeorgans.midi_config:key.keyboard.semicolon\n key_key.witchery.dismount:key.keyboard.left.shift\n key_key.witchery.open_ability_selection:key.keyboard.unknown\n@@ -454,20 +452,20 @@ key_key.witchery.edit_hud:key.keyboard.unknown\n key_key.witchery.toggle_quest_hud:key.keyboard.unknown\n key_key.pickup.item:key.keyboard.unknown\n key_key.entityculling.toggle:key.keyboard.unknown\n-key_key.origins.quinary_active:key.keyboard.unknown\n-key_key.apoli.primary_active:key.keyboard.unknown\n-key_key.origins.quaternary_active:key.keyboard.unknown\n-key_key.origins.senary_active:key.keyboard.unknown\n-key_key.origins.nonary_active:key.keyboard.unknown\n-key_key.origins.ternary_active:key.keyboard.unknown\n-key_key.apoli.secondary_active:key.keyboard.unknown\n-key_key.origins.secondary_active:key.keyboard.h\n-key_key.origins.octonary_active:key.keyboard.unknown\n-key_key.origins.septenary_active:key.keyboard.unknown\n+key_key.punchy.triggerable.punchy_sword_inspect_rework:key.keyboard.unknown\n+key_key.punchy.triggerable.punchy_sword_inspect_old:key.keyboard.unknown\n key_key.origins.primary_active:key.keyboard.g\n+key_key.origins.septenary_active:key.keyboard.unknown\n+key_key.origins.octonary_active:key.keyboard.unknown\n+key_key.origins.secondary_active:key.keyboard.h\n+key_key.apoli.secondary_active:key.keyboard.unknown\n+key_key.origins.ternary_active:key.keyboard.unknown\n+key_key.origins.nonary_active:key.keyboard.unknown\n+key_key.origins.senary_active:key.keyboard.unknown\n+key_key.origins.quaternary_active:key.keyboard.unknown\n+key_key.apoli.primary_active:key.keyboard.unknown\n+key_key.origins.quinary_active:key.keyboard.unknown\n key_key.origins.denary_active:key.keyboard.unknown\n-key_key.punchy.triggerable.punchy_sword_inspect_old:key.keyboard.unknown\n-key_key.punchy.triggerable.punchy_sword_inspect_rework:key.keyboard.unknown\n soundCategory_master:1.0\n soundCategory_music:1.0\n soundCategory_record:1.0\n",
+   "binary": false,
+   "truncated": false
+  },
+  "u:shaderpacks/ComplementaryUnbound_r5.9.3 + EuphoriaPatches_1.10.5.txt": {
+   "text": "diff --git a/shaderpacks/ComplementaryUnbound_r5.9.3 + EuphoriaPatches_1.10.5.txt b/shaderpacks/ComplementaryUnbound_r5.9.3 + EuphoriaPatches_1.10.5.txt\nindex ebb445f..74f24c0 100644\n--- a/shaderpacks/ComplementaryUnbound_r5.9.3 + EuphoriaPatches_1.10.5.txt\t\n+++ b/shaderpacks/ComplementaryUnbound_r5.9.3 + EuphoriaPatches_1.10.5.txt\t\n@@ -1,5 +1,6 @@\n-#Wed Oct 07 23:46:57 PDT 2026\n+#Thu Oct 08 10:31:15 PDT 2026\n AAA_THIS_IS_A_EUPHORIA_PATCHES_SETTINGS_FILE=true\n+AAB_FOR_EUPHORIA_PATCHES_VERSION_1_10_5=true\n AURORA_CONDITION=4\n AURORA_INFLUENCE=true\n BLOCK_REFLECT_QUALITY=1\n",
+   "binary": false,
+   "truncated": false
+  },
+  "u:config/fancymenu/customization/join_multiplayer_screen_layout.txt": {
+   "text": "",
+   "binary": false,
+   "truncated": false
+  }
+ },
+ "changed": [
+  "config/biomeswevegone/world_generation.json",
+  "config/crash_assistant/modlist.json",
+  "config/fancymenu/customizablemenus.txt",
+  "config/shouldersurfing-client.toml",
+  "options.txt",
+  "shaderpacks/ComplementaryUnbound_r5.9.3 + EuphoriaPatches_1.10.5.txt",
+  "config/fancymenu/customization/join_multiplayer_screen_layout.txt"
+ ]
+}

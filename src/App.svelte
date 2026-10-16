@@ -27,11 +27,19 @@
   import { modCountsSummary, notOnCurseforgeSummary } from './lib/modsync'
   import { shortcut } from './lib/platform'
 
-  type View = 'changes' | 'test' | 'mods' | 'files' | 'git' | 'publish' | 'releases' | 'pack' | 'settings' | 'add'
+  type View = (typeof views)[number]
   type Tone = 'ok' | 'warn' | 'bad' | 'busy' | 'idle'
   type NavItem = { id: View; title: string; key?: string; alias?: string; status?: string; tone?: Tone; count?: number }
 
-  let view: View = $state('changes')
+  const views = ['changes', 'test', 'mods', 'files', 'git', 'publish', 'releases', 'pack', 'settings', 'add'] as const
+
+  // In dev builds, `?view=publish` opens straight to a view, so screenshot scripts don't have to click there.
+  function initialView(): View {
+    const requested = import.meta.env.DEV ? new URLSearchParams(location.search).get('view') : null
+    return views.find((v) => v === requested) ?? 'changes'
+  }
+
+  let view: View = $state(initialView())
   let overview = $state<Overview | null>(null)
   let loadError: string | null = $state(null)
   let packs = $state<PackList | null>(null)

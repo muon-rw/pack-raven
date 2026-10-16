@@ -1,5 +1,18 @@
 // Browser-only stand-in for the Tauri backend, so the UI can run in a plain browser during development.
-// We load data from src/dev/fixtures.json when present (gitignored; you generate it from a real instance).
+// We load data from src/dev/fixtures.json when present (gitignored; you generate it from a real instance),
+// and otherwise from the committed demo-fixtures.json, a snapshot of a real pack.
+import demoFixtures from './demo-fixtures.json'
+
+// Add `?scenario=` to the URL to put the pack in one of the states we review the UI in.
+const scenarios = {
+  dirty: 'Uncommitted changes, one commit to push, and a jar that blocks publishing',
+  ready: 'A clean tree with mod changes since the last release and nothing blocking a publish',
+  empty: 'A pack you just added, with no commits, releases or release notes',
+  nopack: 'No packs added yet, so the app opens on Add pack',
+}
+type Scenario = keyof typeof scenarios
+const requested = new URLSearchParams(location.search).get('scenario')
+const scenario: Scenario = requested && requested in scenarios ? (requested as Scenario) : 'dirty'
 
 type Fixtures = {
   instance: string
@@ -16,18 +29,15 @@ type Fixtures = {
 }
 
 const found = import.meta.glob('./fixtures.json', { eager: true, import: 'default' }) as Record<string, Fixtures>
-const fx: Fixtures = found['./fixtures.json'] ?? {
-  instance: 'C:/Instances/Example Pack',
-  version: '0.1.0',
-  minecraft: '1.21.1',
-  loader: 'neoforge-21.1.259',
-  lockCount: 0,
-  dirs: { '': [] },
-  files: {},
-  status: { staged: [], unstaged: [] },
-  commits: [],
-  diffs: {},
-  changed: [],
+const fx: Fixtures = found['./fixtures.json'] ?? (demoFixtures as Fixtures)
+if (scenario !== 'dirty') {
+  fx.status.staged = []
+  fx.status.unstaged = []
+  fx.changed = []
+}
+if (scenario === 'empty') {
+  fx.commits = []
+  fx.lockCount = 0
 }
 
 const staged = fx.status.staged.length ? fx.status.staged : fx.status.unstaged.slice(0, 2)
@@ -51,17 +61,58 @@ const pack = {
 
 const config = {
   author: 'muon-rw',
-  curseforge: { project_id: 1234567, release_type: 'beta', manual_release: false },
+  curseforge: { project_id: scenario === 'empty' ? 0 : 1234567, release_type: 'beta', manual_release: false },
   export: { exclude: [] },
   server: { exclude: [], client_only: [], keep: [], memory: '6G', graalvm: '', properties: {} },
   test: { username: 'Dev', port: 25565, client_memory: '8G' },
   discord: { role_id: '112233445566778899', color: '#4d6b2f', announce_on_approval: true, title: '{project_name} - v{version}', show_author: true, header: '', footer: '[Install]({file_url})' },
 }
 
-const releases = [
+const releases = scenario === 'empty' ? [] : [
   { version: '0.1.0', projectId: 1234567, fileId: 7001001, serverFileId: 7001002, publishedAt: '2026-10-03T18:20:00Z', status: 'Approved', serverStatus: 'Approved', serverPackLinked: true, announce: true, announcedAt: '2026-10-03T19:02:00Z' },
   { version: fx.version === '0.1.0' ? '0.1.1' : fx.version, projectId: 1234567, fileId: 7105511, serverFileId: 7105512, publishedAt: '2026-10-12T21:40:00Z', status: 'Under review', serverStatus: 'Under review', serverPackLinked: null, announce: true, announcedAt: null },
 ]
+
+const modChange = (name: string, from: string | null, to: string | null) => ({ name, url: `https://www.curseforge.com/minecraft/mc-mods/${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, from, to, inModList: true })
+const modDiff = {
+  since: scenario === 'empty' ? null : 'v0.1.0',
+  baseline: false,
+  added: scenario === 'empty' ? [] : [modChange('Iron\'s Spells', null, null)],
+  updated: scenario === 'empty' ? [] : [modChange('Sodium', 'sodium-neoforge-0.6.13.jar', 'sodium-neoforge-0.6.15.jar'), modChange('Apotheosis', 'Apotheosis-1.21.1-8.1.1.jar', 'Apotheosis-1.21.1-8.1.2.jar')],
+  removed: scenario === 'empty' ? [] : [modChange('Better Clouds', null, null)],
+}
+
+const notes = scenario === 'empty' ? '' : '## Highlights\n\n- New dragon fights in the End\n- Rebalanced early armor tiers\n'
+
+// Mirrors changelog::render in the backend.
+function renderChangelog() {
+  type Change = (typeof modDiff.added)[number]
+  const link = (c: Change) => (c.url ? `[${c.name}](${c.url})` : c.name)
+  const sections = [
+    modDiff.added.length ? `\n### Added\n${modDiff.added.map((c) => `- ${link(c)}\n`).join('')}` : '',
+    modDiff.updated.length ? `\n### Updated\n${modDiff.updated.map((c) => `- ${link(c)}: ${c.from} to ${c.to}\n`).join('')}` : '',
+    modDiff.removed.length ? `\n### Removed\n${modDiff.removed.map((c) => `- ${link(c)}\n`).join('')}` : '',
+  ].join('')
+  if (!sections) return notes.trimEnd()
+  return `${notes.trimEnd()}${notes.trim() ? '\n\n' : ''}## Mod changes\n${sections}`
+}
+
+const serverSides =
+  scenario === 'empty'
+    ? []
+    : [
+        { path: 'mods/sodium-neoforge-0.6.15.jar', projectId: 394468, name: 'Sodium', url: 'https://www.curseforge.com/minecraft/mc-mods/sodium', side: 'client', reason: 'Modrinth lists it as client-only', override: 'auto' },
+        { path: 'mods/iris-neoforge-1.8.1.jar', projectId: 455508, name: 'Iris Shaders', url: 'https://www.curseforge.com/minecraft/mc-mods/irisshaders', side: 'client', reason: 'Modrinth lists it as client-only', override: 'auto' },
+        { path: 'mods/shouldersurfing-neoforge-4.5.0.jar', projectId: 243190, name: 'Shoulder Surfing Reloaded', url: null, side: 'both', reason: 'CurseForge lists it for both sides', override: 'client' },
+        { path: 'mods/Apotheosis-1.21.1-8.1.2.jar', projectId: 313970, name: 'Apotheosis', url: null, side: 'both', reason: 'CurseForge lists it for both sides', override: 'auto' },
+      ]
+
+const preflight = {
+  dirty: ["mods/raven_tweaks-1.2.jar isn't on CurseForge. In Changes, add it to Git or move it to the trash."],
+  ready: [],
+  empty: ['Set the CurseForge project ID in Pack settings.'],
+  nopack: [],
+}[scenario]
 
 type MockEntry = { name: string; path: string; isDir: boolean; size: number; ignored: boolean }
 
@@ -262,23 +313,23 @@ function emit(event: string, payload: unknown) {
 }
 
 const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
-  list_packs: () => ({ active: pack.dir, packs: [pack], instancesRoot: 'C:/Instances' }),
+  list_packs: () => (scenario === 'nopack' ? { active: null, packs: [], instancesRoot: 'C:/Instances' } : { active: pack.dir, packs: [pack], instancesRoot: 'C:/Instances' }),
   overview: () => ({
     name: pack.name,
     version: fx.version,
     minecraft: fx.minecraft,
     loader: fx.loader,
     lockCount: fx.lockCount,
-    addons: { mods: fx.lockCount - 14, resourcePacks: 9, shaderPacks: 2, dataPacks: 3, other: 0 },
-    notOnCurseforge: ['mods/raven_tweaks-1.2.jar'],
+    addons: scenario === 'empty' ? { mods: 0, resourcePacks: 0, shaderPacks: 0, dataPacks: 0, other: 0 } : { mods: fx.lockCount - 14, resourcePacks: 9, shaderPacks: 2, dataPacks: 3, other: 0 },
+    notOnCurseforge: scenario === 'dirty' ? ['mods/raven_tweaks-1.2.jar'] : [],
     modListError: null,
     branch: 'master',
-    ahead: 1,
+    ahead: scenario === 'dirty' ? 1 : 0,
     behind: 0,
     incoming: null,
     changed: fx.changed,
-    lastTag: 'v0.1.0',
-    devJars: ['raven_core-dev.jar'],
+    lastTag: scenario === 'empty' ? null : 'v0.1.0',
+    devJars: scenario === 'dirty' ? ['raven_core-dev.jar'] : [],
     unpublishableJars: [],
     projectId: config.curseforge.project_id,
     runningJobs: [],
@@ -381,13 +432,16 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     throw 'The clipboard has no files to paste.'
   },
   releases: () => releases,
-  get_notes: () => '## Highlights\n\n- New dragon fights in the End\n- Rebalanced early armor tiers\n',
-  changelog_preview: () => ({ diff: { since: 'v0.1.0', added: [], updated: [], removed: [] }, markdown: '' }),
-  publish_preflight: () => [],
+  get_notes: () => notes,
+  changelog_preview: () => ({ diff: modDiff, markdown: renderChangelog() }),
+  publish_preflight: () => preflight,
   discover_instances: () => [pack, { ...pack, dir: 'C:/Instances/Shared Pack', name: 'Shared Pack', addonCount: 0, hasGit: false, hasLock: false, remote: null, added: false }],
-  server_sides: () => [],
+  server_sides: () => serverSides,
   discohook_link: () => 'https://discohook.app/?share=example',
   discohook_preview: () => 'https://discohook.app/?share=example',
+  get_pack_java: () => null,
+  set_icon_theme: () => null,
+  'plugin:window|set_theme': () => null,
   'plugin:autostart|is_enabled': () => false,
   'plugin:event|listen': (a) => {
     listeners.push({ event: String(a.event), handler: Number(a.handler) })
