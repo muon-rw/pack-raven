@@ -1,15 +1,15 @@
 # packraven
 
-A desktop app for developing and releasing CurseForge modpacks. You keep a CurseForge instance in git without committing mod jars, share it across machines or with collaborators, test it on a local server, and publish the client and server files to CurseForge with a matching git tag.
+A desktop app for developing and publishing modpacks. Track a CurseForge instance in git without committing mod jars, share it across machines or with collaborators, test it on a local server, and publish the client and server files to CurseForge. 
 
 packraven runs on Windows and macOS. Linux is not yet supported.
 
 ## What it does
 
 - **Tracks your modpack in git.** We record every Curseforge file's (mods, etc.) metadata instead of committing them. Anything that isn't on CurseForge is instead added to git directly.
-- **Syncs collaborators.** When you pull, we merge mod lists mod by mod and download whatever the other side added. Mods you lock in the CurseForge app stay locked in packraven, and the reverse.
-- **Makes your server pack.** We detect client-only mods from Modrinth and CurseForge metadata, so the server pack leaves them out. You can override any mod's side settings as needed.
-- **Tests before you ship.** Start an offline test server built from your server pack, and a client that joins it automatically, so you can quickly run end to end tests before publishing. 
+- **Syncs collaborators.** When you pull, we merge mod lists mod by mod and download whatever the other side added. Mods you version-lock in the CurseForge app stay locked in packraven, and the reverse.
+- **Makes your server pack.** We detect client-only mods from Modrinth and CurseForge metadata, so the server pack leaves them out. You can override mod inclusions, server.properties, the icon, and Java settings.
+- **Test before you ship.** Start a test server built from your server pack, and a client that joins it automatically, so you can quickly run end to end tests before publishing. 
 - **Publishes.** Set a version number and release notes, we'll detect all mod changes. packraven then uploads the files to Curseforge, attaching the server file to the main upload automatically. It also commits, tags, and (optionally) pushes to git.
 - **Announces.** Follow the status of your CurseForge review automatically, then announce the release on Discord via a webhook. Discohook support is built in.
 - **Manages mods.** Search CurseForge, add and update mods, see file changelogs, and disable any pack file, in fewer clicks. 
@@ -21,14 +21,14 @@ packraven sits in the tray and can start when you sign in.
 
 Click **Add pack** and pick one of two paths:
 
-- **Set up a pack** from an existing CurseForge instance. packraven lists every step before it makes a change: it creates a git repository if there isn't one, installs the sync hooks in `.githooks`, writes a `.gitignore` that leaves out logs, saves, caches and mod jars, and writes `mods.lock.json`. It stages the result, and you make the commits yourself.
-- **Join a pack** from a git remote. Create a profile in the CurseForge app with the pack's Minecraft version and mod loader, then point packraven at it and the remote. packraven fetches the pack, links the hooks, downloads the mods, and sets aside any CurseForge files in the profile that the pack doesn't include. If the profile's version or loader doesn't match the pack's, packraven stops without changing anything.
+- **Set up a pack** from an existing CurseForge instance on your machine. 
+- **Join a pack** from a git remote. Create a placeholder instance in the Curseforge app, and merge a git-hosted packraven repository into it.
 
-If packraven can't find git, it offers to install it (Git for Windows, or the macOS developer tools). The test server and client need Java; packraven uses the same Java you run the game with, or falls back to `java` on your PATH.
+packraven prompts you to install git if you don't have it. 
 
 ### Tokens
 
-Publishing needs a CurseForge upload token, and pushing over HTTPS to GitHub needs a GitHub token. Add them under **App settings**, where you can store each one in the system keychain or name an environment variable to read it from. For older setups, we still read `CURSEFORGE_TOKEN` or `CF_TOKEN` until you choose a source.
+Publishing needs a CurseForge upload token, and pushing over HTTPS to GitHub needs a GitHub token. Add these under **App settings**. packraven always uses the system keychain, it doesn't store secure credentials on its own. 
 
 ### Pack settings
 
