@@ -332,10 +332,19 @@ pub fn build_server_pack(app: AppHandle, state: State<'_, AppState>) -> CmdResul
     })
 }
 
+const MODS_CHANGING: &str = "packraven is changing this pack's mods. Wait for it to finish, then try again.";
+
+fn mods_changing(state: &AppState) -> bool {
+    state.jobs.running().iter().any(|job| job == "mods")
+}
+
 #[tauri::command]
 pub fn start_test(app: AppHandle, state: State<'_, AppState>, recopy_all: bool, connect: bool) -> CmdResult<()> {
     if state.test.server.lock().unwrap().is_some() {
         return Err("the test server is already running".into());
+    }
+    if mods_changing(&state) {
+        return Err(MODS_CHANGING.into());
     }
     let settings = state.settings();
     let pack = state.pack().map_err(err)?;
@@ -381,6 +390,9 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, recopy_all: bool, 
 
 #[tauri::command]
 pub fn start_client(app: AppHandle, state: State<'_, AppState>, join: bool) -> CmdResult<()> {
+    if mods_changing(&state) {
+        return Err(MODS_CHANGING.into());
+    }
     let settings = state.settings();
     let pack = state.pack().map_err(err)?;
     let natives = state.pack_data().join("natives");

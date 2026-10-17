@@ -22,6 +22,7 @@ test('mods can be filtered, updated and removed', async ({ page }) => {
   await openApp(page, 'mods', 'dirty')
   const rows = page.getByRole('region', { name: 'Mods' }).locator('tbody > tr')
   await expect(page.getByRole('button', { name: 'Update all (4)' })).toBeEnabled()
+  await expect(page.getByRole('status').filter({ hasText: 'two versions of Iris Shaders' })).toBeVisible()
 
   await page.getByRole('button', { name: /^Updates/ }).click()
   await expect(rows).toHaveCount(4)

@@ -400,7 +400,7 @@
         {:else if view === 'changes'}
           <Changes {overview} onpublish={() => (view = 'publish')} onchange={refresh} />
         {:else if view === 'mods'}
-          <Mods pack={packs?.active ?? null} />
+          <Mods pack={packs?.active ?? null} clientRunning={!!overview?.clientRunning} />
         {:else if view === 'server'}
           <ServerMods />
         {:else if view === 'test'}

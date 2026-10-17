@@ -9,7 +9,7 @@
   import { availableUpdate, modUpdates } from '../lib/modUpdates.svelte'
   import { commandKey, shortcut, trashName } from '../lib/platform'
 
-  let { pack }: { pack: string | null } = $props()
+  let { pack, clientRunning }: { pack: string | null; clientRunning: boolean } = $props()
 
   type Filter = 'updates' | 'all'
 
@@ -30,6 +30,7 @@
   let removing: string | null = $state(null)
 
   let updating = $derived(job('mods').phase === 'running')
+  let locked = $derived(updating || clientRunning)
 
   // App remounts this view when you switch packs, so we only compare the pack once.
   untrack(() => {
@@ -167,6 +168,12 @@
   const typeLabels: Record<ReleaseType, string> = { release: 'Release', beta: 'Beta', alpha: 'Alpha' }
 
   let updates = $derived(new Map(mods.map((m) => [m.path, availableUpdate(modUpdates.checks?.get(m.path), modUpdates.channel)] as const).filter(([, file]) => file)) as Map<string, ModFile>)
+  let duplicates = $derived.by(() => {
+    const byProject = new Map<number, InstalledMod[]>()
+    for (const mod of mods.filter((m) => m.path.startsWith('mods/') && !m.path.endsWith('.disabled'))) byProject.set(mod.projectId, [...(byProject.get(mod.projectId) ?? []), mod])
+    return [...byProject.values()].filter((group) => group.length > 1)
+  })
+  let duplicatePaths = $derived(new Set(duplicates.flat().map((m) => m.path)))
   let visible = $derived(
     mods.filter((m) => {
       if (filter === 'updates' && !updates.has(m.path)) return false
@@ -220,7 +227,7 @@
       <button
         class="primary"
         class:busy={updating}
-        disabled={!updates.size || updating}
+        disabled={!updates.size || locked}
         onclick={() => update([...updates].map(([path, file]) => ({ path, fileId: file.fileId })))}
       >
         {updating ? 'Updating' : updates.size ? `Update all (${updates.size})` : 'Update all'}
@@ -240,6 +247,17 @@
       <p><button onclick={check} disabled={checking}>Try again</button></p>
     </Notice>
   {/if}
+  {#if clientRunning}
+    <Notice tone="warn"><p>The test client has this pack's mods open, so packraven won't change them until you close it.</p></Notice>
+  {/if}
+  {#if duplicates.length}
+    <Notice tone="warn">
+      <p>
+        {duplicates.length === 1 ? `The mods folder has two versions of ${duplicates[0][0].name}` : `The mods folder has two versions of ${list(duplicates.map((group) => group[0].name))}`},
+        and Minecraft won't load {duplicates.length === 1 ? 'it' : 'them'} that way. Remove the one you don't want. packraven won't publish until you do.
+      </p>
+    </Notice>
+  {/if}
   {#if actionError}
     <Notice tone="error"><p>{actionError}</p></Notice>
   {/if}
@@ -247,7 +265,7 @@
     <Notice tone="ok"><p>{job('mods').message}</p></Notice>
   {:else if job('mods').phase === 'failed'}
     <Notice tone="error">
-      <p>The update failed, so packraven left your mods as they were: {job('mods').message}</p>
+      <p>Couldn't finish the update: {job('mods').message}</p>
     </Notice>
   {/if}
   {#if updating || job('mods').phase === 'failed'}
@@ -302,6 +320,7 @@
                     {#if mod.url}<a href={mod.url} onclick={(e) => { e.preventDefault(); openUrl(mod.url!) }}>{mod.name}</a>{:else}{mod.name}{/if}
                     {#if kind(mod.path)}<span class="muted kind">{kind(mod.path)}</span>{/if}
                     {#if mod.path.endsWith('.disabled')}<span class="chip">Disabled</span>{/if}
+                    {#if duplicatePaths.has(mod.path)}<span class="chip fail">Two versions</span>{/if}
                   </div>
                 </div>
               </td>
@@ -322,10 +341,10 @@
               <td>
                 <div class="row-actions">
                 {#if next}
-                  <button onclick={() => update([{ path: mod.path, fileId: next.fileId }])} disabled={updating} aria-label="Update {mod.name}">Update</button>
+                  <button onclick={() => update([{ path: mod.path, fileId: next.fileId }])} disabled={locked} aria-label="Update {mod.name}">Update</button>
                 {/if}
                 <button class="ghost" aria-expanded={expanded === mod.path} onclick={() => toggleVersions(mod)} aria-label="Versions of {mod.name}">Versions</button>
-                <button class="ghost" onclick={() => remove(mod)} disabled={updating || removing === mod.path} aria-label="Remove {mod.name}">Remove</button>
+                <button class="ghost" onclick={() => remove(mod)} disabled={locked || removing === mod.path} aria-label="Remove {mod.name}">Remove</button>
                 </div>
               </td>
             </tr>
@@ -348,7 +367,7 @@
                           {#if file.fileId === mod.fileId}
                             <span class="muted current">Installed</span>
                           {:else}
-                            <button onclick={() => update([{ path: mod.path, fileId: file.fileId }])} disabled={updating}>
+                            <button onclick={() => update([{ path: mod.path, fileId: file.fileId }])} disabled={locked}>
                               Use this
                             </button>
                           {/if}

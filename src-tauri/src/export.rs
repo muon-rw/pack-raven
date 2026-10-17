@@ -44,6 +44,27 @@ pub fn unallowed_override_jars(pack: &Pack) -> Result<Vec<String>> {
     Ok(override_files(pack, &[])?.into_iter().filter(|p| p.ends_with(".jar") && !allowed.is_match(p)).collect())
 }
 
+// The CurseForge app can leave the old jar behind when it can't delete it during an update, and
+// Minecraft won't start with two versions of a mod. Packs can hold several variants of one resource
+// pack, so we only check mods.
+pub fn duplicate_mods(pack: &Pack) -> Vec<Vec<String>> {
+    let mut by_project: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+    for entry in pack.lock.files.iter().filter(|e| e.path.starts_with("mods/") && !e.path.ends_with(".disabled")) {
+        by_project.entry(entry.project_id).or_default().push(entry.path.trim_start_matches("mods/").to_string());
+    }
+    by_project.into_values().filter(|paths| paths.len() > 1).collect()
+}
+
+pub fn duplicate_mods_problem(pack: &Pack) -> Option<String> {
+    let groups = duplicate_mods(pack);
+    let listed: Vec<String> = groups.iter().map(|files| files.join(" and ")).collect();
+    match groups.len() {
+        0 => None,
+        1 => Some(format!("The mods folder has two versions of one mod: {}. In Mods, remove the one you don't want.", listed[0])),
+        _ => Some(format!("The mods folder has two versions of {} mods: {}. In Mods, remove the ones you don't want.", groups.len(), listed.join("; "))),
+    }
+}
+
 pub fn local_dev_jars(pack: &Pack) -> Vec<String> {
     std::fs::read_dir(pack.dir.join("mods"))
         .map(|dir| {
@@ -92,6 +113,9 @@ pub fn client_export(pack: &Pack, version: &str, out_dir: &Path, log: &Log) -> R
         "files": files,
         "overrides": "overrides",
     });
+    if let Some(problem) = duplicate_mods_problem(pack) {
+        bail!(problem);
+    }
     let jars = unallowed_override_jars(pack)?;
     if !jars.is_empty() {
         bail!(
@@ -351,5 +375,20 @@ mod tests {
         let forced: BTreeMap<String, String> = [("enableShaders", "false"), ("added", "1")].into_iter().map(|(k, v)| (k.into(), v.into())).collect();
         let text = "#enableShaders=true\nenableShaders=true\nshaderPack=x\n";
         assert_eq!(force_properties(text, &forced), "#enableShaders=true\nenableShaders=false\nshaderPack=x\nadded=1\n");
+    }
+
+    #[test]
+    fn finds_two_enabled_versions_of_one_mod() {
+        let entry = |path: &str, project_id| crate::pack::LockEntry { path: path.into(), project_id, file_id: 0, sha1: String::new(), size: 0, url: String::new() };
+        let files = vec![
+            entry("mods/sodium-0.6.14.jar", 1),
+            entry("mods/sodium-0.6.15.jar", 1),
+            entry("mods/iris-1.8.jar", 2),
+            entry("mods/iris-1.7.jar.disabled", 2),
+            entry("resourcepacks/x-dark.zip", 3),
+            entry("resourcepacks/x-light.zip", 3),
+        ];
+        let pack = Pack { dir: PathBuf::new(), config: Default::default(), lock: crate::pack::Lockfile { minecraft: None, loader: None, files } };
+        assert_eq!(duplicate_mods(&pack), [["sodium-0.6.14.jar", "sodium-0.6.15.jar"]]);
     }
 }

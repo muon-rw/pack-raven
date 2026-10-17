@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use futures_util::{stream, StreamExt};
 use regex::Regex;
 use serde::Serialize;
@@ -682,31 +682,57 @@ pub async fn place(dir: &Path, placements: Vec<Placement>, log: &Log) -> Result<
         .buffer_unordered(PARALLEL_DOWNLOADS)
         .collect()
         .await;
-    results.into_iter().collect::<Result<Vec<()>>>()?;
+    results.into_iter().collect::<Result<Vec<()>>>().context("a download failed, so packraven left your mods as they were")?;
     let replaced: HashSet<&str> = placements.iter().filter_map(|p| p.replaces.as_deref()).collect();
     if let Some(taken) = placements.iter().find(|p| !replaced.contains(p.entry.path.as_str()) && repo.root.join(&p.entry.path).exists()) {
         bail!("{} already exists", taken.entry.path);
     }
 
     let mut lock = repo.read_lock()?;
+    let mut failed = Vec::new();
     for Placement { entry, replaces } in placements {
         if let Some(old) = replaces {
-            if let Some(old_entry) = lock.files.iter().find(|e| e.path == old) {
-                retire(&repo, &old, &old_entry.sha1)?;
-            } else {
-                std::fs::remove_file(repo.root.join(&old))?;
+            let sha1 = lock.files.iter().find(|e| e.path == old).map(|e| e.sha1.clone());
+            let removed = match sha1 {
+                Some(sha1) => retire(&repo, &old, &sha1),
+                None => std::fs::remove_file(repo.root.join(&old)).map_err(Into::into),
+            };
+            // Minecraft can hold a jar open while it runs. If we placed the new file anyway, the
+            // pack would load two versions of the mod, so we leave this one as it was.
+            if let Err(error) = removed {
+                log.stream("err", &format!("Couldn't remove {old}: {error:#}"));
+                failed.push(old);
+                continue;
             }
             lock.files.retain(|e| e.path != old);
             log.info(format!("Removed {old}"));
         }
-        let target = repo.root.join(&entry.path);
-        std::fs::create_dir_all(target.parent().unwrap())?;
-        std::fs::copy(repo.cached(&entry.sha1), &target)?;
+        if let Err(error) = copy_into_place(&repo.cached(&entry.sha1), &repo.root.join(&entry.path)) {
+            log.stream("err", &format!("Couldn't place {}: {error:#}", entry.path));
+            failed.push(entry.path);
+            continue;
+        }
         log.info(format!("Placed {}", entry.path));
         lock.files.retain(|e| e.path != entry.path);
         lock.files.push(entry);
     }
-    repo.write_lock(&mut lock, false)
+    repo.write_lock(&mut lock, false)?;
+    if !failed.is_empty() {
+        let left = if failed.len() == 1 { "that mod as it was" } else { "those mods as they were" };
+        bail!("packraven couldn't change {}, so it left {left}. If Minecraft is running from this pack's folder, close it and try again.", failed.join(", "));
+    }
+    Ok(())
+}
+
+// We copy under a name the mod list ignores, so a failed copy never leaves a partial jar for Minecraft to load.
+fn copy_into_place(source: &Path, target: &Path) -> Result<()> {
+    std::fs::create_dir_all(target.parent().unwrap())?;
+    let partial = target.with_extension("part");
+    let copied = std::fs::copy(source, &partial).map_err(anyhow::Error::from).and_then(|_| Ok(std::fs::rename(&partial, target)?));
+    if copied.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    copied
 }
 
 // We keep a replaced jar in the download cache, so switching back to it needs no download.
@@ -960,6 +986,26 @@ mod tests {
         assert!(!git::tracked_files(&dir).unwrap().contains(&"mods/tridot.jar".to_string()));
         assert!(dir.join("mods/tridot.jar").exists());
         assert_eq!(managed_files(&dir).unwrap(), ["mods/tridot.jar"]);
+    }
+
+    #[test]
+    fn place_skips_a_mod_whose_old_jar_cant_be_removed() {
+        let dir = test_repo("locked");
+        let repo = Repo::open(&dir).unwrap();
+        std::fs::create_dir_all(repo.cache_dir()).unwrap();
+        // remove_file fails on a directory, the way it fails on a jar Minecraft holds open on Windows.
+        std::fs::create_dir_all(dir.join("mods/old.jar")).unwrap();
+        for (name, content) in [("new.jar", "new"), ("other.jar", "other")] {
+            let sha1 = hex::encode(Sha1::digest(content));
+            std::fs::write(repo.cached(&sha1), content).unwrap();
+            let replaces = (name == "new.jar").then(|| "mods/old.jar".to_string());
+            let placement = Placement { entry: LockEntry { path: format!("mods/{name}"), project_id: 1, file_id: 1, sha1, size: 3, url: String::new() }, replaces };
+            let result = tauri::async_runtime::block_on(place(&dir, vec![placement], &Log::console("test")));
+            assert_eq!(result.is_ok(), name == "other.jar", "{name}: {result:?}");
+        }
+        assert!(!dir.join("mods/new.jar").exists(), "we must not place a second version next to the old one");
+        assert!(dir.join("mods/old.jar").exists());
+        assert_eq!(paths(&repo.read_lock().unwrap()), ["mods/other.jar"]);
     }
 
     #[test]

@@ -123,6 +123,9 @@ let installedMods: MockMod[] =
         { path: 'mods/Placebo-1.21.1-9.9.1.jar', projectId: 283644, fileId: 8800001, name: 'Placebo', url: cfUrl('placebo'), logo: logo('P', '#5b6b8a'), releaseType: 'release', requires: [], newer: [] },
         { path: 'mods/sodium-neoforge-0.6.15.jar', projectId: 394468, fileId: 8591792, name: 'Sodium', url: cfUrl('sodium'), logo: logo('S', '#3f6e4e'), releaseType: 'beta', requires: [], newer: [newer(8756580, 'sodium-neoforge-0.8.13+mc1.21.1.jar')] },
         { path: 'mods/iris-neoforge-1.8.1.jar', projectId: 455508, fileId: 8700000, name: 'Iris Shaders', url: cfUrl('irisshaders'), logo: logo('I', '#6a3f8a'), releaseType: 'release', requires: [394468], newer: [] },
+        ...(scenario === 'dirty'
+          ? [{ path: 'mods/iris-neoforge-1.8.0.jar', projectId: 455508, fileId: 8600500, name: 'Iris Shaders', url: cfUrl('irisshaders'), logo: logo('I', '#6a3f8a'), releaseType: 'release', requires: [394468], newer: [] }]
+          : []),
         { path: 'mods/irons_spellbooks-1.21.1-3.4.0.jar', projectId: 855414, fileId: 8600000, name: "Iron's Spells 'n Spellbooks", url: cfUrl('irons-spells-n-spellbooks'), logo: logo('I', '#8a3f3f'), releaseType: 'release', requires: [], newer: [newer(8990000, 'irons_spellbooks-1.21.1-3.5.0-beta.2.jar', 'beta')] },
         { path: 'mods/jei-1.21.1-neoforge-19.21.0.247.jar', projectId: 238222, fileId: 8650000, name: 'Just Enough Items (JEI)', url: cfUrl('jei'), logo: logo('J', '#4a6a2a'), releaseType: 'release', requires: [], newer: [] },
         { path: 'mods/shouldersurfing-neoforge-4.5.0.jar', projectId: 243190, fileId: 8500000, name: 'Shoulder Surfing Reloaded', url: null, logo: logo('S', '#2a5a6a'), releaseType: 'release', requires: [], newer: [] },
@@ -162,7 +165,10 @@ function updateMods(requests: { path: string; fileId: number }[]) {
 }
 
 const preflight = {
-  dirty: ["mods/raven_tweaks-1.2.jar isn't on CurseForge. In Changes, add it to Git or move it to the trash."],
+  dirty: [
+    "mods/raven_tweaks-1.2.jar isn't on CurseForge. In Changes, add it to Git or move it to the trash.",
+    "The mods folder has two versions of one mod: iris-neoforge-1.8.0.jar and iris-neoforge-1.8.1.jar. In Mods, remove the one you don't want.",
+  ],
   ready: [],
   empty: ['Set the CurseForge project ID in Pack settings.'],
   nopack: [],
