@@ -38,7 +38,7 @@
   // In dev builds, `?view=publish` opens straight to a view, so screenshot scripts don't have to click there.
   function initialView(): View {
     const requested = import.meta.env.DEV ? new URLSearchParams(location.search).get('view') : null
-    return views.find((v) => v === requested) ?? 'changes'
+    return views.find((v) => v === requested) ?? 'mods'
   }
 
   let view: View = $state(initialView())
@@ -132,7 +132,7 @@
     }
     try {
       await api.switchPack(dir, killTests)
-      view = 'changes'
+      view = 'mods'
       hookMessage = null
       hooksDismissed = false
       await refresh()
@@ -191,43 +191,43 @@
       label: 'Work',
       items: [
         {
-          id: 'changes',
-          title: 'Changes',
-          key: '1',
-          status: !overview ? 'Instance not found' : modListStatus,
-          tone: !overview ? 'bad' : modListStatus ? 'warn' : 'idle',
-        },
-        {
-          id: 'test',
-          title: 'Test',
-          key: '2',
-          status: testStatus,
-          tone: overview?.serverRunning && !testState.serverReady ? 'busy' : testStatus ? 'ok' : 'idle',
-        },
-        {
           id: 'mods',
           title: 'Mods',
-          key: '3',
+          key: '1',
           status: { running: 'Updating', failed: 'Update failed', done: undefined, idle: undefined }[modsPhase],
           tone: ({ running: 'busy', failed: 'bad', done: 'idle', idle: 'idle' } as const)[modsPhase],
           count: updates,
           countText: `${updates} ${updates === 1 ? 'update' : 'updates'} available`,
         },
+        { id: 'files', title: 'Files', key: '2', alias: 'E' },
         {
           id: 'server',
           title: 'Server',
-          key: '4',
+          key: '3',
           status: serverPack.changedSinceBuild ? 'Changed since you last built the server pack' : undefined,
           tone: serverPack.changedSinceBuild ? 'warn' : 'idle',
         },
-        { id: 'files', title: 'Files', key: '5', alias: 'E' },
+        {
+          id: 'test',
+          title: 'Test',
+          key: '4',
+          status: testStatus,
+          tone: overview?.serverRunning && !testState.serverReady ? 'busy' : testStatus ? 'ok' : 'idle',
+        },
         {
           id: 'git',
           title: 'Git',
-          key: '6',
+          key: '5',
           alias: 'G',
           count: overview?.changed.length,
           countText: `${overview?.changed.length} uncommitted ${overview?.changed.length === 1 ? 'file' : 'files'}`,
+        },
+        {
+          id: 'changes',
+          title: 'Changes',
+          key: '6',
+          status: !overview ? 'Instance not found' : modListStatus,
+          tone: !overview ? 'bad' : modListStatus ? 'warn' : 'idle',
         },
       ],
     },
@@ -389,7 +389,7 @@
       <!-- Setup activates the new pack before it reports done, so we keep Add pack outside the key
            block. Otherwise the switch would remount it and drop the setup result. -->
       {#if view === 'add'}
-        <AddPack first={!packs?.packs.length} onadded={() => { view = 'changes'; refresh() }} />
+        <AddPack first={!packs?.packs.length} onadded={() => { view = 'mods'; refresh() }} />
       {:else}
       {#key packs?.active}
         {#if loadError && view !== 'settings'}
@@ -416,7 +416,7 @@
         {:else if view === 'releases'}
           <Releases onsettings={() => (view = 'pack')} />
         {:else if view === 'pack' && packs?.active}
-          <PackSettings dir={packs.active} name={overview?.name ?? 'this pack'} onserver={() => (view = 'server')} onchange={refresh} onremoved={() => { view = 'changes'; refresh() }} />
+          <PackSettings dir={packs.active} name={overview?.name ?? 'this pack'} onserver={() => (view = 'server')} onchange={refresh} onremoved={() => { view = 'mods'; refresh() }} />
         {:else}
           <SettingsView onchange={refresh} />
         {/if}
