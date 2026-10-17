@@ -146,9 +146,9 @@
       <h2>Server</h2>
       <p class="muted">
         {#if serverView.tab === 'properties'}
-          Written to <span class="file">server.properties</span> in every server pack and test run, everything else left to defaults.
+          Written to <span class="file">server.properties</span> in every server pack and test run. All other values falls back to vanilla or modded defaults.
         {:else if serverView.tab === 'startup'}
-          Server pack startup settings. We'll write these into the pack's <span class="file">user_jvm_args.txt</span> and run scripts.
+          Startup settings for the published server pack. We'll write these into the pack's <span class="file">user_jvm_args.txt</span> and run scripts.
         {:else if loading && !mods.length}
           Reading which mods the server needs.
         {:else if !mods.length}

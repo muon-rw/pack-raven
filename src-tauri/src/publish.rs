@@ -56,22 +56,31 @@ pub fn save_releases(path: &Path, releases: &[Release]) -> Result<()> {
     Ok(())
 }
 
-pub fn default_client_names(pack: &Pack, version: &str) -> UploadNames {
-    UploadNames { display_name: format!("{} {version}", pack.name()), file_name: pack.client_zip_name(version) }
+const VERSION_TOKEN: &str = "{version}";
+// Windows rejects these in file names, and players download the packs onto Windows.
+const UNSAFE_FILE_NAME_CHARS: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+
+pub fn default_client_names(pack: &Pack) -> UploadNames {
+    UploadNames { display_name: format!("{} {VERSION_TOKEN}", pack.name()), file_name: pack.client_zip_name(VERSION_TOKEN) }
 }
 
-pub fn default_server_names(pack: &Pack, version: &str) -> UploadNames {
-    UploadNames { display_name: format!("Server Pack {version}"), file_name: pack.server_zip_name(version) }
+pub fn default_server_names(pack: &Pack) -> UploadNames {
+    UploadNames { display_name: format!("Server Pack {VERSION_TOKEN}"), file_name: pack.server_zip_name(VERSION_TOKEN) }
 }
 
-fn upload_names(overrides: &UploadNames, defaults: UploadNames) -> Result<UploadNames> {
-    let display_name = Some(overrides.display_name.trim()).filter(|n| !n.is_empty()).map_or(defaults.display_name, String::from);
-    let file_name = match overrides.file_name.trim() {
-        "" => defaults.file_name,
-        name if name.contains(['/', '\\']) => bail!("{name} isn't a valid file name. Remove the slashes."),
-        name if name.to_ascii_lowercase().ends_with(".zip") => name.into(),
-        name => format!("{name}.zip"),
-    };
+fn upload_names(title: &str, overrides: &UploadNames, defaults: UploadNames, version: &str) -> Result<UploadNames> {
+    let resolve = |name: &str, default: String| Some(name.trim()).filter(|n| !n.is_empty()).map_or(default, String::from).replace(VERSION_TOKEN, version);
+    let display_name = resolve(&overrides.display_name, defaults.display_name);
+    let mut file_name = resolve(&overrides.file_name, defaults.file_name);
+    if file_name.contains(UNSAFE_FILE_NAME_CHARS) {
+        bail!("The {title} file name can't contain any of / \\ : * ? \" < > |.");
+    }
+    if file_name.eq_ignore_ascii_case(".zip") {
+        bail!("The {title} file name needs a name before .zip.");
+    }
+    if !file_name.to_ascii_lowercase().ends_with(".zip") {
+        file_name.push_str(".zip");
+    }
     Ok(UploadNames { display_name, file_name })
 }
 
@@ -142,8 +151,8 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
     }
     let pack = Pack::open(&pack.dir)?;
     let project_id = pack.config.curseforge.project_id;
-    let client_names = upload_names(&options.client, default_client_names(&pack, &version))?;
-    let server_names = upload_names(&options.server, default_server_names(&pack, &version))?;
+    let client_names = upload_names("client pack", &options.client, default_client_names(&pack), &version)?;
+    let server_names = upload_names("server pack", &options.server, default_server_names(&pack), &version)?;
 
     pack.set_version(&version)?;
     log.info(format!("Set the pack version to {version}"));
@@ -231,19 +240,30 @@ mod tests {
         UploadNames { display_name: display_name.into(), file_name: file_name.into() }
     }
 
+    fn resolve(overrides: UploadNames) -> anyhow::Result<UploadNames> {
+        upload_names("client pack", &overrides, names("Pack {version}", "Pack-{version}.zip"), "1.0")
+    }
+
     #[test]
-    fn upload_names_fall_back_to_the_defaults() {
-        assert_eq!(upload_names(&names(" ", ""), names("Pack 1.0", "Pack-1.0.zip")).unwrap(), names("Pack 1.0", "Pack-1.0.zip"));
+    fn upload_names_fall_back_to_the_defaults_with_the_version_filled_in() {
+        assert_eq!(resolve(names(" ", "")).unwrap(), names("Pack 1.0", "Pack-1.0.zip"));
+    }
+
+    #[test]
+    fn upload_names_fill_the_version_into_overrides() {
+        assert_eq!(resolve(names("Winter {version}", "winter-{version}")).unwrap(), names("Winter 1.0", "winter-1.0.zip"));
     }
 
     #[test]
     fn upload_names_trim_overrides_and_add_zip_to_file_names() {
-        assert_eq!(upload_names(&names(" My Pack ", " my-pack "), names("Pack 1.0", "Pack-1.0.zip")).unwrap(), names("My Pack", "my-pack.zip"));
-        assert_eq!(upload_names(&names("", "pack.ZIP"), names("Pack 1.0", "Pack-1.0.zip")).unwrap(), names("Pack 1.0", "pack.ZIP"));
+        assert_eq!(resolve(names(" My Pack ", " my-pack ")).unwrap(), names("My Pack", "my-pack.zip"));
+        assert_eq!(resolve(names("", "pack.ZIP")).unwrap(), names("Pack 1.0", "pack.ZIP"));
     }
 
     #[test]
-    fn upload_names_reject_file_names_with_slashes() {
-        assert!(upload_names(&names("", "dir/pack"), names("Pack 1.0", "Pack-1.0.zip")).is_err());
+    fn upload_names_reject_unsafe_file_names() {
+        assert!(resolve(names("", "dir/pack")).is_err());
+        assert!(resolve(names("", "pack?")).is_err());
+        assert!(resolve(names("", ".zip")).is_err());
     }
 }

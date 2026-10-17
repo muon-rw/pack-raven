@@ -310,8 +310,8 @@ pub fn publish_preflight(state: State<'_, AppState>, version: String) -> CmdResu
     Ok(Preflight {
         problems: publish::preflight(&pack, version, &not_on_curseforge, &state.settings().identity()),
         warnings: publish::preflight_warnings(&pack),
-        client: publish::default_client_names(&pack, version),
-        server: publish::default_server_names(&pack, version),
+        client: publish::default_client_names(&pack),
+        server: publish::default_server_names(&pack),
     })
 }
 

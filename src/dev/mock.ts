@@ -627,13 +627,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   releases: () => releases,
   get_notes: () => notes,
   changelog_preview: () => ({ diff: modDiff, markdown: renderChangelog() }),
-  publish_preflight: (a) => {
-    const stem = `${pack.name.replace(/[^\w -]/g, '').trim().replace(/ /g, '-')}-${String(a.version).trim()}`
+  publish_preflight: () => {
+    const stem = `${pack.name.replace(/[^\w -]/g, '').trim().replace(/ /g, '-')}-{version}`
     return {
       problems: preflight,
       warnings: scenario === 'dirty' ? ['betterclouds-neoforge-1.3.2.jar is disabled, so packraven leaves it out of the export.'] : [],
-      client: { displayName: `${pack.name} ${String(a.version).trim()}`, fileName: `${stem}.zip` },
-      server: { displayName: `Server Pack ${String(a.version).trim()}`, fileName: `${stem}-server.zip` },
+      client: { displayName: `${pack.name} {version}`, fileName: `${stem}.zip` },
+      server: { displayName: 'Server Pack {version}', fileName: `${stem}-server.zip` },
     }
   },
   discover_instances: () => [pack, { ...pack, dir: 'C:/Instances/Shared Pack', name: 'Shared Pack', addonCount: 0, hasGit: false, hasLock: false, remote: null, added: false }],

@@ -9,6 +9,7 @@
   import { bumpVersion, parseVersion, type Bump } from '../lib/version'
   import JobLog from '../components/JobLog.svelte'
   import LinkedText from '../components/LinkedText.svelte'
+  import Twisty from '../components/Twisty.svelte'
   import { nav } from '../lib/nav.svelte'
 
   let {
@@ -32,8 +33,14 @@
   let error: string | null = $state(null)
   let published: { version: string; pushed: boolean } | null = $state(null)
   let commitMessage = $state('')
+  const packs = [
+    { side: 'client', title: 'Client pack' },
+    { side: 'server', title: 'Server pack' },
+  ] as const
+  type Side = (typeof packs)[number]['side']
   const noOverrides = () => ({ client: { displayName: '', fileName: '' }, server: { displayName: '', fileName: '' } })
   let names = $state<{ client: UploadNames; server: UploadNames }>(noOverrides())
+  let renaming = $state({ client: false, server: false })
   let defaultNames = $state<{ client: UploadNames; server: UploadNames } | null>(null)
   let identity = $state<string | null>(null)
 
@@ -73,6 +80,7 @@
     versionTouched = false
     commitMessage = ''
     names = noOverrides()
+    renaming = { client: false, server: false }
     loadChangelog()
   })
 
@@ -124,23 +132,52 @@
     }
   })
 
-  function trimmedNames(side: 'client' | 'server'): UploadNames {
+  function trimmedNames(side: Side): UploadNames {
     return { displayName: names[side].displayName.trim(), fileName: names[side].fileName.trim() }
   }
 
-  function displayName(side: 'client' | 'server') {
-    return names[side].displayName.trim() || defaultNames?.[side].displayName
+  function withVersion(template: string) {
+    return trimmed ? template.replaceAll('{version}', trimmed) : template
   }
 
-  let fileNameProblems = $derived(
-    [names.client.fileName, names.server.fileName]
-      .filter((name) => /[\\/]/.test(name))
-      .map((name) => `${name.trim()} isn't a valid file name. Remove the slashes.`),
+  function placeholder(side: Side, field: keyof UploadNames) {
+    return withVersion(defaultNames?.[side][field] ?? '')
+  }
+
+  function resolvedNames(side: Side): UploadNames {
+    const fileName = withVersion(names[side].fileName.trim() || (defaultNames?.[side].fileName ?? ''))
+    return {
+      displayName: withVersion(names[side].displayName.trim() || (defaultNames?.[side].displayName ?? '')),
+      fileName: /\.zip$/i.test(fileName) ? fileName : `${fileName}.zip`,
+    }
+  }
+
+  // The backend applies the same rules in upload_names; we repeat them so the field can show what's wrong as you type.
+  function fileNameError(side: Side, title: string) {
+    const name = names[side].fileName.trim()
+    if (/[\\/:*?"<>|]/.test(name)) return `The ${title.toLowerCase()} file name can't contain any of / \\ : * ? " < > |.`
+    if (/^\.zip$/i.test(name)) return `The ${title.toLowerCase()} file name needs a name before .zip.`
+    return null
+  }
+
+  let fileNameErrors = $derived(Object.fromEntries(packs.map(({ side, title }) => [side, fileNameError(side, title)])) as Record<Side, string | null>)
+
+  let staleVersionWarnings = $derived(
+    lastVersion && lastVersion !== trimmed
+      ? packs.flatMap(({ side, title }) =>
+          (['displayName', 'fileName'] as const)
+            .filter((field) => names[side][field].includes(lastVersion))
+            .map(
+              (field) =>
+                `The ${title.toLowerCase()} ${field === 'displayName' ? 'display name' : 'file name'} still says ${lastVersion}. Write {version} instead so it follows the version you publish.`,
+            ),
+        )
+      : [],
   )
 
   // You can't take back an upload, so we block a push that would fail after it.
   let blockers = $derived(
-    [...problems, ...fileNameProblems, overview?.behind && push ? `This branch is ${overview.behind} ${overview.behind === 1 ? 'commit' : 'commits'} behind its remote, so the push would fail after the upload. Pull first, or untick the push.` : null].filter(
+    [...problems, ...Object.values(fileNameErrors), overview?.behind && push ? `This branch is ${overview.behind} ${overview.behind === 1 ? 'commit' : 'commits'} behind its remote, so the push would fail after the upload. Pull first, or untick the push.` : null].filter(
       (p): p is string => !!p,
     ),
   )
@@ -149,6 +186,7 @@
   let warnings = $derived(
     [
       emptyNotes ? 'No release notes and no mod changes, so the CurseForge changelog will be empty.' : null,
+      ...staleVersionWarnings,
       ...exportWarnings,
     ].filter((w): w is string => !!w),
   )
@@ -157,8 +195,10 @@
   let announces = $derived(hasWebhook && !!config?.discord.announce_on_approval)
 
   async function publish() {
+    const client = resolvedNames('client')
+    const server = resolvedNames('server')
     const consequences = [
-      `Upload "${displayName('client')}" and its server pack "${displayName('server')}" to CurseForge as ${releaseType ? `a ${releaseType.toLowerCase()}` : 'a release'}${config?.curseforge.manual_release ? ', held until you release it' : ''}.`,
+      `Upload "${client.displayName}" (${client.fileName}) and its server pack "${server.displayName}" (${server.fileName}) to CurseForge as ${releaseType ? `a ${releaseType.toLowerCase()}` : 'a release'}${config?.curseforge.manual_release ? ', held until you release it' : ''}.`,
       `Commit ${uncommitted.length ? `your ${uncommitted.length} uncommitted ${uncommitted.length === 1 ? 'file' : 'files'} and ` : ''}the release as "${commitMessage.trim() || defaultMessage}", tag it v${trimmed}${push ? ', then push' : ''}.`,
       'Archive the release notes and clear changelog.md for the next release.',
       announces ? `Post to Discord once CurseForge approves it${rolePing ? ', pinging the role' : ''}.` : null,
@@ -304,30 +344,60 @@
   <section class="step" aria-labelledby="ships-title">
     <h3 id="ships-title">What ships</h3>
     <dl class="ships">
-      {#each [{ side: 'client', title: 'Client pack' }, { side: 'server', title: 'Server pack' }] as const as { side, title } (side)}
+      {#each packs as { side, title } (side)}
+        {@const resolved = resolvedNames(side)}
+        {@const typed = trimmedNames(side)}
+        {@const fileError = fileNameErrors[side]}
+        {@const open = renaming[side] || !!fileError}
         <div>
           <dt>{title}</dt>
-          <dd class="names">
-            <label for="{side}-display-name">Name</label>
-            <input
-              id="{side}-display-name"
-              bind:value={names[side].displayName}
-              placeholder={trimmed ? defaultNames?.[side].displayName : 'Set a version above'}
-              aria-describedby="names-hint"
-            />
-            <label for="{side}-file-name">File</label>
-            <input
-              id="{side}-file-name"
-              class="file"
-              bind:value={names[side].fileName}
-              placeholder={trimmed ? defaultNames?.[side].fileName : 'Set a version above'}
-              spellcheck="false"
-              aria-describedby="names-hint"
-            />
-            {#if side === 'client'}
-              <span class="note muted small" id="names-hint">Leave a field empty to use the name shown. We add .zip to file names that don't end in it.</span>
-            {:else}
-              <span class="note muted small">Uploaded as an additional file of the client pack</span>
+          <dd class="pack-names">
+            <button type="button" class="summary" aria-expanded={open} aria-controls="{side}-rename" onclick={() => (renaming[side] = !open)}>
+              <span class="resolved">
+                <span>{resolved.displayName}</span>
+                <span class="file muted">{resolved.fileName}</span>
+              </span>
+              <span class="rename"><Twisty {open} />Rename<span class="visually-hidden"> the {title.toLowerCase()}</span></span>
+            </button>
+            {#if side === 'server'}<span class="muted small">We upload it as an additional file of the client pack.</span>{/if}
+            {#if open}
+              <div class="names" id="{side}-rename">
+                <label for="{side}-display-name"><span class="visually-hidden">{title} </span>Display name</label>
+                <input
+                  id="{side}-display-name"
+                  bind:value={names[side].displayName}
+                  placeholder={placeholder(side, 'displayName')}
+                  aria-describedby="{side}-display-name-note {side}-names-hint"
+                />
+                {#if typed.displayName}
+                  <span class="field-note muted small" id="{side}-display-name-note">
+                    {#if trimmed && resolved.displayName !== typed.displayName}Shows on CurseForge as {resolved.displayName}.{/if}
+                    <button type="button" class="link" onclick={() => (names[side].displayName = '')}>Use the default</button>
+                  </span>
+                {/if}
+                <label for="{side}-file-name"><span class="visually-hidden">{title} </span>File name</label>
+                <input
+                  id="{side}-file-name"
+                  class="mono"
+                  bind:value={names[side].fileName}
+                  placeholder={placeholder(side, 'fileName')}
+                  spellcheck="false"
+                  aria-invalid={!!fileError}
+                  aria-describedby="{side}-file-name-note {side}-names-hint"
+                />
+                {#if fileError}
+                  <span class="field-note failed small" id="{side}-file-name-note">{fileError}</span>
+                {:else if typed.fileName}
+                  <span class="field-note muted small" id="{side}-file-name-note">
+                    {#if trimmed && resolved.fileName !== typed.fileName}Uploads as <span class="file">{resolved.fileName}</span>.{/if}
+                    <button type="button" class="link" onclick={() => (names[side].fileName = '')}>Use the default</button>
+                  </span>
+                {/if}
+                <span class="note muted small" id="{side}-names-hint">
+                  Leave a field empty to use the default shown. <span class="file">{'{version}'}</span> becomes the version you publish, and we add .zip to file names that
+                  don't end in it.
+                </span>
+              </div>
             {/if}
           </dd>
         </div>
@@ -548,7 +618,7 @@
     border-top: 1px solid var(--line);
   }
 
-  .ships div {
+  .ships > div {
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;
@@ -568,11 +638,85 @@
     text-align: right;
   }
 
+  /* A fixed basis keeps both rows' columns aligned once they wrap below their labels. */
   .ships .names {
+    flex: 0 1 480px;
     display: grid;
-    grid-template-columns: auto minmax(0, 360px);
+    grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
     gap: 6px 10px;
+    text-align: left;
+  }
+
+  .ships .pack-names {
+    flex: 0 1 480px;
+    display: grid;
+    justify-items: end;
+    gap: 4px;
+  }
+
+  /* The negative margin lines the names up with the other rows while the hover area extends past them. */
+  .pack-names .summary {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: end;
+    align-items: baseline;
+    gap: 4px 12px;
+    margin: -4px -8px;
+    padding: 4px 8px;
+    font-weight: 400;
+    text-align: right;
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .pack-names .summary:hover {
+    background: var(--control);
+  }
+
+  .pack-names .summary:hover .rename {
+    color: var(--forest-hi);
+  }
+
+  .pack-names .resolved {
+    display: grid;
+    justify-items: end;
+    gap: 2px;
+  }
+
+  .pack-names .rename {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    color: var(--forest);
+    font-size: var(--step--1);
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+
+  .pack-names .names {
+    justify-self: stretch;
+    margin-top: 6px;
+  }
+
+  .names label {
+    justify-self: end;
+  }
+
+  .names .mono {
+    font-family: var(--font-log);
+  }
+
+  .names input[aria-invalid='true'] {
+    border-color: var(--fail-border);
+  }
+
+  .names .field-note {
+    grid-column: 2;
+  }
+
+  .names .field-note .link {
+    margin-left: 0;
   }
 
   .names .note {
