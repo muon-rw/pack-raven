@@ -97,7 +97,7 @@ pub fn client_export(pack: &Pack, version: &str, out_dir: &Path, log: &Log) -> R
         .files
         .iter()
         .filter(|e| !e.path.ends_with(".disabled"))
-        .map(|e| json!({ "projectID": e.project_id, "fileID": e.file_id, "required": true, "isLocked": false }))
+        .map(|e| json!({ "projectID": e.project_id, "fileID": e.file_id, "required": true, "isLocked": pack.config.updates.locked.contains(&e.project_id) }))
         .collect();
     let manifest = json!({
         "minecraft": {

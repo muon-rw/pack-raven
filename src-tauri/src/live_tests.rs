@@ -317,8 +317,12 @@ async fn install_mod_from_search() {
     let apotheosis = page["results"].as_array().unwrap().iter().find(|r| r["projectId"] == 313970).expect("Apotheosis in the results");
     let file_id = apotheosis["file"]["fileId"].as_u64().expect("a file for 1.21.1 NeoForge");
 
+    let ranked = serde_json::to_value(mod_updates::search(&pack, &serde_json::from_value(serde_json::json!({ "text": "storage drawers", "kind": "mods", "categoryId": null, "sort": "relevance", "index": 0 })).unwrap()).await.unwrap()).unwrap();
+    assert_eq!(ranked["results"][0]["name"], "Storage Drawers");
+    assert!(ranked["results"].as_array().unwrap().iter().all(|r| !r["file"].is_null()));
+
     let resource_packs = serde_json::to_value(mod_updates::search(&pack, &search("", "resourcepacks")).await.unwrap()).unwrap();
-    assert!(resource_packs["results"].as_array().unwrap().iter().any(|r| !r["file"].is_null()), "resource packs have no loader, so they must still match");
+    assert!(!resource_packs["results"].as_array().unwrap().is_empty(), "resource packs have no loader, so they must still match");
 
     let plan = mod_updates::plan(&pack, &[ModRequest { file_id, replaces: None }]).await.unwrap();
     assert_eq!(plan.installs, ["Apotheosis"]);

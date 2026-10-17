@@ -27,11 +27,12 @@ pub struct PackConfig {
 #[serde(default)]
 pub struct UpdatesConfig {
     pub channel: ReleaseType,
+    pub locked: Vec<u64>,
 }
 
 impl Default for UpdatesConfig {
     fn default() -> Self {
-        Self { channel: ReleaseType::Release }
+        Self { channel: ReleaseType::Release, locked: Vec::new() }
     }
 }
 

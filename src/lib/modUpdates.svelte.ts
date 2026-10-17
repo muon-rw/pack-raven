@@ -6,18 +6,24 @@ const stability: Record<ReleaseType, number> = { release: 1, beta: 2, alpha: 3 }
 export const modUpdates = $state({
   pack: null as string | null,
   channel: 'release' as ReleaseType,
+  // We replace the set on each change, since Svelte doesn't track changes inside a Set.
+  locked: new Set<number>(),
   checks: null as Map<string, ModCheck> | null,
   checkedAt: 0,
 })
 
-export function availableUpdate(check: ModCheck | undefined, channel: ReleaseType): ModFile | undefined {
-  return check?.newer.find((file) => stability[file.releaseType] <= stability[channel])
+export function newestOnChannel(check: ModCheck | undefined): ModFile | undefined {
+  return check?.newer.find((file) => stability[file.releaseType] <= stability[modUpdates.channel])
+}
+
+export function availableUpdate(check: ModCheck | undefined): ModFile | undefined {
+  return check && modUpdates.locked.has(check.projectId) ? undefined : newestOnChannel(check)
 }
 
 export function updateCount(pack: string | null): number {
   if (!modUpdates.checks || modUpdates.pack !== pack) return 0
   let count = 0
-  for (const check of modUpdates.checks.values()) if (availableUpdate(check, modUpdates.channel)) count++
+  for (const check of modUpdates.checks.values()) if (availableUpdate(check)) count++
   return count
 }
 
@@ -26,5 +32,5 @@ export const browse = $state({
   text: '',
   kind: 'mods' as AddonKind,
   categoryId: null as number | null,
-  sort: 'popularity' as SearchSort,
+  sort: 'relevance' as SearchSort,
 })

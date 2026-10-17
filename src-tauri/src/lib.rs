@@ -180,6 +180,7 @@ pub fn run() {
             mod_commands::mod_categories,
             mod_commands::preview_mods,
             mod_commands::change_mods,
+            mod_commands::set_mod_locked,
             mod_commands::remove_mods,
             commands::publish_preflight,
             commands::build_client_export,

@@ -23,6 +23,7 @@ const INSTANCE_JSON: &str = "minecraftinstance.json";
 const CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 86400);
 const NOT_ON_CURSEFORGE_RECHECK: Duration = Duration::from_secs(86400);
 const PARALLEL_DOWNLOADS: usize = 6;
+const DOWNLOAD_ATTEMPTS: usize = 3;
 
 type FileSource = (u64, u64, String);
 
@@ -676,7 +677,16 @@ pub async fn place(dir: &Path, placements: Vec<Placement>, log: &Log) -> Result<
             let target = repo.cached(&entry.sha1);
             async move {
                 log.info(format!("Downloading {}", entry.path));
-                http::download(&entry.url, &target, Some(&entry.sha1)).await
+                let mut result = http::download(&entry.url, &target, Some(&entry.sha1)).await;
+                // A connection can drop partway through a download, and one failure would otherwise
+                // cancel every change in the batch.
+                for _ in 1..DOWNLOAD_ATTEMPTS {
+                    if result.is_ok() {
+                        break;
+                    }
+                    result = http::download(&entry.url, &target, Some(&entry.sha1)).await;
+                }
+                result
             }
         })
         .buffer_unordered(PARALLEL_DOWNLOADS)

@@ -71,6 +71,18 @@ pub async fn preview_mods(state: State<'_, AppState>, requests: Vec<ModRequest>)
 }
 
 #[tauri::command]
+pub fn set_mod_locked(state: State<'_, AppState>, project_id: u64, locked: bool) -> CmdResult<()> {
+    let mut pack = state.pack().map_err(err)?;
+    let list = &mut pack.config.updates.locked;
+    list.retain(|id| *id != project_id);
+    if locked {
+        list.push(project_id);
+        list.sort_unstable();
+    }
+    pack.save_config().map_err(err)
+}
+
+#[tauri::command]
 pub fn change_mods(app: AppHandle, state: State<'_, AppState>, requests: Vec<ModRequest>) -> CmdResult<()> {
     if client_running(&state) {
         return Err(CLIENT_HAS_MODS_OPEN.into());
@@ -122,18 +134,21 @@ pub async fn remove_mods(state: State<'_, AppState>, paths: Vec<String>) -> CmdR
     let trashed = tauri::async_runtime::spawn_blocking(move || crate::files::trash(&task_root, &task_paths)).await.map_err(|e| e.to_string())?.map_err(err)?;
     state.history.lock().unwrap().record(&root, label, trashed.map(Action::Restore));
     modsync::drop_from_lock(&root, &paths).map_err(err)?;
-    forget_overrides(&root).map_err(err)
+    forget_removed_projects(&root).map_err(err)
 }
 
-// Server side overrides name projects, so we drop the ones whose last file you just removed.
-fn forget_overrides(root: &std::path::Path) -> anyhow::Result<()> {
+// Overrides and locks name projects, so we drop the ones whose last file you just removed.
+fn forget_removed_projects(root: &std::path::Path) -> anyhow::Result<()> {
     let mut pack = Pack::open(root)?;
     let present: HashSet<u64> = pack.lock.files.iter().map(|e| e.project_id).collect();
-    let server = &mut pack.config.server;
-    let before = server.client_only.len() + server.keep.len();
-    server.client_only.retain(|id| present.contains(id));
-    server.keep.retain(|id| present.contains(id));
-    if server.client_only.len() + server.keep.len() != before {
+    let lists = [&mut pack.config.server.client_only, &mut pack.config.server.keep, &mut pack.config.updates.locked];
+    let mut changed = false;
+    for list in lists {
+        let before = list.len();
+        list.retain(|id| present.contains(id));
+        changed |= list.len() != before;
+    }
+    if changed {
         pack.save_config()?;
     }
     Ok(())

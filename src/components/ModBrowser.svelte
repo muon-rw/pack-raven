@@ -5,13 +5,13 @@
   import { api, errorText, type AddonKind, type ModPreview, type ModRequest, type SearchResult, type SearchSort } from '../lib/api'
   import { browse } from '../lib/modUpdates.svelte'
 
-  let { installedIds, locked, game, install }: { installedIds: Set<number>; locked: boolean; game: string; install: (requests: ModRequest[]) => Promise<void> } = $props()
+  let { installedIds, blocked, game, install }: { installedIds: Set<number>; blocked: boolean; game: string; install: (requests: ModRequest[]) => Promise<void> } = $props()
 
   // We wait for a pause in typing, so each keystroke doesn't spend a CurseForge request.
   const SEARCH_DELAY_MS = 350
 
   let results: SearchResult[] = $state([])
-  let total = $state(0)
+  let nextIndex: number | null = $state(null)
   let searching = $state(false)
   let searchError: string | null = $state(null)
   let categories: { id: number; name: string }[] = $state([])
@@ -33,10 +33,12 @@
     const id = ++latestSearch
     searching = true
     try {
-      const page = await api.searchMods({ text: browse.text, kind: browse.kind, categoryId: browse.categoryId, sort: browse.sort, index: append ? results.length : 0 })
+      const page = await api.searchMods({ text: browse.text, kind: browse.kind, categoryId: browse.categoryId, sort: browse.sort, index: append ? (nextIndex ?? 0) : 0 })
       if (id !== latestSearch) return
-      results = append ? [...results, ...page.results] : page.results
-      total = page.total
+      // Popularity can shift between requests, so a project can turn up on two pages.
+      const seen = new Set(results.map((r) => r.projectId))
+      results = append ? [...results, ...page.results.filter((r) => !seen.has(r.projectId))] : page.results
+      nextIndex = page.nextIndex
       searchError = null
     } catch (error) {
       if (id === latestSearch) searchError = `Couldn't search CurseForge: ${errorText(error)}`
@@ -68,7 +70,6 @@
   })
 
   async function startInstall(result: SearchResult) {
-    if (!result.file) return
     const requests = [{ fileId: result.file.fileId, replaces: null }]
     resolving = result.projectId
     previewError = null
@@ -84,7 +85,7 @@
   }
 
   async function confirmInstall() {
-    if (!confirming?.result.file) return
+    if (!confirming) return
     const fileId = confirming.result.file.fileId
     confirming = null
     await install([{ fileId, replaces: null }])
@@ -130,7 +131,7 @@
     <label class="sort">
       Sort by
       <select bind:value={browse.sort} onchange={() => run(false)}>
-        {#each [['popularity', 'Popularity'], ['downloads', 'Downloads'], ['updated', 'Recently updated']] as [sort, label] (sort)}
+        {#each [['relevance', 'Relevance'], ['popularity', 'Popularity'], ['downloads', 'Downloads'], ['newest', 'Newest'], ['updated', 'Recently updated']] as [sort, label] (sort)}
           <option value={sort as SearchSort}>{label}</option>
         {/each}
       </select>
@@ -174,7 +175,7 @@
                   <p class="failed">It also requires {list(confirming.preview.unavailable)}, which CurseForge has no file of for {game}.</p>
                 {/if}
                 <p class="confirm-actions">
-                  <button class="primary" onclick={confirmInstall} disabled={locked}>
+                  <button class="primary" onclick={confirmInstall} disabled={blocked}>
                     {confirming.preview.dependencies.length ? `Install all ${confirming.preview.dependencies.length + 1}` : 'Install anyway'}
                   </button>
                   <button class="quiet" onclick={() => (confirming = null)}>Cancel</button>
@@ -186,13 +187,11 @@
           <div class="action">
             {#if installed}
               <span class="chip ok">Installed</span>
-            {:else if !result.file}
-              <span class="muted unavailable">No file for {game}</span>
             {:else}
               {#if result.file.releaseType !== 'release'}<span class="chip pending">{typeLabels[result.file.releaseType]}</span>{/if}
               <button
                 class:busy={resolving === result.projectId}
-                disabled={locked || resolving !== null || confirming?.result.projectId === result.projectId}
+                disabled={blocked || resolving !== null || confirming?.result.projectId === result.projectId}
                 onclick={() => startInstall(result)}
                 aria-label="Install {result.name}"
               >
@@ -203,10 +202,9 @@
         </li>
       {/each}
     </ul>
-    {#if results.length < total}
+    {#if nextIndex !== null}
       <p class="more">
         <button onclick={() => run(true)} disabled={searching} class:busy={searching}>Show more</button>
-        <span class="muted">{results.length} of {compact.format(total)}</span>
       </p>
     {/if}
   </div>
@@ -327,12 +325,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-
-  .unavailable {
-    font-size: var(--step--1);
-    max-width: 16ch;
-    text-align: right;
   }
 
   .confirm {

@@ -58,3 +58,21 @@ test('mods can be found on CurseForge and installed with their dependencies', as
   await expect(page.getByRole('button', { name: /^Install / })).toHaveCount(0)
   await expect(page.getByRole('tab', { name: 'Installed' })).toContainText('13')
 })
+
+test('a locked mod stays out of Update all', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  const lock = page.getByRole('button', { name: 'Lock Apotheosis to this version' })
+  await expect(page.getByRole('button', { name: 'Update all (4)' })).toBeEnabled()
+
+  await lock.click()
+  await expect(lock).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: 'Update all (3)' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Update Apotheosis' })).toHaveCount(0)
+  await expect(page.getByText('Locked. Apotheosis-1.21.1-8.9.0.jar is available.')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Locked', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Mods' }).locator('tbody > tr')).toHaveCount(1)
+
+  await lock.click()
+  await expect(page.getByRole('button', { name: 'Update all (4)' })).toBeEnabled()
+})

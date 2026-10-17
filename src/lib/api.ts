@@ -20,7 +20,7 @@ export interface PackConfig {
   server: { exclude: string[]; client_only: number[]; keep: number[]; memory: string; graalvm: string; properties: Record<string, string> }
   test: { username: string; port: number; client_memory: string }
   discord: { role_id: string; color: string; announce_on_approval: boolean; title: string; show_author: boolean; header: string; footer: string }
-  updates: { channel: ReleaseType }
+  updates: { channel: ReleaseType; locked: number[] }
 }
 
 export type ReleaseType = 'release' | 'beta' | 'alpha'
@@ -42,6 +42,7 @@ export interface ModFile {
 
 export interface ModCheck {
   path: string
+  projectId: number
   logo: string | null
   releaseType: ReleaseType | null
   requires: number[]
@@ -54,7 +55,7 @@ export interface ModRequest {
 }
 
 export type AddonKind = 'mods' | 'resourcepacks' | 'shaderpacks' | 'datapacks'
-export type SearchSort = 'popularity' | 'downloads' | 'updated'
+export type SearchSort = 'relevance' | 'popularity' | 'downloads' | 'newest' | 'updated'
 
 export interface SearchRequest {
   text: string
@@ -73,7 +74,7 @@ export interface SearchResult {
   updated: string
   logo: string | null
   url: string | null
-  file: ModFile | null
+  file: ModFile
 }
 
 export interface ModPreview {
@@ -400,10 +401,11 @@ export const api = {
   checkModUpdates: () => invoke<ModCheck[]>('check_mod_updates'),
   modVersions: (path: string, projectId: number) => invoke<ModFile[]>('mod_versions', { path, projectId }),
   setUpdateChannel: (channel: ReleaseType) => invoke<void>('set_update_channel', { channel }),
-  searchMods: (request: SearchRequest) => invoke<{ results: SearchResult[]; total: number }>('search_mods', { request }),
+  searchMods: (request: SearchRequest) => invoke<{ results: SearchResult[]; nextIndex: number | null }>('search_mods', { request }),
   modCategories: (kind: AddonKind) => invoke<{ id: number; name: string }[]>('mod_categories', { kind }),
   previewMods: (requests: ModRequest[]) => invoke<ModPreview>('preview_mods', { requests }),
   changeMods: (requests: ModRequest[]) => invoke<void>('change_mods', { requests }),
+  setModLocked: (projectId: number, locked: boolean) => invoke<void>('set_mod_locked', { projectId, locked }),
   removeMods: (paths: string[]) => invoke<void>('remove_mods', { paths }),
   publishPreflight: (version: string) => invoke<string[]>('publish_preflight', { version }),
   buildClientExport: () => invoke<void>('build_client_export'),

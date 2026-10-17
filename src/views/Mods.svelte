@@ -7,12 +7,12 @@
   import { ask } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type InstalledMod, type ModCheck, type ModFile, type ReleaseType, type ModRequest } from '../lib/api'
   import { job, onJobEnd, serverMods } from '../lib/jobs.svelte'
-  import { availableUpdate, browse, modUpdates } from '../lib/modUpdates.svelte'
+  import { availableUpdate, browse, modUpdates, newestOnChannel } from '../lib/modUpdates.svelte'
   import { commandKey, shortcut, trashName } from '../lib/platform'
 
   let { pack, game, clientRunning }: { pack: string | null; game: string; clientRunning: boolean } = $props()
 
-  type Filter = 'updates' | 'all'
+  type Filter = 'updates' | 'locked' | 'all'
 
   // We ask CurseForge again when you open the view after this long.
   const CHECK_MAX_AGE_MS = 15 * 60 * 1000
@@ -31,7 +31,7 @@
   let removing: string | null = $state(null)
 
   let updating = $derived(job('mods').phase === 'running')
-  let locked = $derived(updating || clientRunning)
+  let blocked = $derived(updating || clientRunning)
 
   // App remounts this view when you switch packs, so we only compare the pack once.
   untrack(() => {
@@ -67,7 +67,13 @@
   }
 
   onMount(async () => {
-    api.getPackConfig().then((config) => (modUpdates.channel = config.updates.channel)).catch(() => {})
+    api
+      .getPackConfig()
+      .then((config) => {
+        modUpdates.channel = config.updates.channel
+        modUpdates.locked = new Set(config.updates.locked)
+      })
+      .catch(() => {})
     await load()
     const unchecked = mods.some((m) => !modUpdates.checks?.has(m.path))
     if (mods.length && (unchecked || Date.now() - modUpdates.checkedAt > CHECK_MAX_AGE_MS)) await check()
@@ -92,6 +98,19 @@
       modUpdates.channel = previous
       select.value = previous
       actionError = `Couldn't save the update channel: ${errorText(error)}`
+    }
+  }
+
+  async function setLocked(mod: InstalledMod, lock: boolean) {
+    actionError = null
+    try {
+      await api.setModLocked(mod.projectId, lock)
+      const locked = new Set(modUpdates.locked)
+      if (lock) locked.add(mod.projectId)
+      else locked.delete(mod.projectId)
+      modUpdates.locked = locked
+    } catch (error) {
+      actionError = `Couldn't ${lock ? 'lock' : 'unlock'} ${mod.name}: ${errorText(error)}`
     }
   }
 
@@ -168,7 +187,7 @@
 
   const typeLabels: Record<ReleaseType, string> = { release: 'Release', beta: 'Beta', alpha: 'Alpha' }
 
-  let updates = $derived(new Map(mods.map((m) => [m.path, availableUpdate(modUpdates.checks?.get(m.path), modUpdates.channel)] as const).filter(([, file]) => file)) as Map<string, ModFile>)
+  let updates = $derived(new Map(mods.map((m) => [m.path, availableUpdate(modUpdates.checks?.get(m.path))] as const).filter(([, file]) => file)) as Map<string, ModFile>)
   let duplicates = $derived.by(() => {
     const byProject = new Map<number, InstalledMod[]>()
     for (const mod of mods.filter((m) => m.path.startsWith('mods/') && !m.path.endsWith('.disabled'))) byProject.set(mod.projectId, [...(byProject.get(mod.projectId) ?? []), mod])
@@ -178,6 +197,7 @@
   let visible = $derived(
     mods.filter((m) => {
       if (filter === 'updates' && !updates.has(m.path)) return false
+      if (filter === 'locked' && !modUpdates.locked.has(m.projectId)) return false
       return !search || m.name.toLowerCase().includes(search.toLowerCase()) || m.path.toLowerCase().includes(search.toLowerCase())
     }),
   )
@@ -237,7 +257,7 @@
       <button
         class="primary"
         class:busy={updating}
-        disabled={!updates.size || locked}
+        disabled={!updates.size || blocked}
         onclick={() => update([...updates].map(([path, file]) => ({ fileId: file.fileId, replaces: path })))}
       >
         {updating ? 'Updating' : updates.size ? `Update all (${updates.size})` : 'Update all'}
@@ -296,7 +316,7 @@
 
   <div class="panel" id="mods-panel" role="tabpanel" aria-labelledby="mods-tab-{browse.tab}">
   {#if browse.tab === 'browse'}
-    <ModBrowser bind:this={browser} {installedIds} {locked} {game} install={update} />
+    <ModBrowser bind:this={browser} {installedIds} {blocked} {game} install={update} />
   {:else}
   <div class="tools">
     <div class="filters" role="group" aria-label="Show">
@@ -304,6 +324,7 @@
       <button aria-pressed={filter === 'updates'} class:on={filter === 'updates'} onclick={() => (filter = 'updates')}>
         Updates{#if updates.size}<span class="count">{updates.size}</span>{/if}
       </button>
+      <button aria-pressed={filter === 'locked'} class:on={filter === 'locked'} onclick={() => (filter = 'locked')}>Locked</button>
     </div>
     <label class="channel">
       Update to
@@ -335,6 +356,8 @@
           {#each visible as mod (mod.path)}
             {@const status = checkFor(mod)}
             {@const next = updates.get(mod.path)}
+            {@const lockedHere = modUpdates.locked.has(mod.projectId)}
+            {@const held = newestOnChannel(status)}
             <tr class:open={expanded === mod.path}>
               <td>
                 <div class="identity">
@@ -352,7 +375,9 @@
                   {@render fileText(fileName(mod.path).replace(/\.disabled$/, ''))}
                   {#if status?.releaseType && status.releaseType !== 'release'}<span class="chip pending">{typeLabels[status.releaseType]}</span>{/if}
                 </div>
-                {#if next}
+                {#if lockedHere && held}
+                  <div class="muted held">Locked. {@render fileText(held.fileName)} is available.</div>
+                {:else if next}
                   <div class="next">
                     <span class="visually-hidden">Update available:</span>
                     <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" /></svg>
@@ -364,10 +389,22 @@
               <td>
                 <div class="row-actions">
                 {#if next}
-                  <button onclick={() => update([{ fileId: next.fileId, replaces: mod.path }])} disabled={locked} aria-label="Update {mod.name}">Update</button>
+                  <button onclick={() => update([{ fileId: next.fileId, replaces: mod.path }])} disabled={blocked} aria-label="Update {mod.name}">Update</button>
                 {/if}
+                <button
+                  class="ghost lock"
+                  aria-pressed={lockedHere}
+                  onclick={() => setLocked(mod, !lockedHere)}
+                  aria-label="Lock {mod.name} to this version"
+                  title={lockedHere ? 'Locked to this version. Click to allow updates.' : 'Lock to this version'}
+                >
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <rect x="3" y="7" width="10" height="7" rx="1.5" />
+                    <path d={lockedHere ? 'M5.5 7V5a2.5 2.5 0 0 1 5 0v2' : 'M5.5 7V5a2.5 2.5 0 0 1 4.9-.7'} />
+                  </svg>
+                </button>
                 <button class="ghost" aria-expanded={expanded === mod.path} onclick={() => toggleVersions(mod)} aria-label="Versions of {mod.name}">Versions</button>
-                <button class="ghost" onclick={() => remove(mod)} disabled={locked || removing === mod.path} aria-label="Remove {mod.name}">Remove</button>
+                <button class="ghost" onclick={() => remove(mod)} disabled={blocked || removing === mod.path} aria-label="Remove {mod.name}">Remove</button>
                 </div>
               </td>
             </tr>
@@ -390,7 +427,7 @@
                           {#if file.fileId === mod.fileId}
                             <span class="muted current">Installed</span>
                           {:else}
-                            <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={locked}>
+                            <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={blocked}>
                               Use this
                             </button>
                           {/if}
@@ -408,6 +445,8 @@
                   No mods match "{search}". <button class="link" onclick={() => (search = '')}>Clear the search</button>
                 {:else if filter === 'updates'}
                   {modUpdates.checks ? 'Every mod is on its newest file for this update channel.' : "Check for updates to see which mods have one."}
+                {:else if filter === 'locked'}
+                  You haven't locked any mods. Lock a mod to keep it on its current version when you update the rest.
                 {:else}
                   This pack has no mods from CurseForge yet. <button class="link" onclick={() => (browse.tab = 'browse')}>Browse CurseForge</button>
                 {/if}
@@ -504,7 +543,7 @@
 
   .filters {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, auto);
     padding: 3px;
     gap: 3px;
     background: var(--paper);
@@ -619,6 +658,42 @@
 
   td .file {
     margin-right: 6px;
+  }
+
+  .held {
+    margin-top: 2px;
+    font-size: var(--step--1);
+  }
+
+  .lock svg {
+    width: 16px;
+    height: 16px;
+    vertical-align: -3px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+  }
+
+  .lock[aria-pressed='false'] {
+    opacity: 0.35;
+  }
+
+  tr:hover .lock,
+  .lock:focus-visible {
+    opacity: 1;
+  }
+
+  .lock[aria-pressed='true'] {
+    color: var(--ochre-ink);
+  }
+
+  .lock[aria-pressed='true'] rect {
+    fill: currentColor;
+  }
+
+  .held .file {
+    margin-right: 0;
   }
 
   .next {

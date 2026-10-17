@@ -34,6 +34,7 @@ pub struct ModFile {
 #[serde(rename_all = "camelCase")]
 pub struct ModCheck {
     path: String,
+    project_id: u64,
     logo: Option<String>,
     release_type: Option<ReleaseType>,
     requires: Vec<u64>,
@@ -142,6 +143,7 @@ pub async fn check(pack: &Pack) -> Result<Vec<ModCheck>> {
             };
             ModCheck {
                 path: entry.path.clone(),
+                project_id: entry.project_id,
                 logo: project.and_then(|p| p.logo.as_ref()).map(|l| l.thumbnail_url.clone()),
                 release_type: installed.map(|f| release_type(f.release_type)),
                 requires: installed.map(|f| f.required_projects().collect()).unwrap_or_default(),
@@ -203,8 +205,10 @@ fn folder_for(class_id: Option<u64>) -> &'static str {
 #[derive(Deserialize, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchSort {
+    Relevance,
     Popularity,
     Downloads,
+    Newest,
     Updated,
 }
 
@@ -229,14 +233,14 @@ pub struct SearchResult {
     updated: String,
     logo: Option<String>,
     url: Option<String>,
-    file: Option<ModFile>,
+    file: ModFile,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchPage {
     results: Vec<SearchResult>,
-    total: u32,
+    next_index: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -246,9 +250,15 @@ pub struct Category {
 }
 
 const SEARCH_PAGE_SIZE: u32 = 20;
+// CurseForge's largest page.
+const RELEVANCE_POOL: u32 = 50;
 
 pub async fn search(pack: &Pack, request: &SearchRequest) -> Result<SearchPage> {
     let target = Target::of(pack)?;
+    // CurseForge's public API has no relevance sort, so we rank its most popular matches by how
+    // closely their names match, and page through the rest by popularity.
+    let rank = matches!(request.sort, SearchSort::Relevance) && request.index == 0 && !request.text.trim().is_empty();
+    let page_size = if rank { RELEVANCE_POOL } else { SEARCH_PAGE_SIZE };
     let query = curseforge::SearchQuery {
         text: &request.text,
         class_id: request.kind.class_id(),
@@ -257,25 +267,33 @@ pub async fn search(pack: &Pack, request: &SearchRequest) -> Result<SearchPage> 
         // Only mods have a loader. CurseForge returns no resource packs if we ask for one.
         loader_type: matches!(request.kind, AddonKind::Mods).then_some(target.loaders[0]),
         sort_field: match request.sort {
-            SearchSort::Popularity => 2,
+            SearchSort::Relevance | SearchSort::Popularity => 2,
             SearchSort::Updated => 3,
             SearchSort::Downloads => 6,
+            SearchSort::Newest => 11,
         },
         index: request.index,
-        page_size: SEARCH_PAGE_SIZE.min(curseforge::MAX_SEARCH_RESULTS.saturating_sub(request.index)),
+        page_size: page_size.min(curseforge::MAX_SEARCH_RESULTS.saturating_sub(request.index)),
     };
-    let (projects, total) = curseforge::search(&query).await?;
+    let (mut projects, total) = curseforge::search(&query).await?;
+    let next_index = request.index + projects.len() as u32;
+    if rank {
+        let text = request.text.trim();
+        projects.sort_by_key(|p| name_match(&p.name, text));
+    }
     let channel = pack.config.updates.channel;
+    // CurseForge's version filter can match a project by a file for another loader, so we drop
+    // projects we have no file to install from.
     let results = projects
         .into_iter()
-        .map(|project| {
+        .filter_map(|project| {
             let file = target.newest(&project, channel).or_else(|| target.newest(&project, ReleaseType::Alpha)).map(|i| ModFile {
                 file_id: i.file_id,
                 file_name: i.filename.clone(),
                 release_type: release_type(i.release_type),
                 file_date: None,
-            });
-            SearchResult {
+            })?;
+            Some(SearchResult {
                 project_id: project.id,
                 authors: project.authors.iter().map(|a| a.name.clone()).collect(),
                 logo: project.logo.map(|l| l.thumbnail_url),
@@ -285,10 +303,24 @@ pub async fn search(pack: &Pack, request: &SearchRequest) -> Result<SearchPage> 
                 downloads: project.download_count,
                 updated: project.date_modified,
                 file,
-            }
+            })
         })
         .collect();
-    Ok(SearchPage { results, total })
+    Ok(SearchPage { results, next_index: (next_index < total).then_some(next_index) })
+}
+
+fn name_match(name: &str, text: &str) -> u8 {
+    let simplify = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>();
+    let (name, query) = (simplify(name), simplify(text));
+    if name == query {
+        0
+    } else if name.starts_with(&query) {
+        1
+    } else if name.contains(&query) {
+        2
+    } else {
+        3
+    }
 }
 
 pub async fn categories(kind: AddonKind) -> Result<Vec<Category>> {
@@ -416,6 +448,13 @@ mod tests {
         assert_eq!(target().newest(&project, ReleaseType::Release).map(|i| i.file_id), Some(500));
         assert_eq!(target().newest(&project, ReleaseType::Beta).map(|i| i.file_id), Some(600));
         assert_eq!(target().newest(&project, ReleaseType::Alpha).map(|i| i.file_id), Some(700));
+    }
+
+    #[test]
+    fn ranks_names_by_how_closely_they_match() {
+        let mut names = vec!["Sophisticated Backpacks Create Integration", "Backpacked", "Sophisticated Backpacks", "Create: Sophisticated Backpacks Compat"];
+        names.sort_by_key(|n| name_match(n, "sophisticated backpacks"));
+        assert_eq!(names, ["Sophisticated Backpacks", "Sophisticated Backpacks Create Integration", "Create: Sophisticated Backpacks Compat", "Backpacked"]);
     }
 
     #[test]

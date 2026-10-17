@@ -66,7 +66,7 @@ const config = {
   server: { exclude: [], client_only: [], keep: [], memory: '6G', graalvm: '', properties: {} },
   test: { username: 'Dev', port: 25565, client_memory: '8G' },
   discord: { role_id: '112233445566778899', color: '#4d6b2f', announce_on_approval: true, title: '{project_name} - v{version}', show_author: true, header: '', footer: '[Install]({file_url})' },
-  updates: { channel: 'release' },
+  updates: { channel: 'release', locked: [] as number[] },
 }
 
 const releases = scenario === 'empty' ? [] : [
@@ -164,7 +164,7 @@ const projectLogo = (p: MockProject) => logo(p.name[0], colors[p.projectId % col
 function searchMods(request: { text: string; kind: string; categoryId: number | null; sort: string; index: number }) {
   const text = request.text.trim().toLowerCase()
   const sorted = catalog
-    .filter((p) => p.kind === request.kind && (!text || p.name.toLowerCase().includes(text) || p.summary.toLowerCase().includes(text)))
+    .filter((p) => p.fileName && p.kind === request.kind && (!text || p.name.toLowerCase().includes(text) || p.summary.toLowerCase().includes(text)))
     .sort((a, b) => (request.sort === 'updated' ? b.updated.localeCompare(a.updated) : b.downloads - a.downloads))
   const results = sorted.slice(request.index, request.index + 8).map((p) => ({
     projectId: p.projectId,
@@ -175,9 +175,10 @@ function searchMods(request: { text: string; kind: string; categoryId: number | 
     updated: p.updated,
     logo: projectLogo(p),
     url: cfUrl(p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')),
-    file: p.fileName ? { fileId: p.projectId * 10, fileName: p.fileName, releaseType: p.releaseType ?? 'release', fileDate: null } : null,
+    file: { fileId: p.projectId * 10, fileName: p.fileName, releaseType: p.releaseType ?? 'release', fileDate: null },
   }))
-  return new Promise((resolve) => setTimeout(() => resolve({ results, total: sorted.length }), 250))
+  const nextIndex = request.index + 8 < sorted.length ? request.index + 8 : null
+  return new Promise((resolve) => setTimeout(() => resolve({ results, nextIndex }), 250))
 }
 
 // Mirrors mod_updates::plan's dependency walk over the mock catalog.
@@ -576,7 +577,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   server_sides: () => serverSides,
   installed_mods: () => installedMods.map(({ path, projectId, fileId, name, url }) => ({ path, projectId, fileId, name, url })),
   check_mod_updates: () =>
-    new Promise((resolve) => setTimeout(() => resolve(installedMods.map(({ path, logo, releaseType, requires, newer }) => ({ path, logo, releaseType, requires, newer }))), 400)),
+    new Promise((resolve) => setTimeout(() => resolve(installedMods.map(({ path, projectId, logo, releaseType, requires, newer }) => ({ path, projectId, logo, releaseType, requires, newer }))), 400)),
   mod_versions: (a) => {
     const mod = installedMods.find((m) => m.path === a.path)!
     const base = mod.path.slice(mod.path.indexOf('/') + 1).replace(/\.disabled$/, '')
@@ -586,6 +587,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     }))
   },
   set_update_channel: (a) => (config.updates.channel = String(a.channel)),
+  set_mod_locked: (a) => {
+    config.updates.locked = config.updates.locked.filter((id) => id !== a.projectId)
+    if (a.locked) config.updates.locked.push(Number(a.projectId))
+  },
   change_mods: (a) => changeMods(a.requests as { fileId: number; replaces: string | null }[]),
   search_mods: (a) => searchMods(a.request as Parameters<typeof searchMods>[0]),
   mod_categories: (a) => (a.kind === 'mods' ? ['Adventure and RPG', 'Magic', 'Storage', 'Technology', 'World Gen'] : ['16x', 'Animated']).map((name, id) => ({ id, name })),
