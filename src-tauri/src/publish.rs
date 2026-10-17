@@ -116,7 +116,7 @@ pub fn preflight(pack: &Pack, version: &str, not_on_curseforge: &[String], ident
         problems.push(if pack.has_bcc() {
             "Better Compatibility Checker has no config yet, so the pack has no version. Create it in Changes.".into()
         } else {
-            "Install Better Compatibility Checker in Changes. packraven keeps the pack version in its config.".into()
+            "Install Better Compatibility Checker in Changes. packraven keeps the pack version in BCC's config.".into()
         });
     } else if let Some(problem) = version_problem(version) {
         problems.push(format!("{problem} Change the version to publish."));
