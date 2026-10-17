@@ -8,10 +8,16 @@ export interface Settings {
   defenderExcluded: string[]
   defenderDismissed: boolean
   minecraftEulaAccepted: boolean
+  minecraftOnlineMode: boolean
   editorAskMb: number
   editorMaxMb: number
   gitName: string
   gitEmail: string
+}
+
+export interface MinecraftAccount {
+  name: string
+  uuid: string
 }
 
 export interface PackConfig {
@@ -359,6 +365,12 @@ export const api = {
   defenderExclude: (paths: string[]) => invoke<void>('defender_exclude', { paths }),
   defenderDismiss: (dismissed: boolean) => invoke<void>('defender_dismiss', { dismissed }),
   acceptMinecraftEula: () => invoke<void>('accept_minecraft_eula'),
+  minecraftAccount: () => invoke<MinecraftAccount | null>('minecraft_account'),
+  // Resolves to null when you cancel.
+  minecraftSignIn: () => invoke<MinecraftAccount | null>('minecraft_sign_in'),
+  minecraftSignInCancel: () => invoke<void>('minecraft_sign_in_cancel'),
+  minecraftSignOut: () => invoke<void>('minecraft_sign_out'),
+  setMinecraftOnlineMode: (online: boolean) => invoke<void>('set_minecraft_online_mode', { online }),
   listDir: (path: string) => invoke<DirEntry[]>('list_dir', { path }),
   readFile: (path: string, allowLarge = false) => invoke<FileContent>('read_file', { path, allowLarge }),
   writeFile: (path: string, text: string, crlf: boolean, bom: boolean) => invoke<void>('write_file', { path, text, crlf, bom }),

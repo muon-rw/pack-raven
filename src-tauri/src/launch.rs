@@ -64,6 +64,23 @@ fn read_version(install: &Path, id: &str) -> Result<Value> {
     Ok(serde_json::from_str(&text)?)
 }
 
+pub struct Player {
+    pub name: String,
+    pub uuid: String,
+    pub access_token: String,
+    pub user_type: &'static str,
+}
+
+impl Player {
+    pub fn offline(name: &str) -> Self {
+        Self { name: name.to_string(), uuid: offline_uuid(name), access_token: "0".into(), user_type: "legacy" }
+    }
+
+    pub fn is_offline(&self) -> bool {
+        self.user_type == "legacy"
+    }
+}
+
 fn offline_uuid(name: &str) -> String {
     let mut bytes: [u8; 16] = Md5::digest(format!("OfflinePlayer:{name}").as_bytes()).into();
     bytes[6] = (bytes[6] & 0x0f) | 0x30;
@@ -195,7 +212,7 @@ mod tests {
     }
 }
 
-pub fn client(settings: &Settings, pack: &Pack, username: &str, server: Option<&str>, natives_dir: &Path) -> Result<ClientLaunch> {
+pub fn client(settings: &Settings, pack: &Pack, player: &Player, server: Option<&str>, natives_dir: &Path) -> Result<ClientLaunch> {
     let install = &settings.install_dir;
     let id = pack.lock.loader()?.to_string();
     let child = read_version(install, &id)?;
@@ -229,16 +246,17 @@ pub fn client(settings: &Settings, pack: &Pack, username: &str, server: Option<&
 
     let assets_index = parent.get("assets").and_then(Value::as_str).unwrap_or_default().to_string();
     let values: HashMap<&str, String> = [
-        ("auth_player_name", username.to_string()),
+        ("auth_player_name", player.name.clone()),
         ("version_name", id.clone()),
         ("game_directory", settings.instance_dir.to_string_lossy().into_owned()),
         ("assets_root", install.join("assets").to_string_lossy().into_owned()),
         ("assets_index_name", assets_index),
-        ("auth_uuid", offline_uuid(username)),
-        ("auth_access_token", "0".into()),
+        ("auth_uuid", player.uuid.clone()),
+        ("auth_access_token", player.access_token.clone()),
+        // Vanilla only reads these two for telemetry.
         ("clientid", "0".into()),
         ("auth_xuid", "0".into()),
-        ("user_type", "legacy".into()),
+        ("user_type", player.user_type.into()),
         ("version_type", "release".into()),
         ("quickPlayMultiplayer", server.unwrap_or_default().to_string()),
         ("natives_directory", natives_dir.to_string_lossy().into_owned()),

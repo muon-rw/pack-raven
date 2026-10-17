@@ -20,6 +20,7 @@ pub struct Settings {
     pub defender_excluded: Vec<PathBuf>,
     pub defender_dismissed: bool,
     pub minecraft_eula_accepted: bool,
+    pub minecraft_online_mode: bool,
     pub discord_webhooks: BTreeMap<String, String>,
     /// Files larger than this many megabytes open only in the simplified editor, if you ask.
     pub editor_ask_mb: u32,
@@ -40,7 +41,7 @@ fn curseforge_root() -> PathBuf {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { instance_dir: PathBuf::new(), packs: Vec::new(), install_dir: curseforge_root().join("Install"), legacy_java: None, java_by_major: BTreeMap::new(), pack_java: BTreeMap::new(), defender_excluded: Vec::new(), defender_dismissed: false, minecraft_eula_accepted: false, discord_webhooks: BTreeMap::new(), editor_ask_mb: (crate::files::Limits::DEFAULT.ask / 1_000_000) as u32, editor_max_mb: (crate::files::Limits::DEFAULT.max / 1_000_000) as u32, git_name: String::new(), git_email: String::new() }
+        Self { instance_dir: PathBuf::new(), packs: Vec::new(), install_dir: curseforge_root().join("Install"), legacy_java: None, java_by_major: BTreeMap::new(), pack_java: BTreeMap::new(), defender_excluded: Vec::new(), defender_dismissed: false, minecraft_eula_accepted: false, minecraft_online_mode: true, discord_webhooks: BTreeMap::new(), editor_ask_mb: (crate::files::Limits::DEFAULT.ask / 1_000_000) as u32, editor_max_mb: (crate::files::Limits::DEFAULT.max / 1_000_000) as u32, git_name: String::new(), git_email: String::new() }
     }
 }
 

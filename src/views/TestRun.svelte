@@ -2,15 +2,14 @@
   import { onMount } from 'svelte'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import Notice from '../components/Notice.svelte'
-  import { api, errorText, type Overview } from '../lib/api'
+  import { api, errorText, type MinecraftAccount, type Overview } from '../lib/api'
   import { job, serverPack, testOptions, testState } from '../lib/jobs.svelte'
   import { serverView } from '../lib/nav.svelte'
   import JobLog from '../components/JobLog.svelte'
   import Tip from '../components/Tip.svelte'
   import LinkedText from '../components/LinkedText.svelte'
 
-  let { overview, onserver }: { overview: Overview | null; onserver: () => void } = $props()
-
+  let { overview, onserver, onappsettings }: { overview: Overview | null; onserver: () => void; onappsettings: () => void } = $props()
 
   let join = $state(true)
   let clientJoins = $state(false)
@@ -20,7 +19,20 @@
   const EULA_URL = 'https://aka.ms/MinecraftEULA'
   // Until settings load we don't know, so we neither ask nor block; start_test still refuses.
   let eulaAccepted: boolean | null = $state(null)
-  onMount(() => run(async () => void (eulaAccepted = (await api.getSettings()).minecraftEulaAccepted)))
+  let account = $state<MinecraftAccount | null>(null)
+  let onlineMode = $state(true)
+  let offlineName = $state('Dev')
+  // Each load is separate, so a keychain read that fails can't stop us gating on the EULA.
+  onMount(() => {
+    run(async () => {
+      const settings = await api.getSettings()
+      eulaAccepted = settings.minecraftEulaAccepted
+      onlineMode = settings.minecraftOnlineMode
+    })
+    api.minecraftAccount().then((signedIn) => (account = signedIn), () => {})
+    api.getPackConfig().then((config) => (offlineName = config.test.username), () => {})
+  })
+
 
   function acceptEula() {
     return run(async () => {
@@ -56,6 +68,22 @@
   let clientRunning = $derived(overview?.clientRunning ?? false)
   let preparing = $derived(job('test').phase === 'running')
   let serverLines = $derived(job('test').lines.concat(job('server').lines))
+  let running = $derived(serverRunning || clientRunning || preparing)
+  // Once a run starts we show what the backend resolved; before that, what the next run intends.
+  let confirmed = $derived(running ? testState.player : null)
+  let playerName = $derived(confirmed?.name ?? account?.name ?? offlineName)
+  let playing = $derived((confirmed ? confirmed.offline : !account) ? `offline as ${playerName}` : `as ${playerName}`)
+  let modeLine = $derived(
+    confirmed
+      ? confirmed.offline
+        ? `This run is offline, as ${confirmed.name}.`
+        : confirmed.serverOnline === null
+          ? `The client plays as ${confirmed.name}.`
+          : `This run's server is ${confirmed.serverOnline ? 'online' : 'offline'}, and the client plays as ${confirmed.name}.`
+      : account
+        ? `Test servers run ${onlineMode ? 'online' : 'offline'}, and the client plays as ${account.name}.`
+        : `Test runs are offline, as ${offlineName}.`,
+  )
   let status = $derived(
     testState.players.length
       ? `${testState.players.join(', ')} joined the server.`
@@ -69,7 +97,7 @@
             ? 'The server is starting.'
             : preparing
               ? 'Preparing the test server.'
-              : 'Start a test server or client locally in offline mode.',
+              : 'Start a test server or client on this computer.',
   )
 
   let serverStarting = $derived(preparing || (serverRunning && !testState.serverReady))
@@ -96,6 +124,12 @@
     <div>
       <h2>Test</h2>
       <p class="muted" role="status">{status}</p>
+      <p class="muted mode">
+        {modeLine}
+        {#if !running}
+          <button type="button" class="link" onclick={onappsettings}>{account ? 'Change in App settings' : 'Sign in to play as yourself'}</button>
+        {/if}
+      </p>
     </div>
     <div class="controls">
       <div class="recopy">
@@ -124,11 +158,20 @@
 
   {#if eulaAccepted === false}
     <Notice tone="warn">
-      <p><strong>Accept the Minecraft EULA to start test servers.</strong> Vanilla's server won't run until you do. packraven remembers your answer on this PC and marks it accepted in each test server it starts. You can still launch the client on its own.</p>
+      <p><strong>Accept the Minecraft EULA to start test servers.</strong> Vanilla's server won't run until you do. packraven remembers your answer on this computer and marks it accepted in each test server it starts. You can still launch the client on its own.</p>
       <div class="eula-actions">
         <a href={EULA_URL} onclick={(e) => { e.preventDefault(); openUrl(EULA_URL) }}>Read the Minecraft EULA</a>
         <button class="primary" onclick={acceptEula}>I accept the EULA</button>
       </div>
+    </Notice>
+  {/if}
+  {#if confirmed?.renewalFailure}
+    <Notice tone="warn">
+      <p>
+        Couldn't renew your Minecraft sign-in, so this run is offline as {confirmed.name}.
+        <button type="button" class="link" onclick={onappsettings}>Sign in again under App settings</button>.
+      </p>
+      <p class="muted">{confirmed.renewalFailure}</p>
     </Notice>
   {/if}
   {#if serverRunning && serverPack.changedSinceTest}
@@ -164,7 +207,7 @@
       </div>
       <JobLog lines={serverLines} label="Server log" empty="Start the server to see its log." />
       <form class="console" onsubmit={(e) => { e.preventDefault(); sendCommand() }}>
-        <input bind:value={command} placeholder="op Dev" disabled={!serverRunning} aria-label="Server command" aria-describedby="console-hint" />
+        <input bind:value={command} placeholder="op {playerName}" disabled={!serverRunning} aria-label="Server command" aria-describedby="console-hint" />
         <Tip tip={whyNoSend}>
           {#snippet children(why)}<button type="submit" aria-disabled={!!whyNoSend} aria-describedby={why}>Send</button>{/snippet}
         </Tip>
@@ -197,11 +240,11 @@
       <JobLog lines={job('client').lines} label="Client log" empty="The client log will appear here after you launch it." />
       <p class="hint muted" id="client-hint">
         {clientRunning
-          ? "Running offline as the test username. You can't change Join server while the client runs."
+          ? `Running ${playing}. You can't change Join server while the client runs.`
           : !join
-            ? 'Launch this instance offline to the title screen.'
+            ? `Launch this instance ${playing} to the title screen.`
             : testState.serverReady
-              ? 'Launch this instance offline and join the test server.'
+              ? `Launch this instance ${playing} and join the test server.`
               : 'Start the server first, or untick Join server to launch to the title screen.'}
       </p>
     </div>
@@ -250,6 +293,11 @@
 
   .head p {
     margin-top: 4px;
+  }
+
+  .head .mode {
+    margin-top: 2px;
+    font-size: var(--step--1);
   }
 
   .eula-actions {

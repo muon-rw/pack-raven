@@ -202,6 +202,29 @@ test('test servers wait until you accept the Minecraft EULA', async ({ page }) =
   }
 })
 
+test('you can sign in to Minecraft and out again', async ({ page }) => {
+  await openApp(page, 'settings', 'empty')
+  const section = page.locator('#minecraft-account')
+  await section.getByRole('button', { name: 'Sign in with Microsoft' }).click()
+  await expect(section).toContainText('Finish signing in with Microsoft in your browser')
+  await expect(section.getByRole('button', { name: 'Cancel' })).toBeFocused()
+  await expect(section.getByRole('status')).toHaveText('Signed in as muonr.')
+  await expect(page.locator('#rail-player')).toHaveText('Minecraft: muonr')
+  await expect(section.getByRole('switch', { name: 'Run test servers in online mode' })).toHaveAttribute('aria-checked', 'true')
+  await section.getByRole('button', { name: 'Sign out' }).click()
+  await expect(section.getByRole('status')).toHaveText('Signed out of Minecraft.')
+  await expect(section.getByRole('button', { name: 'Sign in with Microsoft' })).toBeFocused()
+})
+
+test('cancelling a Minecraft sign-in is not an error', async ({ page }) => {
+  await openApp(page, 'settings', 'empty')
+  const section = page.locator('#minecraft-account')
+  await section.getByRole('button', { name: 'Sign in with Microsoft' }).click()
+  await section.getByRole('button', { name: 'Cancel' }).click()
+  await expect(section.getByRole('status')).toHaveText('Sign-in cancelled.')
+  await expect(section.getByRole('alert')).toHaveCount(0)
+})
+
 test('server properties and startup save as you change them', async ({ page }) => {
   const problems: string[] = []
   page.on('console', (message) => message.type() === 'error' && !message.location().url.endsWith('/favicon.ico') && problems.push(message.text()))

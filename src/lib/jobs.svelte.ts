@@ -35,7 +35,15 @@ const FLUSH_MS = 50
 let nextId = 0
 
 export const jobs: Record<string, JobRecord> = $state({})
-export const testState = $state({ serverReady: false, players: [] as string[] })
+export interface ResolvedPlayer {
+  name: string
+  offline: boolean
+  // Null when only the client launched, so this run didn't decide the server's mode.
+  serverOnline: boolean | null
+  renewalFailure: string | null
+}
+
+export const testState = $state({ serverReady: false, players: [] as string[], player: null as ResolvedPlayer | null })
 export const serverPack = $state({ changedSinceBuild: false, changedSinceTest: false })
 export const testOptions = $state({ recopyAll: false })
 
@@ -111,6 +119,10 @@ function register(): Promise<UnlistenFn[]> {
     } else if (payload.kind === 'server-stopped') {
       testState.serverReady = false
       testState.players = []
+    } else if (payload.kind === 'player-resolved') {
+      const resolved: ResolvedPlayer = JSON.parse(payload.detail)
+      // A client-only launch keeps the mode the running server was started with.
+      testState.player = { ...resolved, serverOnline: resolved.serverOnline ?? testState.player?.serverOnline ?? null }
     } else if (payload.kind === 'player-joined' && !testState.players.includes(payload.detail)) {
       testState.players.push(payload.detail)
     }

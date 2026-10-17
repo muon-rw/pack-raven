@@ -28,6 +28,8 @@ pub struct AppState {
     pub watcher: Mutex<Option<crate::watcher::PackWatcher>>,
     pub history: Mutex<crate::history::History>,
     pub mod_list: Mutex<crate::mod_list::ModListState>,
+    pub minecraft: Arc<crate::minecraft_auth::SessionCache>,
+    pub minecraft_sign_in: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl AppState {
@@ -391,13 +393,22 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, recopy_all: bool, 
     let natives = state.pack_data().join("natives");
     let jobs = state.jobs.clone();
     let run = state.test.clone();
+    let minecraft = state.minecraft.clone();
     let job_app = app.clone();
     state.jobs.start(&app, "test", move |log| async move {
         let version = pack.version().unwrap_or_else(|| "dev".into());
         let sides = classify_cached(&cache_path, &pack).await?;
         let plan = export::test_server_plan(&pack, &sides, &version, &java, &data_dir, &log).await?;
+        // We decide here, so the server's mode matches the account the client joins with.
+        let resolved = crate::minecraft_commands::test_player(&minecraft, &pack, &log).await;
+        let player = resolved.player;
+        let online = settings.minecraft_online_mode && !player.is_offline();
+        testrun::announce_player(&job_app, &player, Some(online), resolved.renewal_failure.as_deref());
+        if online {
+            log.info(format!("Running the test server in online mode, so the client joins as {}", player.name));
+        }
         log.info(if recopy_all { "Recopying every file in the test server folder" } else { "Syncing changed files to the test server folder" });
-        let report = testrun::sync_server_dir(plan, &pack, &test_dir, recopy_all, &log)?;
+        let report = testrun::sync_server_dir(plan, &pack, &test_dir, recopy_all, online, &log)?;
         log.info(report.to_string());
         let (ready_tx, mut ready_rx) = watch::channel(false);
         let server_pack = Pack::open(&pack.dir)?;
@@ -418,7 +429,7 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, recopy_all: bool, 
         let client_pack = Pack::open(&pack.dir)?;
         let client_app = job_app.clone();
         jobs.start(&job_app, "client", move |client_log| async move {
-            testrun::run_client(client_app, run, &settings, &client_pack, natives, true, client_log).await
+            testrun::run_client(client_app, run, &settings, &client_pack, natives, true, player, client_log).await
         })
         .map_err(anyhow::Error::msg)?;
         Ok("Server ready, client launching".into())
@@ -434,8 +445,13 @@ pub fn start_client(app: AppHandle, state: State<'_, AppState>, join: bool) -> C
     let pack = state.pack().map_err(err)?;
     let natives = state.pack_data().join("natives");
     let run = state.test.clone();
+    let minecraft = state.minecraft.clone();
     let job_app = app.clone();
-    state.jobs.start(&app, "client", move |log| async move { testrun::run_client(job_app, run, &settings, &pack, natives, join, log).await })
+    state.jobs.start(&app, "client", move |log| async move {
+        let resolved = crate::minecraft_commands::test_player(&minecraft, &pack, &log).await;
+        testrun::announce_player(&job_app, &resolved.player, None, resolved.renewal_failure.as_deref());
+        testrun::run_client(job_app, run, &settings, &pack, natives, join, resolved.player, log).await
+    })
 }
 
 #[tauri::command]

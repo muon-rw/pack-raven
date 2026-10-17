@@ -3,7 +3,7 @@
   import Notice from './components/Notice.svelte'
   import { onMount } from 'svelte'
   import { listen } from '@tauri-apps/api/event'
-  import { api, errorText, type Overview, type PackList } from './lib/api'
+  import { api, errorText, type MinecraftAccount, type Overview, type PackList } from './lib/api'
   import { job, jobs, serverPack, startListening, testState } from './lib/jobs.svelte'
   import Changes from './views/Changes.svelte'
   import Server from './views/Server.svelte'
@@ -49,6 +49,12 @@
   let hookMessage: string | null = $state(null)
   let hookFailed = $state(false)
   let hooksDismissed = $state(false)
+  // undefined until we've read it, so the rail never claims you're offline before we know.
+  let account = $state<MinecraftAccount | null | undefined>(undefined)
+
+  async function refreshAccount() {
+    account = await api.minecraftAccount().catch(() => account)
+  }
 
   // We skip ticks while the window is hidden in the tray, or while the last refresh is still running.
   let refreshing = false
@@ -86,6 +92,7 @@
   onMount(() => {
     startListening()
     startWatching()
+    refreshAccount()
     const timer = setInterval(poll, 5000)
     const unlisten = listen<{ kind: string }>('test-event', ({ payload }) => {
       if (payload.kind.endsWith('-started') || payload.kind.endsWith('-stopped')) refresh()
@@ -359,8 +366,16 @@
       <div class="item current adding" aria-current="page"><span class="label">Adding a pack</span></div>
     {/if}
 
-    <button class="item app-settings" class:current={view === 'settings'} aria-current={view === 'settings' ? 'page' : undefined} aria-keyshortcuts="Control+," onclick={() => (view = 'settings')}>
+    <button
+      class="item app-settings"
+      aria-describedby={account !== undefined ? 'rail-player' : undefined}
+      class:current={view === 'settings'} aria-current={view === 'settings' ? 'page' : undefined} aria-keyshortcuts="Control+," onclick={() => (view = 'settings')}>
       <span class="label">App settings</span>
+      {#if account !== undefined}
+        <span class="who" class:signed-out={!account} id="rail-player">
+          <span class="visually-hidden">{'Minecraft: '}</span>{account ? account.name : 'Signed out'}
+        </span>
+      {/if}
       <kbd aria-hidden="true">{shortcut('Ctrl+,')}</kbd>
     </button>
   </aside>
@@ -405,7 +420,7 @@
         {:else if view === 'server'}
           <Server {overview} />
         {:else if view === 'test'}
-          <TestRun {overview} onserver={() => (view = 'server')} />
+          <TestRun {overview} onserver={() => (view = 'server')} onappsettings={() => (view = 'settings')} />
         {:else if view === 'files'}
           {#await loadFiles() then { default: Files }}
             <Files pack={packs?.active ?? null} />
@@ -417,9 +432,9 @@
         {:else if view === 'releases'}
           <Releases onsettings={() => (view = 'pack')} />
         {:else if view === 'pack' && packs?.active}
-          <PackSettings dir={packs.active} name={overview?.name ?? 'this pack'} onserver={() => (view = 'server')} onchange={refresh} onremoved={() => { view = 'mods'; refresh() }} />
+          <PackSettings dir={packs.active} name={overview?.name ?? 'this pack'} onserver={() => (view = 'server')} onappsettings={() => (view = 'settings')} onchange={refresh} onremoved={() => { view = 'mods'; refresh() }} />
         {:else}
-          <SettingsView onchange={refresh} />
+          <SettingsView onchange={refresh} onaccount={refreshAccount} />
         {/if}
       {/key}
       {/if}
@@ -735,6 +750,23 @@
   .app-settings {
     margin-top: auto;
     color: var(--rail-muted);
+  }
+
+  /* We show who you play as in the App settings row, so it costs the rail no height; the shortcut hint covers it on hover. */
+  .app-settings .who {
+    margin-left: auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--rail-text);
+    font-size: var(--step--1);
+    font-weight: 600;
+  }
+
+  .app-settings .who.signed-out {
+    color: var(--rail-muted);
+    font-weight: 400;
   }
 
   .adding {

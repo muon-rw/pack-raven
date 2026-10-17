@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 // Matches `identifier` in tauri.conf.json, so the git hooks find the same config folder as the app.
 const APP_IDENTIFIER: &str = "dev.muon.packraven";
-const KEYCHAIN_SERVICE: &str = APP_IDENTIFIER;
+pub(crate) const KEYCHAIN_SERVICE: &str = APP_IDENTIFIER;
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]

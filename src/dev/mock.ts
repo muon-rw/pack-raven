@@ -430,8 +430,11 @@ function mockServerIcon() {
 }
 
 let serverIcon: string | null = scenario === 'empty' ? null : 'pending'
-// A fresh setup hasn't accepted the Minecraft EULA yet.
+// A fresh setup hasn't accepted the Minecraft EULA or signed in to Minecraft yet.
 let eulaAccepted = scenario !== 'empty'
+let minecraftAccount: { name: string; uuid: string } | null = scenario === 'empty' ? null : { name: 'muonr', uuid: '0f6c1e5a2b3d4c5e8f9a0b1c2d3e4f50' }
+let onlineMode = true
+let cancelSignIn = () => {}
 
 function mockImage(path: string) {
   const canvas = document.createElement('canvas')
@@ -542,7 +545,24 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   accept_minecraft_eula: () => {
     eulaAccepted = true
   },
-  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: {}, defenderExcluded: [], defenderDismissed: false, minecraftEulaAccepted: eulaAccepted, editorAskMb: 50, editorMaxMb: 100, gitName: '', gitEmail: '' }),
+  minecraft_account: () => minecraftAccount,
+  minecraft_sign_in: async () => {
+    const cancelled = await new Promise<boolean>((resolve) => {
+      cancelSignIn = () => resolve(true)
+      setTimeout(() => resolve(false), 1500)
+    })
+    if (cancelled) return null
+    minecraftAccount = { name: 'muonr', uuid: '0f6c1e5a2b3d4c5e8f9a0b1c2d3e4f50' }
+    return minecraftAccount
+  },
+  minecraft_sign_in_cancel: () => cancelSignIn(),
+  minecraft_sign_out: () => {
+    minecraftAccount = null
+  },
+  set_minecraft_online_mode: ({ online }) => {
+    onlineMode = online as boolean
+  },
+  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: {}, defenderExcluded: [], defenderDismissed: false, minecraftEulaAccepted: eulaAccepted, minecraftOnlineMode: onlineMode, editorAskMb: 50, editorMaxMb: 100, gitName: '', gitEmail: '' }),
   github_identity: () => ({ name: 'Muon', email: '1234567+muon-rw@users.noreply.github.com' }),
   git_pull_preview: () => ({
     incoming: { added: 1, updated: 3, removed: 0 },

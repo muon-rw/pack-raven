@@ -22,6 +22,8 @@ mod instance_locks;
 mod jobs;
 mod join;
 mod launch;
+mod minecraft_auth;
+mod minecraft_commands;
 mod logs;
 mod mirror;
 mod mod_commands;
@@ -122,6 +124,8 @@ pub fn run() {
                 watcher: Mutex::new(None),
                 history: Mutex::default(),
                 mod_list: Mutex::default(),
+                minecraft: Arc::default(),
+                minecraft_sign_in: Mutex::default(),
             });
             app.state::<AppState>().rewatch(app.handle());
             announcer::start(app.handle().clone());
@@ -256,6 +260,11 @@ pub fn run() {
             system_commands::defender_exclude,
             system_commands::defender_dismiss,
             system_commands::accept_minecraft_eula,
+            minecraft_commands::minecraft_account,
+            minecraft_commands::minecraft_sign_in,
+            minecraft_commands::minecraft_sign_in_cancel,
+            minecraft_commands::minecraft_sign_out,
+            minecraft_commands::set_minecraft_online_mode,
             system_commands::git_version,
             system_commands::install_git,
             system_commands::credentials_status,

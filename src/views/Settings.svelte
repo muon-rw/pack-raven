@@ -1,13 +1,13 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
   import CredentialField from '../components/CredentialField.svelte'
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { open } from '@tauri-apps/plugin-dialog'
   import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
   import { openUrl } from '@tauri-apps/plugin-opener'
-  import { api, errorText, type CredentialsView, type DefenderView, type Settings } from '../lib/api'
+  import { api, errorText, type CredentialsView, type DefenderView, type MinecraftAccount, type Settings } from '../lib/api'
 
-  let { onchange }: { onchange: () => void } = $props()
+  let { onchange, onaccount }: { onchange: () => void; onaccount: () => void } = $props()
 
   let settings: Settings | null = $state(null)
   let autostart = $state(false)
@@ -28,7 +28,75 @@
       settingsError = errorText(error)
       return
     }
-    await loadCredentials()
+    await Promise.all([loadCredentials(), loadAccount()])
+  }
+
+  let account = $state<MinecraftAccount | null>(null)
+  let signingIn = $state(false)
+  let accountError = $state<{ text: string; retry: () => void } | null>(null)
+  // We keep one live region and change its text, since screen readers often miss a status that appears.
+  let accountStatus = $state('')
+  let accountButton: HTMLButtonElement | undefined = $state()
+  let onlineError: string | null = $state(null)
+
+  // Each state swaps the button you just pressed for another, so we move focus to the new one.
+  async function focusAccountButton() {
+    await tick()
+    accountButton?.focus()
+  }
+
+  async function loadAccount() {
+    try {
+      account = await api.minecraftAccount()
+      accountError = null
+    } catch (error) {
+      accountError = { text: `Couldn't read your Minecraft sign-in: ${errorText(error)}`, retry: loadAccount }
+    }
+  }
+
+  async function signIn() {
+    signingIn = true
+    accountError = null
+    accountStatus = 'Waiting for you to sign in with Microsoft in your browser.'
+    focusAccountButton()
+    try {
+      const signedIn = await api.minecraftSignIn()
+      account = signedIn
+      accountStatus = signedIn ? `Signed in as ${signedIn.name}.` : 'Sign-in cancelled.'
+      if (signedIn) onaccount()
+    } catch (error) {
+      accountStatus = ''
+      accountError = { text: errorText(error), retry: signIn }
+    } finally {
+      signingIn = false
+      focusAccountButton()
+    }
+  }
+
+  async function signOut() {
+    accountError = null
+    try {
+      await api.minecraftSignOut()
+      account = null
+      accountStatus = 'Signed out of Minecraft.'
+      onaccount()
+      focusAccountButton()
+    } catch (error) {
+      accountError = { text: errorText(error), retry: signOut }
+    }
+  }
+
+  async function toggleOnlineMode() {
+    if (!settings) return
+    const wanted = !settings.minecraftOnlineMode
+    settings.minecraftOnlineMode = wanted
+    try {
+      onlineError = null
+      await api.setMinecraftOnlineMode(wanted)
+    } catch (error) {
+      settings.minecraftOnlineMode = !wanted
+      onlineError = `Couldn't change online mode: ${errorText(error)}`
+    }
   }
 
   async function loadCredentials() {
@@ -167,9 +235,62 @@
     <p class="muted">Configure general packraven settings. For individual packs, see Pack settings.</p>
   </header>
 
+  <section class="account" id="minecraft-account">
+    <h3>Minecraft account</h3>
+    {#if account}
+      <p>Signed in as <strong>{account.name}</strong>. Test clients launch as this account on this computer.</p>
+    {:else if signingIn}
+      <p class="muted">Finish signing in with Microsoft in your browser. packraven is waiting.</p>
+    {:else}
+      <p class="muted">
+        Sign in with a Microsoft account that owns Minecraft: Java Edition, so test clients launch as you and test servers can run in online mode. Until then,
+        test runs are offline, under each pack's offline username.
+      </p>
+    {/if}
+    <div class="identity-row">
+      {#if account}
+        <button type="button" bind:this={accountButton} onclick={signOut}>Sign out</button>
+      {:else if signingIn}
+        <button type="button" bind:this={accountButton} onclick={() => api.minecraftSignInCancel()}>Cancel</button>
+      {:else}
+        <button type="button" class="primary" bind:this={accountButton} onclick={signIn}>Sign in with Microsoft</button>
+      {/if}
+    </div>
+    <p class="visually-hidden" role="status">{accountStatus}</p>
+    {#if accountError}
+      <Notice tone="error">
+        <p>{accountError.text}</p>
+        <p><button type="button" onclick={accountError.retry}>Try again</button></p>
+      </Notice>
+    {/if}
+    {#if account}
+      <div class="online-row">
+        <div>
+          <div id="online-label">Run test servers in online mode</div>
+          <p class="muted" id="online-hint">
+            Online test servers check your account like a real server, so they need an internet connection. Turn this off to test offline; the client
+            still launches as you.
+          </p>
+          {#if onlineError}<p class="failed" role="alert">{onlineError}</p>{/if}
+        </div>
+        <button
+          type="button"
+          role="switch"
+          class="switch"
+          aria-checked={settings.minecraftOnlineMode}
+          aria-labelledby="online-label"
+          aria-describedby="online-hint"
+          onclick={toggleOnlineMode}
+        ><span></span></button>
+      </div>
+      {#if credentials}<p class="muted hint">packraven keeps your sign-in in {credentials.keychain}.</p>{/if}
+    {/if}
+    <p class="muted hint">packraven is not an official Minecraft product, and is not approved by or associated with Mojang or Microsoft.</p>
+  </section>
+
   <div class="switch-row">
     <div>
-      <div id="autostart-label">Start in the tray when I sign in</div>
+      <div id="autostart-label">Start in the tray when I sign in to this computer</div>
       <p class="muted" id="autostart-hint">Keep packraven running so builds and test servers are a click away.</p>
       {#if autostartError}<p class="failed" role="alert">{autostartError}</p>{/if}
     </div>
@@ -342,6 +463,26 @@
 
   header p {
     margin-top: 4px;
+  }
+
+  .account {
+    display: grid;
+    gap: 12px;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .account h3,
+  .account p {
+    margin: 0;
+  }
+
+  .online-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 24px;
+    padding-top: 4px;
   }
 
   .switch-row {

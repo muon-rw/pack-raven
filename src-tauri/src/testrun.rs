@@ -11,7 +11,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::export::{local_dev_jars, server_args};
 use crate::jobs::Log;
-use crate::launch;
+use crate::launch::{self, Player};
 use crate::mirror::{mirror, FilePlan, MirrorReport, Planned};
 use crate::pack::Pack;
 use crate::process::{spawn_watched, LineHook};
@@ -82,6 +82,21 @@ fn emit(app: &AppHandle, kind: &'static str, detail: impl Into<String>) {
     let _ = app.emit("test-event", TestEvent { kind, detail: detail.into() });
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolvedPlayer<'a> {
+    name: &'a str,
+    offline: bool,
+    server_online: Option<bool>,
+    renewal_failure: Option<&'a str>,
+}
+
+// The UI shows who you play as only once we've confirmed it, which a sign-in can't promise until a run renews it.
+pub fn announce_player(app: &AppHandle, player: &Player, server_online: Option<bool>, renewal_failure: Option<&str>) {
+    let resolved = ResolvedPlayer { name: &player.name, offline: player.is_offline(), server_online, renewal_failure };
+    emit(app, "player-resolved", serde_json::to_string(&resolved).unwrap_or_default());
+}
+
 async fn supervise(mut child: Child, managed: Arc<Managed>, slot: &Mutex<Option<Arc<Managed>>>) -> Result<String> {
     *managed.stdin.lock().await = child.stdin.take();
     let (kill_tx, kill_rx) = oneshot::channel();
@@ -97,7 +112,7 @@ async fn supervise(mut child: Child, managed: Arc<Managed>, slot: &Mutex<Option<
     result
 }
 
-pub fn sync_server_dir(mut plan: FilePlan, pack: &Pack, test_dir: &Path, recopy_all: bool, log: &Log) -> Result<MirrorReport> {
+pub fn sync_server_dir(mut plan: FilePlan, pack: &Pack, test_dir: &Path, recopy_all: bool, online: bool, log: &Log) -> Result<MirrorReport> {
     let dev_jars = local_dev_jars(pack);
     for jar in &dev_jars {
         plan.insert(format!("mods/{jar}"), Planned::Copy(pack.dir.join("mods").join(jar)));
@@ -107,16 +122,17 @@ pub fn sync_server_dir(mut plan: FilePlan, pack: &Pack, test_dir: &Path, recopy_
     }
     plan.insert("eula.txt".into(), Planned::Write("eula=true\n".into()));
     if let Some(Planned::Write(properties)) = plan.get_mut("server.properties") {
-        *properties = test_properties(properties, pack.config.test.port);
+        *properties = test_properties(properties, pack.config.test.port, online);
     }
     mirror(test_dir, &plan, &KEPT_ON_RESYNC, recopy_all).context("couldn't update the test server folder. Is a server from an earlier run still open?")
 }
 
-// An offline server lets anyone join under any name, so we only listen on this PC.
-fn test_properties(text: &str, port: u16) -> String {
+// An offline server lets anyone join under any name, so we only listen on this PC. The test client
+// joins by that address too, so we keep it for online runs.
+fn test_properties(text: &str, port: u16, online: bool) -> String {
     let overridden = ["online-mode=", "server-ip=", "server-port="];
     let mut lines: Vec<String> = text.lines().filter(|l| !overridden.iter().any(|key| l.starts_with(key))).map(String::from).collect();
-    lines.push("online-mode=false".into());
+    lines.push(format!("online-mode={online}"));
     lines.push(format!("server-ip={TEST_SERVER_IP}"));
     lines.push(format!("server-port={port}"));
     lines.join("\n") + "\n"
@@ -144,15 +160,16 @@ pub async fn run_server(app: AppHandle, run: Arc<TestRun>, pack: &Pack, java: Pa
     result
 }
 
-pub async fn run_client(app: AppHandle, run: Arc<TestRun>, settings: &Settings, pack: &Pack, natives: PathBuf, join: bool, log: Log) -> Result<String> {
+pub async fn run_client(app: AppHandle, run: Arc<TestRun>, settings: &Settings, pack: &Pack, natives: PathBuf, join: bool, player: Player, log: Log) -> Result<String> {
     if run.client.lock().unwrap().is_some() {
         bail!("the client is already running");
     }
     let address = join.then(|| format!("{TEST_SERVER_IP}:{}", pack.config.test.port));
     std::fs::create_dir_all(&natives)?;
-    let launch = launch::client(settings, pack, &pack.config.test.username, address.as_deref(), &natives)?;
+    let launch = launch::client(settings, pack, &player, address.as_deref(), &natives)?;
     let target = address.as_deref().map_or_else(|| "to the title screen".to_string(), |a| format!("joining {a}"));
-    log.info(format!("Launching {} offline as {}, {target}", pack.lock.loader()?, pack.config.test.username));
+    let mode = if player.is_offline() { " offline" } else { "" };
+    log.info(format!("Launching {}{mode} as {}, {target}", pack.lock.loader()?, player.name));
     let mut command = Command::new(&launch.java);
     command.current_dir(&settings.instance_dir).args(&launch.args);
     let child = spawn_watched(command, &log, false, None)?;
@@ -169,8 +186,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_server_runs_offline_on_this_pc_only() {
-        let properties = test_properties("motd=Ravens\nonline-mode=true\nserver-ip=0.0.0.0\nserver-port=1\n", 25565);
+    fn test_server_listens_on_this_pc_only() {
+        let properties = test_properties("motd=Ravens\nonline-mode=true\nserver-ip=0.0.0.0\nserver-port=1\n", 25565, false);
         assert_eq!(properties, "motd=Ravens\nonline-mode=false\nserver-ip=127.0.0.1\nserver-port=25565\n");
+        assert!(test_properties("", 25565, true).starts_with("online-mode=true\nserver-ip=127.0.0.1\n"));
     }
 }
