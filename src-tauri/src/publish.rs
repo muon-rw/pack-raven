@@ -34,6 +34,17 @@ pub struct PublishOptions {
     pub version: String,
     pub message: String,
     pub push: bool,
+    #[serde(default)]
+    pub client: UploadNames,
+    #[serde(default)]
+    pub server: UploadNames,
+}
+
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UploadNames {
+    pub display_name: String,
+    pub file_name: String,
 }
 
 pub fn load_releases(path: &Path) -> Vec<Release> {
@@ -43,6 +54,25 @@ pub fn load_releases(path: &Path) -> Vec<Release> {
 pub fn save_releases(path: &Path, releases: &[Release]) -> Result<()> {
     std::fs::write(path, serde_json::to_string_pretty(releases)?)?;
     Ok(())
+}
+
+pub fn default_client_names(pack: &Pack, version: &str) -> UploadNames {
+    UploadNames { display_name: format!("{} {version}", pack.name()), file_name: pack.client_zip_name(version) }
+}
+
+pub fn default_server_names(pack: &Pack, version: &str) -> UploadNames {
+    UploadNames { display_name: format!("Server Pack {version}"), file_name: pack.server_zip_name(version) }
+}
+
+fn upload_names(overrides: &UploadNames, defaults: UploadNames) -> Result<UploadNames> {
+    let display_name = Some(overrides.display_name.trim()).filter(|n| !n.is_empty()).map_or(defaults.display_name, String::from);
+    let file_name = match overrides.file_name.trim() {
+        "" => defaults.file_name,
+        name if name.contains(['/', '\\']) => bail!("{name} isn't a valid file name. Remove the slashes."),
+        name if name.to_ascii_lowercase().ends_with(".zip") => name.into(),
+        name => format!("{name}.zip"),
+    };
+    Ok(UploadNames { display_name, file_name })
 }
 
 pub fn preflight_warnings(pack: &Pack) -> Vec<String> {
@@ -112,6 +142,8 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
     }
     let pack = Pack::open(&pack.dir)?;
     let project_id = pack.config.curseforge.project_id;
+    let client_names = upload_names(&options.client, default_client_names(&pack, &version))?;
+    let server_names = upload_names(&options.server, default_server_names(&pack, &version))?;
 
     pack.set_version(&version)?;
     log.info(format!("Set the pack version to {version}"));
@@ -129,14 +161,15 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
 
     let game_versions = curseforge::game_version_ids(pack.lock.minecraft()?, pack.lock.mod_loader()?.name()).await?;
     let release_type = pack.config.curseforge.release_type.clone();
-    log.info(format!("Uploading {}", client_zip.display()));
+    log.info(format!("Uploading {} as {}", client_zip.display(), client_names.file_name));
     let file_id = curseforge::upload(
         project_id,
         &client_zip,
+        client_names.file_name,
         json!({
             "changelog": notes,
             "changelogType": "markdown",
-            "displayName": format!("{} {version}", pack.name()),
+            "displayName": client_names.display_name,
             "gameVersions": game_versions,
             "releaseType": release_type,
             "isMarkedForManualRelease": pack.config.curseforge.manual_release,
@@ -144,14 +177,15 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
     )
     .await?;
     log.info(format!("Uploaded the client pack as file {file_id}"));
-    log.info(format!("Uploading {}", server_zip.display()));
+    log.info(format!("Uploading {} as {}", server_zip.display(), server_names.file_name));
     let server_file_id = curseforge::upload(
         project_id,
         &server_zip,
+        server_names.file_name,
         json!({
             "changelog": notes,
             "changelogType": "markdown",
-            "displayName": format!("{} {version} Server Pack", pack.name()),
+            "displayName": server_names.display_name,
             "parentFileID": file_id,
             "releaseType": release_type,
         }),
@@ -187,4 +221,29 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
         log.info("Pushed the release commit and tag");
     }
     Ok(format!("Published {version}: pack file {file_id}, server pack {server_file_id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{upload_names, UploadNames};
+
+    fn names(display_name: &str, file_name: &str) -> UploadNames {
+        UploadNames { display_name: display_name.into(), file_name: file_name.into() }
+    }
+
+    #[test]
+    fn upload_names_fall_back_to_the_defaults() {
+        assert_eq!(upload_names(&names(" ", ""), names("Pack 1.0", "Pack-1.0.zip")).unwrap(), names("Pack 1.0", "Pack-1.0.zip"));
+    }
+
+    #[test]
+    fn upload_names_trim_overrides_and_add_zip_to_file_names() {
+        assert_eq!(upload_names(&names(" My Pack ", " my-pack "), names("Pack 1.0", "Pack-1.0.zip")).unwrap(), names("My Pack", "my-pack.zip"));
+        assert_eq!(upload_names(&names("", "pack.ZIP"), names("Pack 1.0", "Pack-1.0.zip")).unwrap(), names("Pack 1.0", "pack.ZIP"));
+    }
+
+    #[test]
+    fn upload_names_reject_file_names_with_slashes() {
+        assert!(upload_names(&names("", "dir/pack"), names("Pack 1.0", "Pack-1.0.zip")).is_err());
+    }
 }

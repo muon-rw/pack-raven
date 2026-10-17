@@ -3,7 +3,7 @@
   import { onMount } from 'svelte'
   import { ask } from '@tauri-apps/plugin-dialog'
   import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
-  import { api, errorText, type Overview, type PackConfig } from '../lib/api'
+  import { api, errorText, type Overview, type PackConfig, type UploadNames } from '../lib/api'
   import { job, onJobEnd } from '../lib/jobs.svelte'
   import RenderedChangelog from '../components/RenderedChangelog.svelte'
   import { bumpVersion, parseVersion, type Bump } from '../lib/version'
@@ -32,6 +32,9 @@
   let error: string | null = $state(null)
   let published: { version: string; pushed: boolean } | null = $state(null)
   let commitMessage = $state('')
+  const noOverrides = () => ({ client: { displayName: '', fileName: '' }, server: { displayName: '', fileName: '' } })
+  let names = $state<{ client: UploadNames; server: UploadNames }>(noOverrides())
+  let defaultNames = $state<{ client: UploadNames; server: UploadNames } | null>(null)
   let identity = $state<string | null>(null)
 
   // You choose the version here, where a tag collision matters. Publishing writes it to the
@@ -69,6 +72,7 @@
     if (phase !== 'done') return
     versionTouched = false
     commitMessage = ''
+    names = noOverrides()
     loadChangelog()
   })
 
@@ -109,6 +113,7 @@
           if (!current) return
           problems = result.problems
           exportWarnings = result.warnings
+          defaultNames = { client: result.client, server: result.server }
         },
         (e) => current && (problems = [`Couldn't run the pre-publish checks: ${errorText(e)}`]),
       ).finally(() => current && (checking = false))
@@ -119,9 +124,23 @@
     }
   })
 
+  function trimmedNames(side: 'client' | 'server'): UploadNames {
+    return { displayName: names[side].displayName.trim(), fileName: names[side].fileName.trim() }
+  }
+
+  function displayName(side: 'client' | 'server') {
+    return names[side].displayName.trim() || defaultNames?.[side].displayName
+  }
+
+  let fileNameProblems = $derived(
+    [names.client.fileName, names.server.fileName]
+      .filter((name) => /[\\/]/.test(name))
+      .map((name) => `${name.trim()} isn't a valid file name. Remove the slashes.`),
+  )
+
   // You can't take back an upload, so we block a push that would fail after it.
   let blockers = $derived(
-    [...problems, overview?.behind && push ? `This branch is ${overview.behind} ${overview.behind === 1 ? 'commit' : 'commits'} behind its remote, so the push would fail after the upload. Pull first, or untick the push.` : null].filter(
+    [...problems, ...fileNameProblems, overview?.behind && push ? `This branch is ${overview.behind} ${overview.behind === 1 ? 'commit' : 'commits'} behind its remote, so the push would fail after the upload. Pull first, or untick the push.` : null].filter(
       (p): p is string => !!p,
     ),
   )
@@ -139,7 +158,7 @@
 
   async function publish() {
     const consequences = [
-      `Upload ${overview?.name} ${trimmed} and its server pack to CurseForge as ${releaseType ? `a ${releaseType.toLowerCase()}` : 'a release'}${config?.curseforge.manual_release ? ', held until you release it' : ''}.`,
+      `Upload "${displayName('client')}" and its server pack "${displayName('server')}" to CurseForge as ${releaseType ? `a ${releaseType.toLowerCase()}` : 'a release'}${config?.curseforge.manual_release ? ', held until you release it' : ''}.`,
       `Commit ${uncommitted.length ? `your ${uncommitted.length} uncommitted ${uncommitted.length === 1 ? 'file' : 'files'} and ` : ''}the release as "${commitMessage.trim() || defaultMessage}", tag it v${trimmed}${push ? ', then push' : ''}.`,
       'Archive the release notes and clear changelog.md for the next release.',
       announces ? `Post to Discord once CurseForge approves it${rolePing ? ', pinging the role' : ''}.` : null,
@@ -155,7 +174,7 @@
     try {
       error = null
       published = { version: trimmed, pushed: push }
-      await api.publish(trimmed, commitMessage.trim(), push)
+      await api.publish({ version: trimmed, message: commitMessage.trim(), push, client: trimmedNames('client'), server: trimmedNames('server') })
       onchange()
     } catch (e) {
       error = errorText(e)
@@ -285,14 +304,34 @@
   <section class="step" aria-labelledby="ships-title">
     <h3 id="ships-title">What ships</h3>
     <dl class="ships">
-      <div>
-        <dt>Client pack</dt>
-        <dd>{#if trimmed}<span class="file">{overview?.name} {trimmed}.zip</span>{:else}<span class="muted">Set a version above</span>{/if}</dd>
-      </div>
-      <div>
-        <dt>Server pack</dt>
-        <dd>Uploaded as an additional file of the client pack</dd>
-      </div>
+      {#each [{ side: 'client', title: 'Client pack' }, { side: 'server', title: 'Server pack' }] as const as { side, title } (side)}
+        <div>
+          <dt>{title}</dt>
+          <dd class="names">
+            <label for="{side}-display-name">Name</label>
+            <input
+              id="{side}-display-name"
+              bind:value={names[side].displayName}
+              placeholder={trimmed ? defaultNames?.[side].displayName : 'Set a version above'}
+              aria-describedby="names-hint"
+            />
+            <label for="{side}-file-name">File</label>
+            <input
+              id="{side}-file-name"
+              class="file"
+              bind:value={names[side].fileName}
+              placeholder={trimmed ? defaultNames?.[side].fileName : 'Set a version above'}
+              spellcheck="false"
+              aria-describedby="names-hint"
+            />
+            {#if side === 'client'}
+              <span class="note muted small" id="names-hint">Leave a field empty to use the name shown. We add .zip to file names that don't end in it.</span>
+            {:else}
+              <span class="note muted small">Uploaded as an additional file of the client pack</span>
+            {/if}
+          </dd>
+        </div>
+      {/each}
       <div>
         <dt>Release type</dt>
         <dd>
@@ -527,6 +566,17 @@
   .ships dd {
     margin: 0;
     text-align: right;
+  }
+
+  .ships .names {
+    display: grid;
+    grid-template-columns: auto minmax(0, 360px);
+    align-items: center;
+    gap: 6px 10px;
+  }
+
+  .names .note {
+    grid-column: 1 / -1;
   }
 
   .ships .link {

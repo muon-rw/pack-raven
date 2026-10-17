@@ -282,9 +282,17 @@ impl Pack {
         bcc_pattern(key).captures(&text).map(|caps| caps[2].to_string())
     }
 
-    pub fn file_stem(&self, version: &str) -> String {
+    fn file_stem(&self, version: &str) -> String {
         let name: String = self.name().chars().filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-').collect();
         format!("{}-{}", name.trim().replace(' ', "-"), version)
+    }
+
+    pub fn client_zip_name(&self, version: &str) -> String {
+        format!("{}.zip", self.file_stem(version))
+    }
+
+    pub fn server_zip_name(&self, version: &str) -> String {
+        format!("{}-server.zip", self.file_stem(version))
     }
 
     pub fn git_dir(&self) -> Result<PathBuf> {

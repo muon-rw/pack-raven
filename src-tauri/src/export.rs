@@ -91,7 +91,7 @@ fn add_file(zip: &mut ZipWriter<File>, name: &str, source: &Path, executable: bo
 
 pub fn client_export(pack: &Pack, version: &str, out_dir: &Path, log: &Log) -> Result<PathBuf> {
     std::fs::create_dir_all(out_dir)?;
-    let path = out_dir.join(format!("{}.zip", pack.file_stem(version)));
+    let path = out_dir.join(pack.client_zip_name(version));
     let files: Vec<_> = pack
         .lock
         .files
@@ -390,7 +390,7 @@ pub async fn server_pack(pack: &Pack, sides: &[ModSide], version: &str, out_dir:
 
 pub async fn zip_server_pack(pack: &Pack, version: &str, out_dir: &Path, log: &Log) -> Result<PathBuf> {
     let dir = out_dir.join("server");
-    let zip_path = out_dir.join(format!("{}-server.zip", pack.file_stem(version)));
+    let zip_path = out_dir.join(pack.server_zip_name(version));
     let files = WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()).count();
     log.info(format!("Zipping the server pack ({files} files). This can take a few minutes."));
     let (source, dest) = (dir, zip_path.clone());

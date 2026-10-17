@@ -294,16 +294,25 @@ pub fn set_side_override(state: State<'_, AppState>, project_id: u64, mode: Stri
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Preflight {
     problems: Vec<String>,
     warnings: Vec<String>,
+    client: publish::UploadNames,
+    server: publish::UploadNames,
 }
 
 #[tauri::command(async)]
 pub fn publish_preflight(state: State<'_, AppState>, version: String) -> CmdResult<Preflight> {
     let not_on_curseforge = state.mod_list.lock().unwrap().not_on_curseforge.clone();
     let pack = state.pack().map_err(err)?;
-    Ok(Preflight { problems: publish::preflight(&pack, version.trim(), &not_on_curseforge, &state.settings().identity()), warnings: publish::preflight_warnings(&pack) })
+    let version = version.trim();
+    Ok(Preflight {
+        problems: publish::preflight(&pack, version, &not_on_curseforge, &state.settings().identity()),
+        warnings: publish::preflight_warnings(&pack),
+        client: publish::default_client_names(&pack, version),
+        server: publish::default_server_names(&pack, version),
+    })
 }
 
 #[tauri::command]

@@ -34,6 +34,11 @@ export interface PackConfig {
 
 export type ReleaseType = 'release' | 'beta' | 'alpha'
 
+export interface UploadNames {
+  displayName: string
+  fileName: string
+}
+
 export interface InstalledMod {
   path: string
   projectId: number
@@ -426,14 +431,15 @@ export const api = {
   modChangelog: (projectId: number, fileId: number) => invoke<string>('mod_changelog', { projectId, fileId }),
   modDescription: (projectId: number) => invoke<string>('mod_description', { projectId }),
   removeMods: (paths: string[]) => invoke<void>('remove_mods', { paths }),
-  publishPreflight: (version: string) => invoke<{ problems: string[]; warnings: string[] }>('publish_preflight', { version }),
+  publishPreflight: (version: string) =>
+    invoke<{ problems: string[]; warnings: string[]; client: UploadNames; server: UploadNames }>('publish_preflight', { version }),
   buildClientExport: () => invoke<void>('build_client_export'),
   buildServerPack: () => invoke<void>('build_server_pack'),
   startTest: (recopyAll: boolean, connect: boolean) => invoke<void>('start_test', { recopyAll, connect }),
   startClient: (join: boolean) => invoke<void>('start_client', { join }),
   serverCommand: (line: string) => invoke<void>('server_command', { line }),
   killProcess: (which: 'server' | 'client') => invoke<void>('kill_process', { which }),
-  publish: (version: string, message: string, push: boolean) => invoke<void>('publish', { options: { version, message, push } }),
+  publish: (options: { version: string; message: string; push: boolean; client: UploadNames; server: UploadNames }) => invoke<void>('publish', { options }),
   releases: () => invoke<ReleaseStatus[]>('releases'),
   outputDir: () => invoke<string>('output_dir'),
 }

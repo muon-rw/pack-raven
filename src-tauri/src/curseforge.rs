@@ -347,9 +347,8 @@ pub async fn game_version_ids(minecraft: &str, loader: &str) -> Result<Vec<u64>>
     Ok(vec![minecraft_id, loader_id])
 }
 
-pub async fn upload(project_id: u64, path: &Path, metadata: Value) -> Result<u64> {
+pub async fn upload(project_id: u64, path: &Path, file_name: String, metadata: Value) -> Result<u64> {
     let token = upload_token().context(NO_UPLOAD_TOKEN)?;
-    let file_name = path.file_name().context("upload path has no file name")?.to_string_lossy().into_owned();
     let bytes = tokio::fs::read(path).await?;
     let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name).mime_str("application/zip")?;
     let form = reqwest::multipart::Form::new().text("metadata", metadata.to_string()).part("file", part);
