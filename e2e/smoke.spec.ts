@@ -48,15 +48,20 @@ test('installed mods can be sorted, filtered, expanded and changed', async ({ pa
   await expect(description.locator('iframe, script')).toHaveCount(0)
   await expect(description.locator('span')).not.toHaveAttribute('style', /color/)
 
-  await page.getByRole('button', { name: 'Update Apotheosis' }).click()
-  await expect(page.getByRole('status').filter({ hasText: 'Updated 1 mod.' })).toBeVisible()
+  await page.getByRole('button', { name: 'Update Apotheosis', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Updated Apotheosis.' })).toBeVisible()
 
-  page.once('dialog', (dialog) => {
-    expect(dialog.message()).toContain('Sodium: sodium-neoforge-0.8.13+mc1.21.1.jar')
-    dialog.accept()
-  })
+  // Update all opens a review, where disabled mods start unticked.
   await page.getByRole('button', { name: 'Update all (4)' }).click()
-  await expect(page.getByRole('status').filter({ hasText: 'Updated 4 mods.' })).toBeVisible()
+  const review = page.getByRole('dialog', { name: 'Review 4 updates' })
+  await expect(review.getByRole('checkbox', { name: /Better Clouds/ })).not.toBeChecked()
+  await expect(review.getByRole('checkbox', { name: /Sodium/ })).toBeChecked()
+  await review.getByRole('button', { name: 'Changelog' }).first().click()
+  await expect(review).toContainText('Fixed a crash with Iris')
+  await review.getByRole('checkbox', { name: /Sodium/ }).uncheck()
+  await review.getByRole('button', { name: 'Update 2 files' }).click()
+  await expect(page.getByRole('status').filter({ hasText: /Updated .*Iron's Spells/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Update Sodium', exact: true })).toBeVisible()
 
   const betterClouds = page.getByRole('switch', { name: 'Enable Better Clouds' })
   await expect(betterClouds).toHaveAttribute('aria-checked', 'false')
@@ -75,6 +80,34 @@ test('installed mods can be sorted, filtered, expanded and changed', async ({ pa
   })
   await page.getByRole('button', { name: 'Remove Placebo' }).click()
   await expect(page.getByRole('button', { name: 'Remove Placebo' })).toHaveCount(0)
+})
+
+test('search counts matches on every type tab', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  await page.getByRole('searchbox', { name: 'Find a mod or author' }).fill('complementary')
+  const region = page.getByRole('region', { name: 'Installed mods' })
+  await expect(region).toContainText('No mods match "complementary"')
+  await expect(page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Shaders/ })).toContainText('1')
+  await region.getByRole('button', { name: 'Show 1 in Shaders' }).click()
+  await expect(region.locator('tbody > tr.row')).toHaveCount(1)
+})
+
+test('selected mods can be disabled together and brought back', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  await page.getByRole('checkbox', { name: 'Select Just Enough Items (JEI)' }).check()
+  await page.getByRole('checkbox', { name: 'Select Shoulder Surfing Reloaded' }).check()
+  const bar = page.getByRole('toolbar', { name: 'Selected files' })
+  await expect(bar).toContainText('2 selected')
+  await bar.getByRole('button', { name: 'Disable' }).click()
+  for (const name of ['Just Enough Items (JEI)', 'Shoulder Surfing Reloaded']) {
+    await expect(page.getByRole('switch', { name: `Enable ${name}` })).toHaveAttribute('aria-checked', 'false')
+  }
+  await page.getByRole('status').getByRole('button', { name: 'Undo' }).click()
+  await expect(page.getByRole('switch', { name: 'Enable Just Enough Items (JEI)' })).toHaveAttribute('aria-checked', 'true')
+
+  // An older file is a rollback, and its button says so.
+  await page.getByRole('button', { name: 'Placebo', exact: true }).click()
+  await expect(page.getByRole('list', { name: 'Versions of Placebo' }).getByRole('button', { name: /^Roll back to/ })).toHaveCount(1)
 })
 
 test('mods can be found on CurseForge and installed with their dependencies', async ({ page }) => {
@@ -102,7 +135,7 @@ test('a locked mod stays out of Update all', async ({ page }) => {
   await expect(lock).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByRole('button', { name: 'Update all (4)' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Update Apotheosis', exact: true })).toHaveCount(0)
-  await expect(page.getByText('Locked. Apotheosis-1.21.1-8.9.0.jar is available.')).toBeVisible()
+  await expect(page.getByText('Locked; 8.9.0 is available')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Update Apotheosis, locked' })).toHaveAttribute('aria-disabled', 'true')
 
   await page.getByRole('button', { name: 'Locked', exact: true }).click()

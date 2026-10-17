@@ -4,6 +4,7 @@
   import ModBrowser from '../components/ModBrowser.svelte'
   import ContextMenu from '../components/ContextMenu.svelte'
   import DisableDialog, { type Dependent } from '../components/DisableDialog.svelte'
+  import UpdateReview, { type PendingUpdate } from '../components/UpdateReview.svelte'
   import { onMount, untrack } from 'svelte'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { ask } from '@tauri-apps/plugin-dialog'
@@ -41,7 +42,10 @@
   let removing: string | null = $state(null)
   let toggling: string | null = $state(null)
   let menu: { x: number; y: number; label: string; items: MenuItem[] } | null = $state(null)
-  let disabling: { mod: InstalledMod; name: string; dependents: (Dependent & { mod: InstalledMod })[] } | null = $state(null)
+  let disabling: { targets: InstalledMod[]; name: string; dependents: (Dependent & { mod: InstalledMod })[] } | null = $state(null)
+  let reviewing: PendingUpdate[] | null = $state(null)
+  let selected = $state(new Set<string>())
+  let undo: { message: string; paths: string[] } | null = $state(null)
   let changelogs: Record<number, string | { error: string }> = $state({})
   let openChangelog: number | null = $state(null)
 
@@ -131,9 +135,9 @@
 
   // Every enabled file that requires this one, directly or through another, nearest first, so
   // the dialog can nest each under the mod it needs.
-  function dependentsOf(root: InstalledMod): (Dependent & { mod: InstalledMod })[] {
+  function dependentsOf(...roots: InstalledMod[]): (Dependent & { mod: InstalledMod })[] {
     const found: (Dependent & { mod: InstalledMod })[] = []
-    const seen = new Set([root.projectId])
+    const seen = new Set(roots.map((r) => r.projectId))
     const walk = (projectId: number, depth: number) => {
       for (const mod of mods) {
         if (seen.has(mod.projectId) || mod.path.endsWith('.disabled')) continue
@@ -143,21 +147,23 @@
         walk(mod.projectId, depth + 1)
       }
     }
-    walk(root.projectId, 1)
+    for (const root of roots) walk(root.projectId, 1)
     return found
   }
 
-  async function setEnabled(mod: InstalledMod, enabled: boolean) {
+  async function setEnabled(targets: InstalledMod[], enabled: boolean) {
+    targets = targets.filter((m) => m.path.endsWith('.disabled') === enabled)
+    if (!targets.length) return
     if (!enabled) {
       // We only know what depends on a file from a check, so we finish one before asking.
       if (mods.some((m) => !modUpdates.checks?.has(m.path))) await check()
-      const dependents = dependentsOf(mod)
+      const dependents = dependentsOf(...targets)
       if (dependents.length) {
-        disabling = { mod, name: mod.name, dependents }
+        disabling = { targets, name: targets.length === 1 ? targets[0].name : `the ${targets.length} selected files`, dependents }
         return
       }
     }
-    await setFilesEnabled([mod], enabled)
+    await setFilesEnabled(targets, enabled)
   }
 
   async function setFilesEnabled(targets: InstalledMod[], enabled: boolean) {
@@ -172,8 +178,11 @@
       if (modUpdates.checks) modUpdates.checks = new Map([...modUpdates.checks].map(([key, value]) => [renamed.get(key) ?? key, { ...value, path: renamed.get(key) ?? key }]))
       if (expanded) expanded = renamed.get(expanded) ?? expanded
       mods = mods.map((m) => (renamed.has(m.path) ? { ...m, path: renamed.get(m.path)! } : m))
+      selected = new Set([...selected].map((path) => renamed.get(path) ?? path))
       serverMods.changedSinceBuild = true
       serverMods.changedSinceTest = true
+      // Turning several files off at once is easy to regret, so we offer to turn them back on.
+      undo = !enabled && targets.length > 1 ? { message: `Disabled ${list(targets.map((m) => m.name))}.`, paths: paths } : null
     } catch (error) {
       const what = targets.length === 1 ? targets[0].name : `${targets.length} files`
       actionError = `Couldn't ${enabled ? 'enable' : 'disable'} ${what}: ${errorText(error)}`
@@ -184,9 +193,29 @@
 
   function confirmDisable(cascade: boolean) {
     if (!disabling) return
-    const { mod, dependents } = disabling
+    const { targets, dependents } = disabling
     disabling = null
-    setFilesEnabled(cascade ? [mod, ...dependents.map((d) => d.mod)] : [mod], false)
+    setFilesEnabled(cascade ? [...targets, ...dependents.map((d) => d.mod)] : targets, false)
+  }
+
+  function undoDisable() {
+    if (!undo) return
+    const paths = new Set(undo.paths)
+    undo = null
+    setFilesEnabled(mods.filter((m) => paths.has(m.path)), true)
+  }
+
+  async function setManyLocked(targets: InstalledMod[], lock: boolean) {
+    for (const mod of targets.filter((m) => modUpdates.locked.has(m.projectId) !== lock)) await setLocked(mod, lock)
+  }
+
+  function pendingFor(targets: InstalledMod[]): PendingUpdate[] {
+    return targets.filter((m) => updates.has(m.path)).map((m) => ({ mod: m, file: updates.get(m.path)!, kind: isMod(m) ? null : kindLabels[folder(m.path)] }))
+  }
+
+  function confirmUpdates(chosen: PendingUpdate[]) {
+    reviewing = null
+    if (chosen.length) update(chosen.map((u) => ({ fileId: u.file.fileId, replaces: u.mod.path })))
   }
 
   async function toggleChangelog(projectId: number, fileId: number) {
@@ -217,38 +246,33 @@
     }
   }
 
-  async function updateAll() {
-    const changes = mods.filter((m) => updates.has(m.path)).map((m) => `${m.name}: ${updates.get(m.path)!.fileName}`)
-    const shown = changes.slice(0, 12)
-    const more = changes.length - shown.length
-    const message = [
-      `packraven downloads ${changes.length === 1 ? 'this update' : `these ${changes.length} updates`}, replaces the old files, and installs any mods they newly require.`,
-      shown.join('\n') + (more ? `\nand ${more} more` : ''),
-    ].join('\n\n')
-    const confirmed = await ask(message, { title: 'Update all', kind: 'info', okLabel: changes.length === 1 ? 'Update 1 mod' : `Update ${changes.length} mods`, cancelLabel: 'Cancel' })
-    if (confirmed) await update([...updates].map(([path, file]) => ({ fileId: file.fileId, replaces: path })))
+  function updateAll() {
+    reviewing = pendingFor(mods)
   }
 
-  async function remove(mod: InstalledMod) {
+  async function remove(targets: InstalledMod[]) {
     // We only know what depends on a mod from a check, so we finish one before warning you.
     if (mods.some((m) => !modUpdates.checks?.has(m.path))) await check()
-    const dependents = dependentsOf(mod).map((d) => d.name)
-    const lines = [`Move ${fileName(mod.path)} to the ${trashName}?`]
-    if (dependents.length) lines.push(`${list(dependents)} ${dependents.length === 1 ? 'requires' : 'require'} ${mod.name}, directly or through another mod, so ${dependents.length === 1 ? 'it' : 'they'} may not load without it.`)
-    const confirmed = await ask(lines.join('\n\n'), { title: `Remove ${mod.name}`, kind: 'warning', okLabel: `Move to ${trashName}`, cancelLabel: 'Cancel' })
+    const what = targets.length === 1 ? targets[0].name : `${targets.length} files`
+    const dependents = dependentsOf(...targets).map((d) => d.name)
+    const lines = [targets.length === 1 ? `Move ${fileName(targets[0].path)} to the ${trashName}?` : `Move these ${targets.length} files to the ${trashName}? ${list(targets.map((m) => m.name))}.`]
+    if (dependents.length) lines.push(`${list(dependents)} ${dependents.length === 1 ? 'requires' : 'require'} ${targets.length === 1 ? what : 'them'}, directly or through another mod, so ${dependents.length === 1 ? 'it' : 'they'} may not load without ${targets.length === 1 ? 'it' : 'them'}.`)
+    const confirmed = await ask(lines.join('\n\n'), { title: `Remove ${what}`, kind: 'warning', okLabel: `Move to ${trashName}`, cancelLabel: 'Cancel' })
     if (!confirmed) return
-    removing = mod.path
+    const paths = targets.map((m) => m.path)
+    removing = paths[0]
     actionError = null
     try {
-      await api.removeMods([mod.path])
+      await api.removeMods(paths)
       serverMods.changedSinceBuild = true
       serverMods.changedSinceTest = true
-      if (modUpdates.checks) modUpdates.checks = new Map([...modUpdates.checks].filter(([path]) => path !== mod.path))
-      if (expanded === mod.path) expanded = null
+      if (modUpdates.checks) modUpdates.checks = new Map([...modUpdates.checks].filter(([path]) => !paths.includes(path)))
+      if (expanded && paths.includes(expanded)) expanded = null
+      selected = new Set([...selected].filter((path) => !paths.includes(path)))
       await load()
       keepFocus(tableRegion)
     } catch (error) {
-      actionError = `Couldn't remove ${mod.name}: ${errorText(error)}`
+      actionError = `Couldn't remove ${what}: ${errorText(error)}`
     } finally {
       removing = null
     }
@@ -306,6 +330,7 @@
       y: keyboard ? rect.bottom : event.clientY,
       label: `${mod.name} actions`,
       items: [
+        ...(updates.has(mod.path) ? [{ label: `Update to ${updates.get(mod.path)!.fileName}`, disabled: blocked, run: () => update([{ fileId: updates.get(mod.path)!.fileId, replaces: mod.path }]) }, 'separator' as const] : []),
         { label: 'Show versions', run: () => expand(mod, 'versions') },
         { label: 'Show description', run: () => expand(mod, 'description') },
         'separator',
@@ -313,15 +338,28 @@
         { label: 'Copy link', disabled: !mod.url, run: () => mod.url && navigator.clipboard.writeText(mod.url) },
         'separator',
         { label: lockedHere ? 'Unlock' : 'Lock to this version', run: () => setLocked(mod, !lockedHere) },
-        { label: disabled ? 'Enable' : 'Disable', disabled: blocked, run: () => setEnabled(mod, disabled) },
+        { label: disabled ? 'Enable' : 'Disable', disabled: blocked, run: () => setEnabled([mod], disabled) },
         'separator',
-        { label: `Move to ${trashName}`, danger: true, disabled: blocked, run: () => remove(mod) },
+        { label: `Move to ${trashName}`, danger: true, disabled: blocked, run: () => remove([mod]) },
       ],
     }
   }
 
   function list(names: string[]) {
     return names.length < 3 ? names.join(' and ') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+  }
+
+  // Two files of one mod usually share a long name, so after the arrow we show only the part of
+  // the new name that differs, cut at a separator: Apotheosis-1.21.1-8.1.2.jar → 8.9.0.
+  function changedPart(from: string, to: string) {
+    let start = 0
+    while (start < from.length && from[start] === to[start]) start++
+    while (start > 0 && !/[-_+ ]/.test(to[start - 1])) start--
+    let end = 0
+    while (end < from.length - start && end < to.length - start && from[from.length - 1 - end] === to[to.length - 1 - end]) end++
+    while (end > 0 && !/[-_+ .]/.test(to[to.length - end])) end--
+    const part = to.slice(start, to.length - end).replace(/^[-_+ .]+|[-_+ .]+$/g, '')
+    return part.length >= 2 ? part : to
   }
 
   function fileName(path: string) {
@@ -377,15 +415,32 @@
     }
   }
 
-  let visible = $derived(
-    mods
-      .filter((m) => {
-        if (folder(m.path) !== kindFilter) return false
-        const query = search.toLowerCase()
-        return !query || m.name.toLowerCase().includes(query) || m.path.toLowerCase().includes(query) || m.authors.some((a) => a.toLowerCase().includes(query))
-      })
-      .sort((a, b) => (sort.reversed ? -compare(a, b) : compare(a, b))),
-  )
+  function matches(mod: InstalledMod) {
+    const query = search.trim().toLowerCase()
+    return !query || mod.name.toLowerCase().includes(query) || mod.path.toLowerCase().includes(query) || mod.authors.some((a) => a.toLowerCase().includes(query))
+  }
+
+  // While you search, each type tab counts its matches, so a match on another tab isn't missed.
+  let matchCounts = $derived(mods.filter(matches).reduce((counts, m) => counts.set(folder(m.path), (counts.get(folder(m.path)) ?? 0) + 1), new Map<Kind, number>()))
+  let visible = $derived(mods.filter((m) => folder(m.path) === kindFilter && matches(m)).sort((a, b) => (sort.reversed ? -compare(a, b) : compare(a, b))))
+  let selectedMods = $derived(mods.filter((m) => selected.has(m.path)))
+  let allVisibleSelected = $derived(visible.length > 0 && visible.every((m) => selected.has(m.path)))
+
+  function select(mod: InstalledMod, on: boolean) {
+    const next = new Set(selected)
+    if (on) next.add(mod.path)
+    else next.delete(mod.path)
+    selected = next
+  }
+
+  function selectVisible(on: boolean) {
+    const next = new Set(selected)
+    for (const mod of visible) {
+      if (on) next.add(mod.path)
+      else next.delete(mod.path)
+    }
+    selected = next
+  }
 
   function sortBy(key: SortKey) {
     sort = { key, reversed: sort.key === key ? !sort.reversed : false }
@@ -454,7 +509,7 @@
       <h2>Mods</h2>
       <p class="muted">
         {#if browse.tab === 'browse'}
-          Search CurseForge for mods, resource packs and shaders that run on {game}.
+          Search CurseForge for mods, resource packs, shaders and data packs that run on {game}.
         {:else if loading && !mods.length}
           Reading the mod list.
         {:else if !mods.length}
@@ -463,6 +518,17 @@
           {mods.length} {mods.length === 1 ? 'file' : 'files'} from CurseForge. {summary ?? ''}
         {/if}
       </p>
+      {#if browse.tab === 'installed' && mods.length}
+        <!-- The update channel is a pack setting, not a view filter, so it sits with the update summary. -->
+        <label class="channel muted">
+          Updates use
+          <select value={modUpdates.channel} onchange={(e) => setChannel(e.currentTarget)}>
+            <option value="alpha">any release type</option>
+            <option value="beta">releases and betas</option>
+            <option value="release">releases only</option>
+          </select>
+        </label>
+      {/if}
     </div>
     {#if browse.tab === 'installed'}
       <div class="actions">
@@ -474,12 +540,18 @@
     {/if}
   </header>
 
-  <div class="tabs" role="tablist" aria-label="Mods" tabindex="-1" onkeydown={onTabKey}>
-    {#each [['installed', 'Installed'], ['browse', 'Browse']] as const as [tab, label] (tab)}
-      <button role="tab" id="mods-tab-{tab}" aria-selected={browse.tab === tab} tabindex={browse.tab === tab ? 0 : -1} aria-controls="mods-panel" class:on={browse.tab === tab} onclick={() => (browse.tab = tab)}>
-        {label}{#if tab === 'installed' && mods.length}<span class="muted tab-count">{mods.length}</span>{/if}
-      </button>
-    {/each}
+  <!-- The tab row has room to spare, so the Installed search lives there and the type tabs keep a row to themselves. -->
+  <div class="tab-row">
+    <div class="tabs" role="tablist" aria-label="Mods" tabindex="-1" onkeydown={onTabKey}>
+      {#each [['installed', 'Installed'], ['browse', 'Browse']] as const as [tab, label] (tab)}
+        <button role="tab" id="mods-tab-{tab}" aria-selected={browse.tab === tab} tabindex={browse.tab === tab ? 0 : -1} aria-controls="mods-panel" class:on={browse.tab === tab} onclick={() => (browse.tab = tab)}>
+          {label}{#if tab === 'installed' && mods.length}<span class="muted tab-count">{mods.length}</span>{/if}
+        </button>
+      {/each}
+    </div>
+    {#if browse.tab === 'installed'}
+      <input type="search" class="find" bind:this={searchField} bind:value={search} placeholder="Find a mod or author" aria-label="Find a mod or author" title="Find a mod or author ({shortcut('Ctrl+F')})" />
+    {/if}
   </div>
 
   {#if loadError}
@@ -503,6 +575,12 @@
         {duplicates.length === 1 ? `The mods folder has two versions of ${duplicates[0][0].name}` : `The mods folder has two versions of ${list(duplicates.map((group) => group[0].name))}`},
         and Minecraft won't load {duplicates.length === 1 ? 'it' : 'them'} that way. Remove the one you don't want. packraven won't publish until you do.
       </p>
+      <p><button onclick={() => { browse.tab = 'installed'; kindFilter = 'mods'; search = duplicates[0][0].name }}>Show {duplicates.length === 1 ? 'them' : `${duplicates[0][0].name}`}</button></p>
+    </Notice>
+  {/if}
+  {#if undo}
+    <Notice tone="ok">
+      <p>{undo.message} <button class="link" onclick={undoDisable} disabled={blocked}>Undo</button></p>
     </Notice>
   {/if}
   {#if actionError}
@@ -530,27 +608,35 @@
         <div class="filters" role="group" aria-label="Show">
           {#each Object.keys(kindLabels) as Kind[] as kind (kind)}
             <button aria-pressed={kindFilter === kind} class:on={kindFilter === kind} onclick={() => (kindFilter = kind)}>
-              {kindLabels[kind]}<span class="muted filter-count">{kindCounts.get(kind) ?? 0}</span>
+              {kindLabels[kind]}<span class="muted filter-count">{search.trim() ? (matchCounts.get(kind) ?? 0) : (kindCounts.get(kind) ?? 0)}</span>{#if search.trim()}<span class="visually-hidden"> matching</span>{/if}
               {#if kindsWithUpdates.has(kind)}<span class="has-updates" title="Has updates"><span class="visually-hidden">, has updates</span></span>{/if}
             </button>
           {/each}
         </div>
-        <input type="search" bind:this={searchField} bind:value={search} placeholder="Find a mod or author" aria-label="Find a mod or author" title="Find a mod or author ({shortcut('Ctrl+F')})" />
-        <label class="channel">
-          Update to
-          <select value={modUpdates.channel} onchange={(e) => setChannel(e.currentTarget)}>
-            <option value="alpha">Any release type</option>
-            <option value="beta">Releases and betas</option>
-            <option value="release">Releases only</option>
-          </select>
-        </label>
       </div>
+
+      {#if selected.size}
+        {@const pending = pendingFor(selectedMods)}
+        <div class="bulk" role="toolbar" aria-label="Selected files">
+          <span class="bulk-count">{selected.size} selected</span>
+          <button onclick={() => setEnabled(selectedMods, true)} disabled={blocked || !selectedMods.some((m) => m.path.endsWith('.disabled'))}>Enable</button>
+          <button onclick={() => setEnabled(selectedMods, false)} disabled={blocked || selectedMods.every((m) => m.path.endsWith('.disabled'))}>Disable</button>
+          <button onclick={() => setManyLocked(selectedMods, true)} disabled={selectedMods.every((m) => modUpdates.locked.has(m.projectId))}>Lock</button>
+          <button onclick={() => setManyLocked(selectedMods, false)} disabled={!selectedMods.some((m) => modUpdates.locked.has(m.projectId))}>Unlock</button>
+          <button onclick={() => (reviewing = pending)} disabled={blocked || !pending.length}>{pending.length ? `Update (${pending.length})` : 'Update'}</button>
+          <button class="danger-quiet" onclick={() => remove(selectedMods)} disabled={blocked}>Remove</button>
+          <button class="link clear" onclick={() => (selected = new Set())}>Clear selection</button>
+        </div>
+      {/if}
 
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div class="table" role="region" aria-label="Installed mods" tabindex="0" bind:this={tableRegion}>
         <table aria-busy={loading && !mods.length}>
           <thead>
             <tr>
+              <th class="select">
+                <input type="checkbox" checked={allVisibleSelected} indeterminate={!allVisibleSelected && visible.some((m) => selected.has(m.path))} onchange={(e) => selectVisible(e.currentTarget.checked)} aria-label="Select every {kindLabels[kindFilter].toLowerCase().replace(/s$/, '')} shown" disabled={!visible.length} />
+              </th>
               {@render sortHeader('enabled', 'Enabled', true)}
               {@render sortHeader('name', 'Mod')}
               {@render sortHeader('author', 'Author')}
@@ -563,6 +649,7 @@
             {#if loading && !mods.length}
               {#each { length: 8 } as _, row (row)}
                 <tr class="skeleton" aria-hidden="true">
+                  <td></td>
                   <td></td>
                   <td><span style="width: {55 + ((row * 37) % 35)}%"></span><span class="short"></span></td>
                   <td><span style="width: {40 + ((row * 23) % 30)}%"></span></td>
@@ -580,7 +667,10 @@
                 {@const held = newestOnChannel(status)}
                 {@const disabled = mod.path.endsWith('.disabled')}
                 {@const logo = mod.logo ?? status?.logo}
-                <tr class="row" class:open={expanded === mod.path} class:off={disabled} onclick={(e) => onRowClick(e, mod)} oncontextmenu={(e) => openMenu(e, mod)}>
+                <tr class="row" class:open={expanded === mod.path} class:off={disabled} class:picked={selected.has(mod.path)} onclick={(e) => onRowClick(e, mod)} oncontextmenu={(e) => openMenu(e, mod)}>
+                  <td class="select">
+                    <input type="checkbox" checked={selected.has(mod.path)} onchange={(e) => select(mod, e.currentTarget.checked)} aria-label="Select {mod.name}" />
+                  </td>
                   <td class="enabled">
                     <button
                       class="switch"
@@ -590,7 +680,7 @@
                       title={disabled ? 'Disabled. packraven leaves it out of exports.' : 'Enabled'}
                       disabled={blocked}
                       aria-busy={toggling === mod.path}
-                      onclick={() => setEnabled(mod, disabled)}
+                      onclick={() => setEnabled([mod], disabled)}
                     ></button>
                   </td>
                   <td class="name">
@@ -601,21 +691,22 @@
                           <button class="expand" aria-expanded={expanded === mod.path} aria-controls="details-{mod.projectId}" onclick={() => expand(mod)}>{mod.name}</button>
                           {#if duplicatePaths.has(mod.path)}<span class="chip fail">Two versions</span>{/if}
                         </div>
+                        <!-- The installed file and its update share a line, so a pack of hundreds stays scannable. -->
                         <div class="version">
                           {@render fileText(fileName(mod.path).replace(/\.disabled$/, ''))}
                           {#if status?.releaseType && status.releaseType !== 'release'}<span class="chip pending">{typeLabels[status.releaseType]}</span>{/if}
+                          {#if lockedHere && held}
+                            <span class="held" title={held.fileName}>Locked; {changedPart(fileName(mod.path).replace(/\.disabled$/, ''), held.fileName)} is available</span>
+                          {:else if next}
+                            <span class="next" title={next.fileName}>
+                              <span class="visually-hidden">Update available: {next.fileName}</span>
+                              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" /></svg>
+                              <span class="file" aria-hidden="true">{changedPart(fileName(mod.path).replace(/\.disabled$/, ''), next.fileName)}</span>
+                              {#if next.releaseType !== 'release'}<span class="chip pending">{typeLabels[next.releaseType]}</span>{/if}
+                            </span>
+                          {/if}
                         </div>
                         {#if mod.authors.length}<div class="byline muted">by {mod.authors.join(', ')}</div>{/if}
-                        {#if lockedHere && held}
-                          <div class="muted held">Locked. {@render fileText(held.fileName)} is available.</div>
-                        {:else if next}
-                          <div class="next">
-                            <span class="visually-hidden">Update available:</span>
-                            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" /></svg>
-                            {@render fileText(next.fileName)}
-                            {#if next.releaseType !== 'release'}<span class="chip pending">{typeLabels[next.releaseType]}</span>{/if}
-                          </div>
-                        {/if}
                       </div>
                     </div>
                   </td>
@@ -643,14 +734,14 @@
                     </button>
                   </td>
                   <td class="trash">
-                    <button class="ghost icon remove" onclick={() => remove(mod)} disabled={blocked || removing === mod.path} aria-label="Remove {mod.name}" title="Move to the {trashName}">
+                    <button class="ghost icon remove" onclick={() => remove([mod])} disabled={blocked || removing === mod.path} aria-label="Remove {mod.name}" title="Move to the {trashName}">
                       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M7 7v4M9 7v4" /></svg>
                     </button>
                   </td>
                 </tr>
                 {#if expanded === mod.path}
                   <tr class="details" id="details-{mod.projectId}">
-                    <td colspan="6">
+                    <td colspan="7">
                       <div class="detail-head">
                         <div class="modes" role="group" aria-label="Show">
                           <button class="mode" aria-pressed={detail === 'versions'} onclick={() => expand(mod, 'versions')}>Versions</button>
@@ -680,7 +771,7 @@
                                 {#if file.fileId === mod.fileId}
                                   <span class="muted current">Installed</span>
                                 {:else}
-                                  <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={blocked} aria-label="Use {file.fileName}">Use this</button>
+                                  <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={blocked} aria-label="{file.fileId > mod.fileId ? 'Update to' : 'Roll back to'} {file.fileName}">{file.fileId > mod.fileId ? 'Update to this' : 'Roll back'}</button>
                                 {/if}
                               </li>
                               {#if openChangelog === file.fileId}
@@ -713,9 +804,14 @@
                 {/if}
               {:else}
                 <tr>
-                  <td colspan="6" class="muted">
-                    {#if search}
-                      No mods match "{search}". <button class="link" onclick={() => (search = '')}>Clear the search</button>
+                  <td colspan="7" class="muted">
+                    {#if search.trim()}
+                      {@const elsewhere = (Object.keys(kindLabels) as Kind[]).filter((k) => k !== kindFilter && matchCounts.get(k))}
+                      No {kindLabels[kindFilter].toLowerCase()} match "{search.trim()}".
+                      {#each elsewhere as kind (kind)}
+                        <button class="link" onclick={() => (kindFilter = kind)}>Show {matchCounts.get(kind)} in {kindLabels[kind]}</button>{' '}
+                      {/each}
+                      <button class="link" onclick={() => (search = '')}>Clear the search</button>
                     {:else}
                       This pack has no {kindLabels[kindFilter].toLowerCase()} from CurseForge yet.
                       <button class="link" onclick={() => { browse.kind = kindFilter; browse.tab = 'browse' }}>Browse CurseForge</button>
@@ -732,6 +828,7 @@
 </div>
 
 <DisableDialog request={disabling} onconfirm={confirmDisable} oncancel={() => (disabling = null)} />
+<UpdateReview request={reviewing} onconfirm={confirmUpdates} oncancel={() => (reviewing = null)} />
 
 {#if menu}
   <ContextMenu x={menu.x} y={menu.y} label={menu.label} items={menu.items} onclose={() => (menu = null)} />
@@ -761,6 +858,27 @@
 
   .head p {
     max-width: 64ch;
+  }
+
+  .tab-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    justify-content: space-between;
+    gap: 8px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .tab-row .tabs {
+    border-bottom: 0;
+  }
+
+  /* The search field keeps room on the right for its clear button, so it needs more width than
+     the placeholder's text alone. */
+  .find {
+    flex: 0 1 260px;
+    min-width: min(100%, 15rem);
+    margin-bottom: 6px;
   }
 
   .tabs {
@@ -864,25 +982,59 @@
     background: var(--ochre-ink);
   }
 
-  .channel {
-    white-space: nowrap;
+  .head .channel {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
-    max-width: 100%;
+    gap: 6px;
+    font-size: var(--step--1);
   }
 
-  .channel select {
-    min-width: 0;
+  .head .channel select {
+    padding: 2px 6px;
+    font-size: var(--step--1);
   }
 
-  /* The search field keeps room on the right for its clear button, so it needs more width than
-     the placeholder's text alone. */
-  .tools input {
-    flex: 1 1 240px;
-    max-width: 280px;
-    min-width: min(100%, 15rem);
+  .select {
+    width: 1%;
+    padding-inline: 12px 4px;
   }
+
+  .select input {
+    display: block;
+    margin: 0;
+  }
+
+  .row.picked td {
+    background: var(--here);
+  }
+
+  .bulk {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px 6px 12px;
+    background: var(--here);
+    border: 1px solid var(--here-border);
+    border-radius: var(--radius-control);
+  }
+
+  .bulk-count {
+    margin-right: 6px;
+    font-weight: 700;
+    color: var(--ochre-ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .bulk .clear {
+    margin-left: auto;
+  }
+
+  .danger-quiet:hover:not(:disabled) {
+    color: var(--fail);
+  }
+
 
   .log summary {
     cursor: pointer;
@@ -1098,13 +1250,19 @@
     margin-right: 6px;
   }
 
-  .held,
-  .next {
-    font-size: var(--step--1);
+  .version {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 6px;
   }
 
-  .held .file {
+  .version .file {
     margin-right: 0;
+  }
+
+  .held {
+    font-size: var(--step--1);
   }
 
   .next {
@@ -1160,6 +1318,17 @@
       flex: none;
       min-height: 0;
       overflow: visible;
+    }
+
+    /* The page's scroller has 28px of top padding, and rows would show through it above the
+       stuck header. The shadow paints that band in the page color, and the matching gap keeps
+       the shadow off the toolbar before the header sticks. */
+    .panel {
+      gap: 28px;
+    }
+
+    th {
+      box-shadow: 0 -28px 0 1px var(--paper);
     }
 
     th:first-child {

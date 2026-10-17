@@ -106,7 +106,7 @@
     return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
   }
 
-  const kindLabels: Record<AddonKind, string> = { mods: 'Mods', resourcepacks: 'Resource packs', shaderpacks: 'Shader packs', datapacks: 'Data packs' }
+  const kindLabels: Record<AddonKind, string> = { mods: 'Mods', resourcepacks: 'Resource packs', shaderpacks: 'Shaders', datapacks: 'Data packs' }
   const typeLabels = { release: 'Release', beta: 'Beta', alpha: 'Alpha' }
 </script>
 

@@ -133,14 +133,23 @@ pub fn change_mods(app: AppHandle, state: State<'_, AppState>, requests: Vec<Mod
         return Err(CLIENT_HAS_MODS_OPEN.into());
     }
     let pack = state.pack().map_err(err)?;
+    let cache = MetadataCache::load(&state.cache_path());
+    let updated: Vec<String> = requests
+        .iter()
+        .filter_map(|r| r.replaces.as_deref())
+        .map(|path| {
+            let project = pack.lock.files.iter().find(|e| e.path == path).map(|e| e.project_id);
+            project.and_then(|id| cache.known_name(id)).map_or_else(|| path.rsplit('/').next().unwrap_or(path).to_string(), |n| n.name.clone())
+        })
+        .collect();
     state.jobs.start(&app, "mods", move |log| async move {
         let plan = mod_updates::plan(&pack, &requests).await?;
-        let updated = requests.iter().filter(|r| r.replaces.is_some()).count();
         let mut message = Vec::new();
-        match updated {
+        // Past a handful of names, a count reads better than a list.
+        match updated.len() {
             0 => {}
-            1 => message.push("Updated 1 mod.".to_string()),
-            n => message.push(format!("Updated {n} mods.")),
+            1..=4 => message.push(format!("Updated {}.", names(&updated))),
+            n => message.push(format!("Updated {}, {} and {} more.", updated[0], updated[1], n - 2)),
         }
         if !plan.installs.is_empty() {
             message.push(format!("Installed {}.", names(&plan.installs)));

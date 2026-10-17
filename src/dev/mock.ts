@@ -245,7 +245,7 @@ function updateMods(requests: { path: string; fileId: number }[], extraLines: st
   mockJob(
     'mods',
     [...files.flatMap(({ mod, file }) => [`Downloading ${mod.path.slice(0, mod.path.indexOf('/'))}/${file.fileName}`, `Removed ${mod.path}`, `Placed ${file.fileName}`]), ...extraLines],
-    [files.length ? (files.length === 1 ? 'Updated 1 mod.' : `Updated ${files.length} mods.`) : '', ...extraMessage].filter(Boolean).join(' '),
+    [files.length ? (files.length <= 4 ? `Updated ${names(files.map(({ mod }) => ({ name: mod.name }) as MockProject))}.` : `Updated ${files[0].mod.name}, ${files[1].mod.name} and ${files.length - 2} more.`) : '', ...extraMessage].filter(Boolean).join(' '),
     () => {
       extraChange()
       for (const { mod, file } of files) {
