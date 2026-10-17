@@ -66,7 +66,7 @@ const config = {
   server: { exclude: [], client_only: [], keep: [], memory: '6G', graalvm: '', properties: {} },
   test: { username: 'Dev', port: 25565, client_memory: '8G' },
   discord: { role_id: '112233445566778899', color: '#4d6b2f', announce_on_approval: true, title: '{project_name} - v{version}', show_author: true, header: '', footer: '[Install]({file_url})' },
-  updates: { channel: 'release', locked: [] as number[] },
+  updates: { channel: 'alpha', locked: [] as number[] },
 }
 
 const releases = scenario === 'empty' ? [] : [
@@ -111,6 +111,22 @@ const serverSides =
 // A logo drawn inline, so the view never waits on CurseForge's image CDN.
 const logo = (letter: string, color: string) =>
   `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28"><rect width="28" height="28" rx="4" fill="${color}"/><text x="14" y="19" font-family="sans-serif" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">${letter}</text></svg>`)}`
+
+const authorsOf: Record<number, string[]> = {
+  313970: ['Shadows_of_Fire'],
+  283644: ['Shadows_of_Fire'],
+  394468: ['jellysquid3', 'IMS'],
+  455508: ['coderbot', 'IMS'],
+  855414: ['iron431'],
+  238222: ['mezz'],
+  243190: ['Exopandora'],
+  438180: ['Qendolin'],
+  453763: ['FreshLX'],
+  627557: ['EminGT'],
+  328085: ['simibubi'],
+  688231: ['IThundxr', 'Slimeist'],
+  486392: ['Jozufozu'],
+}
 
 type MockMod = { path: string; projectId: number; fileId: number; name: string; url: string | null; logo: string; releaseType: string; requires: number[]; newer: { fileId: number; fileName: string; releaseType: string; fileDate: null }[] }
 const newer = (fileId: number, fileName: string, releaseType = 'release') => ({ fileId, fileName, releaseType, fileDate: null })
@@ -572,10 +588,28 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   releases: () => releases,
   get_notes: () => notes,
   changelog_preview: () => ({ diff: modDiff, markdown: renderChangelog() }),
-  publish_preflight: () => preflight,
+  publish_preflight: () => ({ problems: preflight, warnings: scenario === 'dirty' ? ['betterclouds-neoforge-1.3.2.jar is disabled, so packraven leaves it out of the export.'] : [] }),
   discover_instances: () => [pack, { ...pack, dir: 'C:/Instances/Shared Pack', name: 'Shared Pack', addonCount: 0, hasGit: false, hasLock: false, remote: null, added: false }],
   server_sides: () => serverSides,
-  installed_mods: () => installedMods.map(({ path, projectId, fileId, name, url }) => ({ path, projectId, fileId, name, url })),
+  installed_mods: () => ({
+    mods: installedMods.map(({ path, projectId, fileId, name, url, logo }) => ({ path, projectId, fileId, name, url, logo, authors: authorsOf[projectId] ?? [] })),
+    locked: config.updates.locked,
+  }),
+  set_mod_enabled: (a) => {
+    const mod = installedMods.find((m) => m.path === a.path)!
+    mod.path = a.enabled ? mod.path.replace(/\.disabled$/, '') : `${mod.path}.disabled`
+    return mod.path
+  },
+  mod_description: (a) =>
+    new Promise((resolve) =>
+      setTimeout(
+        () =>
+          resolve(
+            `<h1>About</h1><p class="center"><img src="${logo('A', '#7a4b2a')}" width="64" height="64" alt="Logo"></p><p>${installedMods.find((m) => m.projectId === a.projectId)?.name ?? 'This mod'} is a <strong>content mod</strong> with <span style="color: red; text-align: center">styled</span> text. See the <a href="https://github.com/example/wiki">wiki</a>.</p><ul><li>First feature</li><li>Second feature</li></ul><iframe src="https://www.youtube.com/embed/x"></iframe><script>alert(1)</script>`,
+          ),
+        250,
+      ),
+    ),
   check_mod_updates: () =>
     new Promise((resolve) => setTimeout(() => resolve(installedMods.map(({ path, projectId, logo, releaseType, requires, newer }) => ({ path, projectId, logo, releaseType, requires, newer }))), 400)),
   mod_versions: (a) => {

@@ -45,6 +45,15 @@ pub fn save_releases(path: &Path, releases: &[Release]) -> Result<()> {
     Ok(())
 }
 
+pub fn preflight_warnings(pack: &Pack) -> Vec<String> {
+    let disabled: Vec<&str> = pack.lock.files.iter().filter_map(|e| e.path.strip_prefix("mods/")?.strip_suffix(".disabled")).collect();
+    match disabled[..] {
+        [] => vec![],
+        [one] => vec![format!("{one} is disabled, so packraven leaves it out of the export.")],
+        _ => vec![format!("{} mods are disabled, so packraven leaves them out of the export: {}.", disabled.len(), disabled.join(", "))],
+    }
+}
+
 pub fn preflight(pack: &Pack, version: &str, not_on_curseforge: &[String], identity: &Identity) -> Vec<String> {
     let mut problems = Vec::new();
     if pack.config.curseforge.project_id == 0 {

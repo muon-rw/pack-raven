@@ -21,6 +21,7 @@
 
   let push = $state(true)
   let problems: string[] = $state([])
+  let exportWarnings: string[] = $state([])
   let checking = $state(true)
   let config = $state<PackConfig | null>(null)
   let changelog = $state<string | null>(null)
@@ -104,7 +105,11 @@
     checking = true
     const timer = setTimeout(() => {
       api.publishPreflight(wanted).then(
-        (list) => current && (problems = list),
+        (result) => {
+          if (!current) return
+          problems = result.problems
+          exportWarnings = result.warnings
+        },
         (e) => current && (problems = [`Couldn't run the pre-publish checks: ${errorText(e)}`]),
       ).finally(() => current && (checking = false))
     }, 300)
@@ -125,6 +130,7 @@
   let warnings = $derived(
     [
       emptyNotes ? 'No release notes and no mod changes, so the CurseForge changelog will be empty.' : null,
+      ...exportWarnings,
     ].filter((w): w is string => !!w),
   )
 

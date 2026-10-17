@@ -2,17 +2,22 @@
   import Notice from '../components/Notice.svelte'
   import JobLog from '../components/JobLog.svelte'
   import ModBrowser from '../components/ModBrowser.svelte'
+  import ContextMenu from '../components/ContextMenu.svelte'
   import { onMount, untrack } from 'svelte'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { ask } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type InstalledMod, type ModCheck, type ModFile, type ReleaseType, type ModRequest } from '../lib/api'
   import { job, onJobEnd, serverMods } from '../lib/jobs.svelte'
   import { availableUpdate, browse, modUpdates, newestOnChannel } from '../lib/modUpdates.svelte'
+  import { sanitizeRemoteHtml } from '../lib/markdown'
+  import type { MenuItem } from '../lib/menu'
   import { commandKey, shortcut, trashName } from '../lib/platform'
 
   let { pack, game, clientRunning }: { pack: string | null; game: string; clientRunning: boolean } = $props()
 
-  type Filter = 'updates' | 'locked' | 'all'
+  type Kind = 'mods' | 'resourcepacks' | 'shaderpacks' | 'datapacks'
+  type SortKey = 'enabled' | 'name' | 'author' | 'update' | 'locked'
+  type Detail = 'versions' | 'description'
 
   // We ask CurseForge again when you open the view after this long.
   const CHECK_MAX_AGE_MS = 15 * 60 * 1000
@@ -23,12 +28,18 @@
   let loadError: string | null = $state(null)
   let checkError: string | null = $state(null)
   let actionError: string | null = $state(null)
-  let filter: Filter = $state('all')
+  let kindFilter: Kind = $state('mods')
   let search = $state('')
+  let sort: { key: SortKey; reversed: boolean } = $state({ key: 'update', reversed: false })
   let expanded: string | null = $state(null)
+  let detail: Detail = $state('versions')
   let versions: ModFile[] | null = $state(null)
   let versionsError: string | null = $state(null)
+  let descriptions: Record<number, string> = $state({})
+  let descriptionError: string | null = $state(null)
   let removing: string | null = $state(null)
+  let toggling: string | null = $state(null)
+  let menu: { x: number; y: number; label: string; items: MenuItem[] } | null = $state(null)
 
   let updating = $derived(job('mods').phase === 'running')
   let blocked = $derived(updating || clientRunning)
@@ -43,7 +54,9 @@
 
   async function load() {
     try {
-      mods = await api.installedMods()
+      const installed = await api.installedMods()
+      mods = installed.mods
+      modUpdates.locked = new Set(installed.locked)
       loadError = null
     } catch (error) {
       loadError = `Couldn't read the mod list: ${errorText(error)}`
@@ -69,10 +82,7 @@
   onMount(async () => {
     api
       .getPackConfig()
-      .then((config) => {
-        modUpdates.channel = config.updates.channel
-        modUpdates.locked = new Set(config.updates.locked)
-      })
+      .then((config) => (modUpdates.channel = config.updates.channel))
       .catch(() => {})
     await load()
     const unchecked = mods.some((m) => !modUpdates.checks?.has(m.path))
@@ -115,6 +125,25 @@
     }
   }
 
+  async function setEnabled(mod: InstalledMod, enabled: boolean) {
+    toggling = mod.path
+    actionError = null
+    try {
+      const path = await api.setModEnabled(mod.path, enabled)
+      // The check is keyed by path, so it follows the file to its new name.
+      const status = modUpdates.checks?.get(mod.path)
+      if (modUpdates.checks && status) modUpdates.checks = new Map([...modUpdates.checks].map(([key, value]) => (key === mod.path ? [path, { ...status, path }] : [key, value])))
+      if (expanded === mod.path) expanded = path
+      mods = mods.map((m) => (m.path === mod.path ? { ...m, path } : m))
+      serverMods.changedSinceBuild = true
+      serverMods.changedSinceTest = true
+    } catch (error) {
+      actionError = `Couldn't ${enabled ? 'enable' : 'disable'} ${mod.name}: ${errorText(error)}`
+    } finally {
+      toggling = null
+    }
+  }
+
   // The button you pressed is disabled or gone once a change starts, so we keep keyboard focus
   // on the list instead of letting it fall back to the page.
   function keepFocus(region: HTMLElement | undefined) {
@@ -131,6 +160,18 @@
     } catch (error) {
       actionError = `Couldn't start the update: ${errorText(error)}`
     }
+  }
+
+  async function updateAll() {
+    const changes = mods.filter((m) => updates.has(m.path)).map((m) => `${m.name}: ${updates.get(m.path)!.fileName}`)
+    const shown = changes.slice(0, 12)
+    const more = changes.length - shown.length
+    const message = [
+      `packraven downloads ${changes.length === 1 ? 'this update' : `these ${changes.length} updates`}, replaces the old files, and installs any mods they newly require.`,
+      shown.join('\n') + (more ? `\nand ${more} more` : ''),
+    ].join('\n\n')
+    const confirmed = await ask(message, { title: 'Update all', kind: 'info', okLabel: changes.length === 1 ? 'Update 1 mod' : `Update ${changes.length} mods`, cancelLabel: 'Cancel' })
+    if (confirmed) await update([...updates].map(([path, file]) => ({ fileId: file.fileId, replaces: path })))
   }
 
   function requiredBy(mod: InstalledMod): string[] {
@@ -162,19 +203,69 @@
     }
   }
 
-  async function toggleVersions(mod: InstalledMod) {
-    if (expanded === mod.path) {
+  async function expand(mod: InstalledMod, show: Detail = detail) {
+    if (expanded === mod.path && show === detail) {
       expanded = null
       return
     }
+    const opening = expanded !== mod.path
     expanded = mod.path
-    versions = null
-    versionsError = null
-    try {
-      const files = await api.modVersions(mod.path, mod.projectId)
-      if (expanded === mod.path) versions = files
-    } catch (error) {
-      if (expanded === mod.path) versionsError = `Couldn't list the versions on CurseForge: ${errorText(error)}`
+    detail = show
+    if (opening) {
+      versions = null
+      versionsError = null
+      descriptionError = null
+      api.modVersions(mod.path, mod.projectId).then(
+        (files) => expanded === mod.path && (versions = files),
+        (error) => expanded === mod.path && (versionsError = `Couldn't list the versions on CurseForge: ${errorText(error)}`),
+      )
+    }
+    if (show === 'description' && descriptions[mod.projectId] === undefined) {
+      try {
+        descriptions[mod.projectId] = sanitizeRemoteHtml(await api.modDescription(mod.projectId))
+      } catch (error) {
+        if (expanded === mod.path) descriptionError = `Couldn't load the description from CurseForge: ${errorText(error)}`
+      }
+    }
+  }
+
+  // The whole row opens its details, except the controls that have a job of their own.
+  function onRowClick(event: MouseEvent, mod: InstalledMod) {
+    if ((event.target as HTMLElement).closest('button, a, input, select')) return
+    expand(mod)
+  }
+
+  function onDescriptionClick(event: MouseEvent) {
+    const link = (event.target as HTMLElement).closest('a')
+    if (!link) return
+    event.preventDefault()
+    const external = link.getAttribute('data-external')
+    if (external) openUrl(external)
+  }
+
+  function openMenu(event: MouseEvent, mod: InstalledMod) {
+    event.preventDefault()
+    const row = event.currentTarget as HTMLElement
+    const rect = row.getBoundingClientRect()
+    const keyboard = !event.clientX && !event.clientY
+    const lockedHere = modUpdates.locked.has(mod.projectId)
+    const disabled = mod.path.endsWith('.disabled')
+    menu = {
+      x: keyboard ? rect.left + 24 : event.clientX,
+      y: keyboard ? rect.bottom : event.clientY,
+      label: `${mod.name} actions`,
+      items: [
+        { label: 'Show versions', run: () => expand(mod, 'versions') },
+        { label: 'Show description', run: () => expand(mod, 'description') },
+        'separator',
+        { label: 'Open on CurseForge', disabled: !mod.url, run: () => mod.url && openUrl(mod.url) },
+        { label: 'Copy link', disabled: !mod.url, run: () => mod.url && navigator.clipboard.writeText(mod.url) },
+        'separator',
+        { label: lockedHere ? 'Unlock' : 'Lock to this version', run: () => setLocked(mod, !lockedHere) },
+        ...(isMod(mod) ? [{ label: disabled ? 'Enable' : 'Disable', disabled: blocked, run: () => setEnabled(mod, disabled) }] : []),
+        'separator',
+        { label: `Move to ${trashName}`, danger: true, disabled: blocked, run: () => remove(mod) },
+      ],
     }
   }
 
@@ -186,10 +277,12 @@
     return path.slice(path.lastIndexOf('/') + 1)
   }
 
-  const kinds: Record<string, string> = { resourcepacks: 'Resource pack', shaderpacks: 'Shader pack', datapacks: 'Data pack' }
+  function folder(path: string) {
+    return path.slice(0, path.indexOf('/')) as Kind
+  }
 
-  function kind(path: string) {
-    return kinds[path.slice(0, path.indexOf('/'))]
+  function isMod(mod: InstalledMod) {
+    return folder(mod.path) === 'mods'
   }
 
   function date(iso: string | null) {
@@ -197,21 +290,49 @@
   }
 
   const typeLabels: Record<ReleaseType, string> = { release: 'Release', beta: 'Beta', alpha: 'Alpha' }
+  const kindLabels: Record<Kind, string> = { mods: 'Mods', resourcepacks: 'Resource packs', shaderpacks: 'Shaders', datapacks: 'Data packs' }
 
   let updates = $derived(new Map(mods.map((m) => [m.path, availableUpdate(modUpdates.checks?.get(m.path))] as const).filter(([, file]) => file)) as Map<string, ModFile>)
   let duplicates = $derived.by(() => {
     const byProject = new Map<number, InstalledMod[]>()
-    for (const mod of mods.filter((m) => m.path.startsWith('mods/') && !m.path.endsWith('.disabled'))) byProject.set(mod.projectId, [...(byProject.get(mod.projectId) ?? []), mod])
+    for (const mod of mods.filter((m) => isMod(m) && !m.path.endsWith('.disabled'))) byProject.set(mod.projectId, [...(byProject.get(mod.projectId) ?? []), mod])
     return [...byProject.values()].filter((group) => group.length > 1)
   })
   let duplicatePaths = $derived(new Set(duplicates.flat().map((m) => m.path)))
+  let kindsWithUpdates = $derived(new Set([...updates.keys()].map(folder)))
+  let kindCounts = $derived(mods.reduce((counts, m) => counts.set(folder(m.path), (counts.get(folder(m.path)) ?? 0) + 1), new Map<Kind, number>()))
+
+  // Each column sorts the interesting rows first: updates, locked or disabled mods, and A to Z.
+  function compare(a: InstalledMod, b: InstalledMod): number {
+    const byName = a.name.localeCompare(b.name)
+    const flag = (value: (m: InstalledMod) => boolean) => Number(value(b)) - Number(value(a)) || byName
+    switch (sort.key) {
+      case 'update':
+        return flag((m) => updates.has(m.path))
+      case 'locked':
+        return flag((m) => modUpdates.locked.has(m.projectId))
+      case 'enabled':
+        return flag((m) => m.path.endsWith('.disabled'))
+      case 'author':
+        return (a.authors[0] ?? '￿').localeCompare(b.authors[0] ?? '￿') || byName
+      default:
+        return byName
+    }
+  }
+
   let visible = $derived(
-    mods.filter((m) => {
-      if (filter === 'updates' && !updates.has(m.path)) return false
-      if (filter === 'locked' && !modUpdates.locked.has(m.projectId)) return false
-      return !search || m.name.toLowerCase().includes(search.toLowerCase()) || m.path.toLowerCase().includes(search.toLowerCase())
-    }),
+    mods
+      .filter((m) => {
+        if (folder(m.path) !== kindFilter) return false
+        const query = search.toLowerCase()
+        return !query || m.name.toLowerCase().includes(query) || m.path.toLowerCase().includes(query) || m.authors.some((a) => a.toLowerCase().includes(query))
+      })
+      .sort((a, b) => (sort.reversed ? -compare(a, b) : compare(a, b))),
   )
+
+  function sortBy(key: SortKey) {
+    sort = { key, reversed: sort.key === key ? !sort.reversed : false }
+  }
 
   function checkFor(mod: InstalledMod): ModCheck | undefined {
     return modUpdates.checks?.get(mod.path)
@@ -228,10 +349,10 @@
 
   let searchField: HTMLInputElement | undefined = $state()
   let tableRegion: HTMLElement | undefined = $state()
+  let browser: ModBrowser | undefined = $state()
   // A run that finished before you opened the view already shows in the list, so we only
   // report the ones that end while you're here.
   let finishedHere = $state(false)
-  let browser: ModBrowser | undefined = $state()
 
   const tabs = ['installed', 'browse'] as const
 
@@ -261,34 +382,38 @@
      table wider than the view without these break points. -->
 {#snippet fileText(name: string)}<span class="file">{#each name.split(/(?<=[-_+])/) as part, index (index)}{#if index}<wbr />{/if}{part}{/each}</span>{/snippet}
 
+{#snippet sortHeader(key: SortKey, label: string, hidden = false)}
+  <th aria-sort={sort.key === key ? (sort.reversed ? 'descending' : 'ascending') : undefined} class={key}>
+    <button class="sort" class:sorted={sort.key === key} onclick={() => sortBy(key)}>
+      {#if hidden}<span class="visually-hidden">{label}</span>{:else}{label}{/if}
+      <svg viewBox="0 0 10 10" aria-hidden="true"><path d={sort.key === key && sort.reversed ? 'M2 6.5 5 3.5 8 6.5' : 'M2 3.5 5 6.5 8 3.5'} /></svg>
+    </button>
+  </th>
+{/snippet}
+
 <div class="mods">
   <header class="head">
     <div class="title">
-    <h2>Mods</h2>
-    <p class="muted">
-      {#if browse.tab === 'browse'}
-        Search CurseForge for mods, resource packs and shaders that run on {game}.
-      {:else if loading && !mods.length}
-        Reading the mod list.
-      {:else if !mods.length}
-        This pack has no mods from CurseForge yet.
-      {:else}
-        {mods.length} {mods.length === 1 ? 'file' : 'files'} from CurseForge. {summary ?? ''}
-      {/if}
-    </p>
+      <h2>Mods</h2>
+      <p class="muted">
+        {#if browse.tab === 'browse'}
+          Search CurseForge for mods, resource packs and shaders that run on {game}.
+        {:else if loading && !mods.length}
+          Reading the mod list.
+        {:else if !mods.length}
+          This pack has no mods from CurseForge yet.
+        {:else}
+          {mods.length} {mods.length === 1 ? 'file' : 'files'} from CurseForge. {summary ?? ''}
+        {/if}
+      </p>
     </div>
     {#if browse.tab === 'installed'}
-    <div class="actions">
-      <button onclick={check} disabled={checking || updating || !mods.length} class:busy={checking}>{checking ? 'Checking' : 'Check for updates'}</button>
-      <button
-        class="primary"
-        class:busy={updating}
-        disabled={!updates.size || blocked}
-        onclick={() => update([...updates].map(([path, file]) => ({ fileId: file.fileId, replaces: path })))}
-      >
-        {updating ? 'Updating' : updates.size ? `Update all (${updates.size})` : 'Update all'}
-      </button>
-    </div>
+      <div class="actions">
+        <button onclick={check} disabled={checking || updating || !mods.length} class:busy={checking}>{checking ? 'Checking' : 'Check for updates'}</button>
+        <button class="primary" class:busy={updating} disabled={!updates.size || blocked} onclick={updateAll}>
+          {updating ? 'Updating' : updates.size ? `Update all (${updates.size})` : 'Update all'}
+        </button>
+      </div>
     {/if}
   </header>
 
@@ -341,151 +466,196 @@
   {/if}
 
   <div class="panel" id="mods-panel" role="tabpanel" aria-labelledby="mods-tab-{browse.tab}">
-  {#if browse.tab === 'browse'}
-    <ModBrowser bind:this={browser} {installedIds} {blocked} {game} install={update} />
-  {:else}
-  <div class="tools">
-    <div class="filters" role="group" aria-label="Show">
-      <button aria-pressed={filter === 'all'} class:on={filter === 'all'} onclick={() => (filter = 'all')}>All</button>
-      <button aria-pressed={filter === 'updates'} class:on={filter === 'updates'} onclick={() => (filter = 'updates')}>
-        Updates{#if updates.size}<span class="count">{updates.size}</span>{/if}
-      </button>
-      <button aria-pressed={filter === 'locked'} class:on={filter === 'locked'} onclick={() => (filter = 'locked')}>Locked</button>
-    </div>
-    <label class="channel">
-      Update to
-      <select value={modUpdates.channel} onchange={(e) => setChannel(e.currentTarget)}>
-        <option value="release">Releases only</option>
-        <option value="beta">Releases and betas</option>
-        <option value="alpha">Any release type</option>
-      </select>
-    </label>
-    <input type="search" bind:this={searchField} bind:value={search} placeholder="Find a mod" aria-label="Find a mod" title="Find a mod ({shortcut('Ctrl+F')})" />
-  </div>
+    {#if browse.tab === 'browse'}
+      <ModBrowser bind:this={browser} {installedIds} {blocked} {game} install={update} />
+    {:else}
+      <div class="tools">
+        <div class="filters" role="group" aria-label="Show">
+          {#each Object.keys(kindLabels) as Kind[] as kind (kind)}
+            <button aria-pressed={kindFilter === kind} class:on={kindFilter === kind} onclick={() => (kindFilter = kind)}>
+              {kindLabels[kind]}<span class="muted filter-count">{kindCounts.get(kind) ?? 0}</span>
+              {#if kindsWithUpdates.has(kind)}<span class="has-updates" title="Has updates"><span class="visually-hidden">, has updates</span></span>{/if}
+            </button>
+          {/each}
+        </div>
+        <label class="channel">
+          Update to
+          <select value={modUpdates.channel} onchange={(e) => setChannel(e.currentTarget)}>
+            <option value="alpha">Any release type</option>
+            <option value="beta">Releases and betas</option>
+            <option value="release">Releases only</option>
+          </select>
+        </label>
+        <input type="search" bind:this={searchField} bind:value={search} placeholder="Find a mod or author" aria-label="Find a mod or author" title="Find a mod or author ({shortcut('Ctrl+F')})" />
+      </div>
 
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-  <div class="table" role="region" aria-label="Mods" tabindex="0" bind:this={tableRegion}>
-    <table aria-busy={loading && !mods.length}>
-      <thead>
-        <tr><th>Mod</th><th>Version</th><th><span class="visually-hidden">Actions</span></th></tr>
-      </thead>
-      <tbody>
-        {#if loading && !mods.length}
-          {#each { length: 8 } as _, row (row)}
-            <tr class="skeleton" aria-hidden="true">
-              <td><span style="width: {55 + ((row * 37) % 35)}%"></span></td>
-              <td><span style="width: {60 + ((row * 23) % 30)}%"></span></td>
-              <td></td>
-            </tr>
-          {/each}
-        {:else}
-          {#each visible as mod (mod.path)}
-            {@const status = checkFor(mod)}
-            {@const next = updates.get(mod.path)}
-            {@const lockedHere = modUpdates.locked.has(mod.projectId)}
-            {@const held = newestOnChannel(status)}
-            <tr class:open={expanded === mod.path}>
-              <td>
-                <div class="identity">
-                  {#if status?.logo}<img src={status.logo} alt="" width="28" height="28" loading="lazy" />{:else}<span class="logo" aria-hidden="true"></span>{/if}
-                  <div>
-                    {#if mod.url}<a href={mod.url} onclick={(e) => { e.preventDefault(); openUrl(mod.url!) }}>{mod.name}</a>{:else}{mod.name}{/if}
-                    {#if kind(mod.path)}<span class="muted kind">{kind(mod.path)}</span>{/if}
-                    {#if mod.path.endsWith('.disabled')}<span class="chip">Disabled</span>{/if}
-                    {#if duplicatePaths.has(mod.path)}<span class="chip fail">Two versions</span>{/if}
-                  </div>
-                </div>
-              </td>
-              <td class="version">
-                <div>
-                  {@render fileText(fileName(mod.path).replace(/\.disabled$/, ''))}
-                  {#if status?.releaseType && status.releaseType !== 'release'}<span class="chip pending">{typeLabels[status.releaseType]}</span>{/if}
-                </div>
-                {#if lockedHere && held}
-                  <div class="muted held">Locked. {@render fileText(held.fileName)} is available.</div>
-                {:else if next}
-                  <div class="next">
-                    <span class="visually-hidden">Update available:</span>
-                    <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" /></svg>
-                    {@render fileText(next.fileName)}
-                    {#if next.releaseType !== 'release'}<span class="chip pending">{typeLabels[next.releaseType]}</span>{/if}
-                  </div>
-                {/if}
-              </td>
-              <td>
-                <div class="row-actions">
-                {#if next}
-                  <button onclick={() => update([{ fileId: next.fileId, replaces: mod.path }])} disabled={blocked} aria-label="Update {mod.name}">Update</button>
-                {/if}
-                <button
-                  class="ghost lock"
-                  aria-pressed={lockedHere}
-                  onclick={() => setLocked(mod, !lockedHere)}
-                  aria-label="Lock {mod.name} to this version"
-                  title={lockedHere ? 'Locked to this version. Click to allow updates.' : 'Lock to this version'}
-                >
-                  <svg viewBox="0 0 16 16" aria-hidden="true">
-                    <rect x="3" y="7" width="10" height="7" rx="1.5" />
-                    <path d={lockedHere ? 'M5.5 7V5a2.5 2.5 0 0 1 5 0v2' : 'M5.5 7V5a2.5 2.5 0 0 1 4.9-.7'} />
-                  </svg>
-                </button>
-                <button class="ghost" aria-expanded={expanded === mod.path} onclick={() => toggleVersions(mod)} aria-label="Versions of {mod.name}">Versions</button>
-                <button class="ghost" onclick={() => remove(mod)} disabled={blocked || removing === mod.path} aria-label="Remove {mod.name}">Remove</button>
-                </div>
-              </td>
-            </tr>
-            {#if expanded === mod.path}
-              <tr class="versions">
-                <td colspan="3">
-                  {#if versionsError}
-                    <p class="failed">{versionsError}</p>
-                  {:else if !versions}
-                    <p class="muted">Listing files on CurseForge.</p>
-                  {:else if !versions.length}
-                    <p class="muted">CurseForge has no files of {mod.name} for this pack's Minecraft version and loader.</p>
-                  {:else}
-                    <ul aria-label="Versions of {mod.name}">
-                      {#each versions as file (file.fileId)}
-                        <li>
-                          {@render fileText(file.fileName)}
-                          <span class="chip {file.releaseType === 'release' ? 'ok' : 'pending'}">{typeLabels[file.releaseType]}</span>
-                          <span class="muted">{date(file.fileDate)}</span>
-                          {#if file.fileId === mod.fileId}
-                            <span class="muted current">Installed</span>
-                          {:else}
-                            <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={blocked} aria-label="Use {file.fileName}">
-                              Use this
-                            </button>
-                          {/if}
-                        </li>
-                      {/each}
-                    </ul>
-                  {/if}
-                </td>
-              </tr>
-            {/if}
-          {:else}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div class="table" role="region" aria-label="Installed mods" tabindex="0" bind:this={tableRegion}>
+        <table aria-busy={loading && !mods.length}>
+          <thead>
             <tr>
-              <td colspan="3" class="muted">
-                {#if search}
-                  No mods match "{search}". <button class="link" onclick={() => (search = '')}>Clear the search</button>
-                {:else if filter === 'updates'}
-                  {modUpdates.checks ? 'Every mod is on its newest file for this update channel.' : "Check for updates to see which mods have one."}
-                {:else if filter === 'locked'}
-                  You haven't locked any mods. Lock a mod to keep it on its current version when you update the rest.
-                {:else}
-                  This pack has no mods from CurseForge yet. <button class="link" onclick={() => (browse.tab = 'browse')}>Browse CurseForge</button>
-                {/if}
-              </td>
+              {@render sortHeader('enabled', 'Enabled', true)}
+              {@render sortHeader('name', 'Mod')}
+              {@render sortHeader('author', 'Author')}
+              {@render sortHeader('update', 'Update')}
+              {@render sortHeader('locked', 'Locked', true)}
+              <th class="trash"><span class="visually-hidden">Remove</span></th>
             </tr>
-          {/each}
-        {/if}
-      </tbody>
-    </table>
-  </div>
-  {/if}
+          </thead>
+          <tbody>
+            {#if loading && !mods.length}
+              {#each { length: 8 } as _, row (row)}
+                <tr class="skeleton" aria-hidden="true">
+                  <td></td>
+                  <td><span style="width: {55 + ((row * 37) % 35)}%"></span><span class="short"></span></td>
+                  <td><span style="width: {40 + ((row * 23) % 30)}%"></span></td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                </tr>
+              {/each}
+            {:else}
+              {#each visible as mod (mod.path)}
+                {@const status = checkFor(mod)}
+                {@const next = updates.get(mod.path)}
+                {@const lockedHere = modUpdates.locked.has(mod.projectId)}
+                {@const held = newestOnChannel(status)}
+                {@const disabled = mod.path.endsWith('.disabled')}
+                {@const logo = mod.logo ?? status?.logo}
+                <tr class="row" class:open={expanded === mod.path} class:off={disabled} onclick={(e) => onRowClick(e, mod)} oncontextmenu={(e) => openMenu(e, mod)}>
+                  <td class="enabled">
+                    {#if isMod(mod)}
+                      <button
+                        class="switch"
+                        role="switch"
+                        aria-checked={!disabled}
+                        aria-label="Enable {mod.name}"
+                        title={disabled ? 'Disabled. packraven leaves it out of exports.' : 'Enabled'}
+                        disabled={blocked || toggling === mod.path}
+                        onclick={() => setEnabled(mod, disabled)}
+                      ></button>
+                    {/if}
+                  </td>
+                  <td class="name">
+                    <div class="identity">
+                      {#if logo}<img src={logo} alt="" width="32" height="32" loading="lazy" />{:else}<span class="logo" aria-hidden="true"></span>{/if}
+                      <div class="about">
+                        <div class="title-line">
+                          <button class="expand" aria-expanded={expanded === mod.path} aria-controls="details-{mod.projectId}" onclick={() => expand(mod)}>{mod.name}</button>
+                          {#if duplicatePaths.has(mod.path)}<span class="chip fail">Two versions</span>{/if}
+                        </div>
+                        <div class="version">
+                          {@render fileText(fileName(mod.path).replace(/\.disabled$/, ''))}
+                          {#if status?.releaseType && status.releaseType !== 'release'}<span class="chip pending">{typeLabels[status.releaseType]}</span>{/if}
+                        </div>
+                        {#if lockedHere && held}
+                          <div class="muted held">Locked. {@render fileText(held.fileName)} is available.</div>
+                        {:else if next}
+                          <div class="next">
+                            <span class="visually-hidden">Update available:</span>
+                            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" /></svg>
+                            {@render fileText(next.fileName)}
+                            {#if next.releaseType !== 'release'}<span class="chip pending">{typeLabels[next.releaseType]}</span>{/if}
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+                  </td>
+                  <td class="author muted">{mod.authors.join(', ')}</td>
+                  <td class="update">
+                    {#if next}
+                      <button onclick={() => update([{ fileId: next.fileId, replaces: mod.path }])} disabled={blocked} aria-label="Update {mod.name}">Update</button>
+                    {/if}
+                  </td>
+                  <td class="locked">
+                    <button
+                      class="ghost icon lock"
+                      aria-pressed={lockedHere}
+                      onclick={() => setLocked(mod, !lockedHere)}
+                      aria-label="Lock {mod.name} to this version"
+                      title={lockedHere ? 'Locked to this version. Click to allow updates.' : 'Lock to this version'}
+                    >
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <rect x="3" y="7" width="10" height="7" rx="1.5" />
+                        <path d={lockedHere ? 'M5.5 7V5a2.5 2.5 0 0 1 5 0v2' : 'M5.5 7V5a2.5 2.5 0 0 1 4.9-.7'} />
+                      </svg>
+                    </button>
+                  </td>
+                  <td class="trash">
+                    <button class="ghost icon remove" onclick={() => remove(mod)} disabled={blocked || removing === mod.path} aria-label="Remove {mod.name}" title="Move to the {trashName}">
+                      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M7 7v4M9 7v4" /></svg>
+                    </button>
+                  </td>
+                </tr>
+                {#if expanded === mod.path}
+                  <tr class="details" id="details-{mod.projectId}">
+                    <td colspan="6">
+                      <div class="detail-head">
+                        <div class="modes" role="group" aria-label="Show">
+                          <button class="mode" aria-pressed={detail === 'versions'} onclick={() => expand(mod, 'versions')}>Versions</button>
+                          <button class="mode" aria-pressed={detail === 'description'} onclick={() => expand(mod, 'description')}>Description</button>
+                        </div>
+                        {#if mod.url}<button class="link" onclick={() => openUrl(mod.url!)}>Open on CurseForge</button>{/if}
+                      </div>
+                      {#if detail === 'versions'}
+                        {#if versionsError}
+                          <p class="failed">{versionsError}</p>
+                        {:else if !versions}
+                          <p class="muted">Listing files on CurseForge.</p>
+                        {:else if !versions.length}
+                          <p class="muted">CurseForge has no files of {mod.name} for {game}.</p>
+                        {:else}
+                          <ul class="files" aria-label="Versions of {mod.name}">
+                            {#each versions as file (file.fileId)}
+                              <li>
+                                {@render fileText(file.fileName)}
+                                <span class="chip {file.releaseType === 'release' ? 'ok' : 'pending'}">{typeLabels[file.releaseType]}</span>
+                                <span class="muted">{date(file.fileDate)}</span>
+                                {#if file.fileId === mod.fileId}
+                                  <span class="muted current">Installed</span>
+                                {:else}
+                                  <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={blocked} aria-label="Use {file.fileName}">Use this</button>
+                                {/if}
+                              </li>
+                            {/each}
+                          </ul>
+                        {/if}
+                      {:else if descriptionError}
+                        <p class="failed">{descriptionError}</p>
+                      {:else if descriptions[mod.projectId] === undefined}
+                        <p class="muted">Loading the description from CurseForge.</p>
+                      {:else}
+                        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (links inside are real links; this only routes their clicks) -->
+                        <div class="description" onclick={onDescriptionClick}>
+                          {@html descriptions[mod.projectId]}
+                        </div>
+                      {/if}
+                    </td>
+                  </tr>
+                {/if}
+              {:else}
+                <tr>
+                  <td colspan="6" class="muted">
+                    {#if search}
+                      No mods match "{search}". <button class="link" onclick={() => (search = '')}>Clear the search</button>
+                    {:else}
+                      This pack has no {kindLabels[kindFilter].toLowerCase()} from CurseForge yet.
+                      <button class="link" onclick={() => { browse.kind = kindFilter; browse.tab = 'browse' }}>Browse CurseForge</button>
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    {/if}
   </div>
 </div>
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} label={menu.label} items={menu.items} onclose={() => (menu = null)} />
+{/if}
 
 <style>
   .mods {
@@ -541,7 +711,8 @@
     border-bottom-color: var(--forest);
   }
 
-  .tab-count {
+  .tab-count,
+  .filter-count {
     margin-left: 6px;
     font-weight: 400;
     font-variant-numeric: tabular-nums;
@@ -569,6 +740,7 @@
 
   .filters {
     display: flex;
+    flex-wrap: wrap;
     max-width: 100%;
     padding: 3px;
     gap: 3px;
@@ -579,7 +751,7 @@
 
   .filters button {
     font-weight: 400;
-    padding: 5px clamp(8px, 2vw, 16px);
+    padding: 5px clamp(8px, 1.5vw, 14px);
     color: var(--muted);
     background: transparent;
     border-color: transparent;
@@ -597,14 +769,14 @@
     background: var(--control);
   }
 
-  .count {
+  .has-updates {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
     margin-left: 6px;
-    padding: 0 6px;
-    border-radius: 999px;
-    font-size: var(--step--1);
-    font-variant-numeric: tabular-nums;
-    background: var(--here);
-    color: var(--ochre-ink);
+    vertical-align: 0.15em;
+    border-radius: 50%;
+    background: var(--ochre-ink);
   }
 
   .channel {
@@ -620,7 +792,8 @@
   }
 
   .tools input {
-    width: 220px;
+    flex: 0 1 240px;
+    min-width: 0;
   }
 
   .log summary {
@@ -637,6 +810,11 @@
     border-radius: var(--radius-small);
     background: var(--line);
     animation: pulse 1.4s ease-in-out infinite;
+  }
+
+  .skeleton span.short {
+    width: 35%;
+    opacity: 0.6;
   }
 
   @keyframes pulse {
@@ -668,54 +846,163 @@
     color: var(--muted);
     font-weight: 400;
     background: var(--surface);
-    padding: 8px 12px;
+    padding: 4px 8px;
+    white-space: nowrap;
+  }
+
+  th.enabled,
+  th.locked,
+  th.trash {
+    width: 1%;
+  }
+
+  th.update {
+    text-align: right;
+  }
+
+  .sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 0;
+  }
+
+  .sort:hover:not(:disabled) {
+    color: var(--text);
+    background: transparent;
+  }
+
+  .sort.sorted {
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .sort svg {
+    width: 10px;
+    height: 10px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0;
+  }
+
+  .sort.sorted svg,
+  .sort:hover svg,
+  .sort:focus-visible svg {
+    opacity: 1;
+  }
+
+  /* The switch and padlock columns are too narrow for words, so their headers draw the control. */
+  th.enabled .sort::before {
+    content: '';
+    width: 20px;
+    height: 11px;
+    border: 1.5px solid currentColor;
+    border-radius: 999px;
+  }
+
+  th.locked .sort::before {
+    content: '';
+    width: 13px;
+    height: 13px;
+    background: currentColor;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5'%3E%3Crect x='3' y='7' width='10' height='7' rx='1.5'/%3E%3Cpath d='M5.5 7V5a2.5 2.5 0 0 1 5 0v2'/%3E%3C/svg%3E") center / contain no-repeat;
   }
 
   td {
-    padding: 8px 12px;
+    padding: 8px;
     border-top: 1px solid var(--line);
     vertical-align: middle;
   }
 
-  td a {
-    color: var(--text);
+  .row {
+    cursor: pointer;
+  }
+
+  .row:hover td,
+  tr.open td {
+    background: var(--paper);
+  }
+
+  .row.off .identity img,
+  .row.off .logo {
+    opacity: 0.5;
+  }
+
+  .row.off .expand {
+    color: var(--muted);
+    font-weight: 400;
+  }
+
+  .row.off .next {
+    color: var(--muted);
+  }
+
+  .identity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .identity img,
+  .logo {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-small);
+    object-fit: cover;
+  }
+
+  .logo {
+    background: var(--line);
+  }
+
+  .about {
+    display: grid;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .title-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 8px;
+  }
+
+  .expand {
+    padding: 0;
+    font: inherit;
     font-weight: 700;
+    color: var(--text);
+    text-align: left;
+    background: transparent;
+    border: 0;
+  }
+
+  .expand:hover:not(:disabled) {
+    background: transparent;
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+
+  .version {
+    color: var(--muted);
   }
 
   td .file {
     margin-right: 6px;
   }
 
-  .held {
-    margin-top: 2px;
+  .held,
+  .next {
     font-size: var(--step--1);
-  }
-
-  .lock svg {
-    width: 16px;
-    height: 16px;
-    vertical-align: -3px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.25;
-    stroke-linecap: round;
-  }
-
-  .lock[aria-pressed='false'] {
-    color: var(--muted);
-  }
-
-  tr:hover .lock[aria-pressed='false'],
-  .lock[aria-pressed='false']:focus-visible {
-    color: var(--text);
-  }
-
-  .lock[aria-pressed='true'] {
-    color: var(--ochre-ink);
-  }
-
-  .lock[aria-pressed='true'] rect {
-    fill: currentColor;
   }
 
   .held .file {
@@ -723,7 +1010,6 @@
   }
 
   .next {
-    margin-top: 2px;
     color: var(--ochre-ink);
   }
 
@@ -739,51 +1025,116 @@
     stroke-linejoin: round;
   }
 
-  .identity {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .identity img,
-  .logo {
-    flex: none;
-    width: 28px;
-    height: 28px;
-    border-radius: var(--radius-small);
-    object-fit: cover;
-  }
-
-  .logo {
-    background: var(--line);
-  }
-
-  .kind {
-    display: block;
+  .author {
     font-size: var(--step--1);
+    min-width: 9ch;
   }
 
-  .row-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 2px;
+  .update {
+    text-align: right;
+    white-space: nowrap;
   }
 
-  .row-actions .ghost {
-    padding-inline: 8px;
+  button.icon {
+    display: grid;
+    place-items: center;
+    padding: 6px;
   }
 
-  tr.open td {
-    background: var(--paper);
+  button.icon svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.25;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
-  .versions td {
+  .lock[aria-pressed='false'],
+  .remove {
+    color: var(--muted);
+  }
+
+  .row:hover .lock[aria-pressed='false'],
+  .lock[aria-pressed='false']:focus-visible {
+    color: var(--text);
+  }
+
+  .remove:hover:not(:disabled),
+  .remove:focus-visible {
+    color: var(--fail);
+  }
+
+  .lock[aria-pressed='true'] {
+    color: var(--ochre-ink);
+  }
+
+  .lock[aria-pressed='true'] rect {
+    fill: currentColor;
+  }
+
+  .switch {
+    position: relative;
+    display: block;
+    width: 30px;
+    height: 18px;
+    padding: 0;
+    border-radius: 999px;
+    border: 1px solid var(--control-edge);
+    background: var(--line-strong);
+  }
+
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--field);
+    transition: transform 120ms ease-out;
+  }
+
+  .switch[aria-checked='true'] {
+    border-color: var(--forest);
+    background: var(--forest);
+  }
+
+  .switch[aria-checked='true']::after {
+    transform: translateX(12px);
+  }
+
+  .switch:hover:not(:disabled) {
+    border-color: var(--forest-hi);
+  }
+
+  .switch[aria-checked='true']:hover:not(:disabled) {
+    background: var(--forest-hi);
+  }
+
+  .details td {
     border-top: 0;
-    padding: 0 12px 12px 50px;
+    padding: 4px 12px 14px 58px;
     background: var(--paper);
+    cursor: auto;
   }
 
-  .versions ul {
+  .detail-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 16px;
+    margin-bottom: 8px;
+  }
+
+  .modes {
+    width: fit-content;
+  }
+
+  .files {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -793,7 +1144,7 @@
     overflow: auto;
   }
 
-  .versions li {
+  .files li {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -801,12 +1152,54 @@
     padding: 4px 0;
   }
 
-  .versions li button,
-  .versions .current {
+  .files li button,
+  .files .current {
     margin-left: auto;
   }
 
-  .versions p {
+  .details p {
     margin: 4px 0;
+  }
+
+  .description {
+    max-height: 360px;
+    max-width: 80ch;
+    overflow: auto;
+    overflow-wrap: anywhere;
+  }
+
+  .description :global(img) {
+    max-width: 100%;
+    height: auto;
+  }
+
+  .description :global(h1),
+  .description :global(h2),
+  .description :global(h3) {
+    font-size: var(--step-1);
+    margin: 14px 0 6px;
+  }
+
+  .description :global(p) {
+    margin: 0 0 8px;
+  }
+
+  .description :global(a) {
+    color: var(--forest);
+  }
+
+  .description :global(.center),
+  .description :global(.aligncenter) {
+    text-align: center;
+  }
+
+  .description :global(.alignleft) {
+    float: left;
+    margin-right: 12px;
+  }
+
+  .description :global(.alignright) {
+    float: right;
+    margin-left: 12px;
   }
 </style>

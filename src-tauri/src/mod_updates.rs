@@ -19,6 +19,15 @@ pub struct InstalledMod {
     file_id: u64,
     name: String,
     url: Option<String>,
+    authors: Vec<String>,
+    logo: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledMods {
+    mods: Vec<InstalledMod>,
+    locked: Vec<u64>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -90,7 +99,7 @@ impl Target {
     }
 }
 
-pub async fn installed(pack: &Pack, cache: &mut MetadataCache) -> Vec<InstalledMod> {
+pub async fn installed(pack: &Pack, cache: &mut MetadataCache) -> InstalledMods {
     let ids: Vec<u64> = pack.lock.files.iter().map(|e| e.project_id).collect();
     // Offline, we still list every file, under its file name.
     let _ = cache.ensure_names(&ids).await;
@@ -106,11 +115,13 @@ pub async fn installed(pack: &Pack, cache: &mut MetadataCache) -> Vec<InstalledM
                 file_id: entry.file_id,
                 name: name.map_or_else(|| file_name(&entry.path).to_string(), |n| n.name.clone()),
                 url: name.and_then(|n| n.url.clone()),
+                authors: name.and_then(|n| n.authors.clone()).unwrap_or_default(),
+                logo: name.and_then(|n| n.logo.clone()),
             }
         })
         .collect();
     mods.sort_by_key(|m| m.name.to_lowercase());
-    mods
+    InstalledMods { mods, locked: pack.config.updates.locked.clone() }
 }
 
 fn file_name(path: &str) -> &str {

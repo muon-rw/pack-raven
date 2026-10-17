@@ -60,6 +60,27 @@ interface Context {
   path: string
   imageUrl: (path: string) => string | null
   slugs: Map<string, number>
+  curseforge?: boolean
+}
+
+// CurseForge descriptions may use these on top of what READMEs get. We keep their layout styles
+// and drop colors, fonts and sizes, which were picked for CurseForge's page and fight our themes.
+const CURSEFORGE_TAGS = new Set(['strike', 'q', 'cite', 'acronym', 'section', 'article'])
+const CURSEFORGE_STYLES = new Set([
+  'font-weight', 'font-style', 'text-align', 'text-indent', 'text-decoration', 'text-transform', 'padding-left', 'border-radius', 'width', 'min-width',
+  'display', 'margin-left', 'margin-right', 'float', 'flex', 'flex-wrap', 'flex-direction', 'align-items', 'gap', 'aspect-ratio', 'object-fit',
+])
+const CURSEFORGE_CLASSES = new Set(['center', 'alignleft', 'aligncenter', 'alignright'])
+
+function keepCurseforgeLayout(node: HTMLElement, style: string | undefined, classes: string | undefined) {
+  if (style) {
+    const parsed = node.ownerDocument.createElement('span').style
+    parsed.cssText = style
+    const kept = [...parsed].filter((property) => CURSEFORGE_STYLES.has(property) && !/url\(/i.test(parsed.getPropertyValue(property)))
+    if (kept.length) node.setAttribute('style', kept.map((property) => `${property}: ${parsed.getPropertyValue(property)}`).join('; '))
+  }
+  const keptClasses = (classes ?? '').split(/\s+/).filter((name) => CURSEFORGE_CLASSES.has(name))
+  if (keptClasses.length) node.setAttribute('class', keptClasses.join(' '))
 }
 
 const ALLOWED_TAGS = new Set(
@@ -68,6 +89,12 @@ const ALLOWED_TAGS = new Set(
 const ALLOWED_ATTRIBUTES = new Set(['align', 'alt', 'title', 'width', 'height', 'colspan', 'rowspan', 'start', 'open', 'checked'])
 // We drop these with everything inside them, where other unknown tags only lose the tag.
 const DROPPED_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'form', 'textarea', 'select', 'button', 'template', 'noscript', 'link', 'meta', 'svg', 'math', 'video', 'audio'])
+
+// CurseForge sends mod descriptions as HTML. They have no files of their own, so only web links
+// and images survive.
+export function sanitizeRemoteHtml(html: string): string {
+  return sanitize(html, { path: '', imageUrl: () => null, slugs: new Map(), curseforge: true })
+}
 
 // The preview runs inside packraven's own window, so we keep only plain formatting and rewrite
 // every link and image ourselves. DOMParser builds the tree without running any of it.
@@ -90,7 +117,7 @@ function clean(parent: Element, context: Context) {
       continue
     }
     clean(node, context)
-    if (!ALLOWED_TAGS.has(tag)) {
+    if (!ALLOWED_TAGS.has(tag) && !(context.curseforge && CURSEFORGE_TAGS.has(tag))) {
       node.replaceWith(...node.childNodes)
       continue
     }
@@ -98,6 +125,7 @@ function clean(parent: Element, context: Context) {
     for (const name of [...node.getAttributeNames()]) {
       if (!ALLOWED_ATTRIBUTES.has(name.toLowerCase())) node.removeAttribute(name)
     }
+    if (context.curseforge && node instanceof HTMLElement) keepCurseforgeLayout(node, original.get('style'), original.get('class'))
     if (tag === 'a') rewriteLink(node, original.get('href') ?? '', context)
     else if (tag === 'img') rewriteImage(node, original.get('src') ?? '', context)
     else if (tag === 'input') {

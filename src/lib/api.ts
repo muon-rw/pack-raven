@@ -31,6 +31,8 @@ export interface InstalledMod {
   fileId: number
   name: string
   url: string | null
+  authors: string[]
+  logo: string | null
 }
 
 export interface ModFile {
@@ -397,7 +399,7 @@ export const api = {
   revertMods: () => invoke<void>('revert_mods'),
   serverSides: () => invoke<ModSide[]>('server_sides'),
   setSideOverride: (projectId: number, mode: Override) => invoke<void>('set_side_override', { projectId, mode }),
-  installedMods: () => invoke<InstalledMod[]>('installed_mods'),
+  installedMods: () => invoke<{ mods: InstalledMod[]; locked: number[] }>('installed_mods'),
   checkModUpdates: () => invoke<ModCheck[]>('check_mod_updates'),
   modVersions: (path: string, projectId: number) => invoke<ModFile[]>('mod_versions', { path, projectId }),
   setUpdateChannel: (channel: ReleaseType) => invoke<void>('set_update_channel', { channel }),
@@ -406,8 +408,10 @@ export const api = {
   previewMods: (requests: ModRequest[]) => invoke<ModPreview>('preview_mods', { requests }),
   changeMods: (requests: ModRequest[]) => invoke<void>('change_mods', { requests }),
   setModLocked: (projectId: number, locked: boolean) => invoke<void>('set_mod_locked', { projectId, locked }),
+  setModEnabled: (path: string, enabled: boolean) => invoke<string>('set_mod_enabled', { path, enabled }),
+  modDescription: (projectId: number) => invoke<string>('mod_description', { projectId }),
   removeMods: (paths: string[]) => invoke<void>('remove_mods', { paths }),
-  publishPreflight: (version: string) => invoke<string[]>('publish_preflight', { version }),
+  publishPreflight: (version: string) => invoke<{ problems: string[]; warnings: string[] }>('publish_preflight', { version }),
   buildClientExport: () => invoke<void>('build_client_export'),
   buildServerPack: () => invoke<void>('build_server_pack'),
   startTest: (recopyAll: boolean, connect: boolean) => invoke<void>('start_test', { recopyAll, connect }),

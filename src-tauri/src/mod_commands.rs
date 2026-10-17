@@ -5,7 +5,7 @@ use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
 use crate::history::{self, Action};
-use crate::mod_updates::{self, AddonKind, Category, InstalledMod, ModCheck, ModFile, ModRequest, SearchPage, SearchRequest};
+use crate::mod_updates::{self, AddonKind, Category, InstalledMods, ModCheck, ModFile, ModRequest, SearchPage, SearchRequest};
 use crate::modsync;
 use crate::pack::{Pack, ReleaseType};
 use crate::sides::MetadataCache;
@@ -23,8 +23,9 @@ fn client_running(state: &AppState) -> bool {
 }
 
 #[tauri::command]
-pub async fn installed_mods(state: State<'_, AppState>) -> CmdResult<Vec<InstalledMod>> {
-    let pack = state.pack().map_err(err)?;
+pub async fn installed_mods(state: State<'_, AppState>) -> CmdResult<InstalledMods> {
+    let mut pack = state.pack().map_err(err)?;
+    crate::instance_locks::sync(&mut pack, &state.curseforge_locks_path()).map_err(err)?;
     let mut cache = MetadataCache::load(&state.cache_path());
     let mods = mod_updates::installed(&pack, &mut cache).await;
     cache.save(&state.cache_path()).map_err(err)?;
@@ -79,7 +80,33 @@ pub fn set_mod_locked(state: State<'_, AppState>, project_id: u64, locked: bool)
         list.push(project_id);
         list.sort_unstable();
     }
-    pack.save_config().map_err(err)
+    pack.save_config().map_err(err)?;
+    crate::instance_locks::sync(&mut pack, &state.curseforge_locks_path()).map_err(err)
+}
+
+#[tauri::command]
+pub async fn mod_description(project_id: u64) -> CmdResult<String> {
+    crate::curseforge::description(project_id).await.map_err(err)
+}
+
+const DISABLED_SUFFIX: &str = ".disabled";
+
+#[tauri::command]
+pub async fn set_mod_enabled(state: State<'_, AppState>, path: String, enabled: bool) -> CmdResult<String> {
+    if client_running(&state) {
+        return Err(CLIENT_HAS_MODS_OPEN.into());
+    }
+    if !path.starts_with("mods/") {
+        return Err(format!("{path} isn't in the mods folder"));
+    }
+    let renamed = match (enabled, path.strip_suffix(DISABLED_SUFFIX)) {
+        (true, Some(plain)) => plain.to_string(),
+        (false, None) => format!("{path}{DISABLED_SUFFIX}"),
+        _ => return Ok(path),
+    };
+    let _guard = modsync::MOD_LIST_GUARD.lock().await;
+    modsync::rename_locked_file(&state.settings().instance_dir, &path, &renamed).map_err(err)?;
+    Ok(renamed)
 }
 
 #[tauri::command]

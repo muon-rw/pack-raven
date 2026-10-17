@@ -756,6 +756,20 @@ fn retire(repo: &Repo, path: &str, sha1: &str) -> Result<()> {
     Ok(())
 }
 
+// The caller holds MOD_LIST_GUARD. The file keeps its contents, so its lock entry only moves.
+pub fn rename_locked_file(dir: &Path, from: &str, to: &str) -> Result<()> {
+    let repo = Repo::open(dir)?;
+    if repo.root.join(to).exists() {
+        bail!("{to} already exists");
+    }
+    std::fs::rename(repo.root.join(from), repo.root.join(to))?;
+    let mut lock = repo.read_lock()?;
+    for entry in lock.files.iter_mut().filter(|e| e.path == from) {
+        entry.path = to.to_string();
+    }
+    repo.write_lock(&mut lock, false)
+}
+
 pub fn drop_from_lock(dir: &Path, paths: &[String]) -> Result<()> {
     let repo = Repo::open(dir)?;
     let mut lock = repo.read_lock()?;

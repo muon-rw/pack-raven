@@ -62,6 +62,10 @@ impl AppState {
         pack_data_dir(&self.data_dir, &self.settings().instance_dir)
     }
 
+    pub(crate) fn curseforge_locks_path(&self) -> PathBuf {
+        self.pack_data().join("curseforge-locks.json")
+    }
+
     pub(crate) fn cache_path(&self) -> PathBuf {
         self.data_dir.join("metadata-cache.json")
     }
@@ -289,10 +293,17 @@ pub fn set_side_override(state: State<'_, AppState>, project_id: u64, mode: Stri
     pack.save_config().map_err(err)
 }
 
+#[derive(Serialize)]
+pub struct Preflight {
+    problems: Vec<String>,
+    warnings: Vec<String>,
+}
+
 #[tauri::command(async)]
-pub fn publish_preflight(state: State<'_, AppState>, version: String) -> CmdResult<Vec<String>> {
+pub fn publish_preflight(state: State<'_, AppState>, version: String) -> CmdResult<Preflight> {
     let not_on_curseforge = state.mod_list.lock().unwrap().not_on_curseforge.clone();
-    Ok(publish::preflight(&state.pack().map_err(err)?, version.trim(), &not_on_curseforge, &state.settings().identity()))
+    let pack = state.pack().map_err(err)?;
+    Ok(Preflight { problems: publish::preflight(&pack, version.trim(), &not_on_curseforge, &state.settings().identity()), warnings: publish::preflight_warnings(&pack) })
 }
 
 #[tauri::command]

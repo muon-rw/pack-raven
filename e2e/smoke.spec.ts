@@ -18,23 +18,54 @@ for (const [view, scenario] of cases) {
   })
 }
 
-test('mods can be filtered, updated and removed', async ({ page }) => {
+test('installed mods can be sorted, filtered, expanded and changed', async ({ page }) => {
   await openApp(page, 'mods', 'dirty')
-  const rows = page.getByRole('region', { name: 'Mods' }).locator('tbody > tr')
-  await expect(page.getByRole('button', { name: 'Update all (4)' })).toBeEnabled()
+  const rows = page.getByRole('region', { name: 'Installed mods' }).locator('tbody > tr.row')
+  await expect(page.getByRole('button', { name: 'Update all (5)' })).toBeEnabled()
   await expect(page.getByRole('status').filter({ hasText: 'two versions of Iris Shaders' })).toBeVisible()
 
-  await page.getByRole('button', { name: /^Updates/ }).click()
-  await expect(rows).toHaveCount(4)
+  // Mods with updates come first until you pick another sort.
+  await expect(rows.first().getByRole('button', { name: /^Update / })).toBeVisible()
+  await page.getByRole('button', { name: 'Author' }).click()
+  await expect(rows.first()).toContainText('coderbot')
+  await page.getByRole('button', { name: 'Update', exact: true }).click()
 
-  await page.getByRole('button', { name: 'Versions of Apotheosis' }).click()
+  await page.getByRole('button', { name: /^Resource packs/ }).click()
+  await expect(rows).toHaveCount(1)
+  await page.getByRole('button', { name: /^Data packs/ }).click()
+  await expect(page.getByRole('region', { name: 'Installed mods' })).toContainText('no data packs from CurseForge yet')
+  await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Mods/ }).click()
+
+  // Clicking a row away from its controls opens its versions and description.
+  await rows.filter({ hasText: 'Apotheosis' }).locator('td.author').click()
   await expect(page.getByRole('list', { name: 'Versions of Apotheosis' }).getByRole('listitem')).toHaveCount(3)
+  await page.getByRole('button', { name: 'Description', exact: true }).click()
+  const description = page.locator('.description')
+  await expect(description).toContainText('content mod')
+  await expect(description.locator('iframe, script')).toHaveCount(0)
+  await expect(description.locator('span')).not.toHaveAttribute('style', /color/)
 
   await page.getByRole('button', { name: 'Update Apotheosis' }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Updated 1 mod.' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Update all (3)' })).toBeEnabled()
 
-  await page.getByRole('button', { name: 'All', exact: true }).click()
+  page.once('dialog', (dialog) => {
+    expect(dialog.message()).toContain('Sodium: sodium-neoforge-0.8.13+mc1.21.1.jar')
+    dialog.accept()
+  })
+  await page.getByRole('button', { name: 'Update all (4)' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Updated 4 mods.' })).toBeVisible()
+
+  const betterClouds = page.getByRole('switch', { name: 'Enable Better Clouds' })
+  await expect(betterClouds).toHaveAttribute('aria-checked', 'false')
+  await betterClouds.click()
+  await expect(betterClouds).toHaveAttribute('aria-checked', 'true')
+
+  // Scrolling closes the menu, so we bring the row into view before right-clicking it.
+  await rows.filter({ hasText: 'Placebo' }).scrollIntoViewIfNeeded()
+  await rows.filter({ hasText: 'Placebo' }).click({ button: 'right' })
+  await expect(page.getByRole('menuitem', { name: 'Copy link' })).toBeVisible()
+  await page.keyboard.press('Escape')
+
   page.once('dialog', (dialog) => {
     expect(dialog.message()).toContain('Apotheosis requires Placebo')
     dialog.accept()
@@ -62,17 +93,17 @@ test('mods can be found on CurseForge and installed with their dependencies', as
 test('a locked mod stays out of Update all', async ({ page }) => {
   await openApp(page, 'mods', 'ready')
   const lock = page.getByRole('button', { name: 'Lock Apotheosis to this version' })
-  await expect(page.getByRole('button', { name: 'Update all (4)' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Update all (5)' })).toBeEnabled()
 
   await lock.click()
   await expect(lock).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByRole('button', { name: 'Update all (3)' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Update all (4)' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Update Apotheosis' })).toHaveCount(0)
   await expect(page.getByText('Locked. Apotheosis-1.21.1-8.9.0.jar is available.')).toBeVisible()
 
-  await page.getByRole('button', { name: 'Locked', exact: true }).click()
-  await expect(page.getByRole('region', { name: 'Mods' }).locator('tbody > tr')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Locked' }).click()
+  await expect(page.getByRole('region', { name: 'Installed mods' }).locator('tbody > tr.row').first()).toContainText('Apotheosis')
 
   await lock.click()
-  await expect(page.getByRole('button', { name: 'Update all (4)' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Update all (5)' })).toBeEnabled()
 })

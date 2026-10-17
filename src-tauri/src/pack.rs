@@ -32,7 +32,7 @@ pub struct UpdatesConfig {
 
 impl Default for UpdatesConfig {
     fn default() -> Self {
-        Self { channel: ReleaseType::Release, locked: Vec::new() }
+        Self { channel: ReleaseType::Alpha, locked: Vec::new() }
     }
 }
 

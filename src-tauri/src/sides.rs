@@ -27,6 +27,11 @@ struct SideMetadata {
 pub struct ProjectName {
     pub name: String,
     pub url: Option<String>,
+    // Caches written before we kept authors have none, so None means "fetch again".
+    #[serde(default)]
+    pub authors: Option<Vec<String>>,
+    #[serde(default)]
+    pub logo: Option<String>,
 }
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq)]
@@ -71,12 +76,13 @@ impl MetadataCache {
     }
 
     pub async fn ensure_names(&mut self, ids: &[u64]) -> Result<()> {
-        let missing: Vec<u64> = ids.iter().copied().filter(|id| !self.names.contains_key(id)).collect();
+        let missing: Vec<u64> = ids.iter().copied().filter(|id| self.names.get(id).is_none_or(|n| n.authors.is_none())).collect();
         if missing.is_empty() {
             return Ok(());
         }
         for (id, m) in curseforge::mods(&missing).await? {
-            self.names.insert(id, ProjectName { name: m.name, url: m.links.website_url });
+            let authors = Some(m.authors.into_iter().map(|a| a.name).collect());
+            self.names.insert(id, ProjectName { name: m.name, url: m.links.website_url, authors, logo: m.logo.map(|l| l.thumbnail_url) });
         }
         Ok(())
     }
@@ -86,7 +92,7 @@ impl MetadataCache {
     }
 
     pub fn name(&self, id: u64) -> ProjectName {
-        self.names.get(&id).cloned().unwrap_or(ProjectName { name: format!("Project {id}"), url: None })
+        self.names.get(&id).cloned().unwrap_or(ProjectName { name: format!("Project {id}"), url: None, authors: None, logo: None })
     }
 
     async fn ensure_sides(&mut self, entries: &[&LockEntry]) -> Result<()> {

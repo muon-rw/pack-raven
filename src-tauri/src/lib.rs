@@ -18,6 +18,7 @@ mod git_install;
 mod history;
 mod gitops;
 mod http;
+mod instance_locks;
 mod jobs;
 mod join;
 mod launch;
@@ -181,6 +182,8 @@ pub fn run() {
             mod_commands::preview_mods,
             mod_commands::change_mods,
             mod_commands::set_mod_locked,
+            mod_commands::set_mod_enabled,
+            mod_commands::mod_description,
             mod_commands::remove_mods,
             commands::publish_preflight,
             commands::build_client_export,

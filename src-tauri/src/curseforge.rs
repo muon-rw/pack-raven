@@ -277,6 +277,10 @@ pub async fn categories(class_id: u64) -> Result<Vec<CfCategory>> {
     Ok(categories)
 }
 
+pub async fn description(project_id: u64) -> Result<String> {
+    Ok(core_get(&format!("/mods/{project_id}/description")).await?.as_str().unwrap_or_default().to_string())
+}
+
 pub fn file_status_name(status: u32) -> &'static str {
     match status {
         1 => "Processing",
