@@ -153,17 +153,21 @@ pub fn java(settings: &Settings) -> Result<PathBuf> {
         return Ok(console_java(java));
     }
     let platform = if cfg!(windows) { "windows-x64" } else if cfg!(target_arch = "aarch64") { "mac-os-arm64" } else { "mac-os" };
-    let runtime = settings.install_dir.join("runtime").join(&component).join(platform).join(&component);
-    let java = if cfg!(target_os = "macos") {
-        runtime.join("jre.bundle").join("Contents").join("Home").join("bin").join("java")
-    } else {
-        runtime.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" })
-    };
-    if java.exists() {
-        Ok(java)
-    } else {
-        anyhow::bail!("CurseForge hasn't installed Java {major} for this pack yet. Launch the pack once from CurseForge, or choose a Java {major} in App settings or a Java for this pack in Pack settings.")
+    // Current CurseForge installs runtimes to java/<component>; older versions used the Mojang launcher's runtime layout.
+    let roots = [
+        settings.install_dir.join("java").join(&component),
+        settings.install_dir.join("runtime").join(&component).join(platform).join(&component),
+    ];
+    let executable = if cfg!(windows) { "java.exe" } else { "java" };
+    let candidates = roots.iter().flat_map(|root| {
+        [root.join("bin").join(executable), root.join("jre.bundle").join("Contents").join("Home").join("bin").join(executable)]
+    });
+    for java in candidates {
+        if java.exists() {
+            return Ok(java);
+        }
     }
+    anyhow::bail!("CurseForge hasn't installed Java {major} for this pack yet. Launch the pack once from CurseForge, or choose a Java {major} in App settings or a Java for this pack in Pack settings.")
 }
 
 fn required_java(settings: &Settings) -> (String, u32) {
