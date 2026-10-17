@@ -6,7 +6,6 @@
   import { api, errorText, type Overview, type PackConfig, type UploadNames } from '../lib/api'
   import { job, onJobEnd } from '../lib/jobs.svelte'
   import RenderedChangelog from '../components/RenderedChangelog.svelte'
-  import { bumpVersion, parseVersion, type Bump } from '../lib/version'
   import JobLog from '../components/JobLog.svelte'
   import LinkedText from '../components/LinkedText.svelte'
   import Twisty from '../components/Twisty.svelte'
@@ -44,23 +43,8 @@
   let defaultNames = $state<{ client: UploadNames; server: UploadNames } | null>(null)
   let identity = $state<string | null>(null)
 
-  // You choose the version here, where a tag collision matters. Publishing writes it to the
-  // Better Compatibility Checker config, so until then the pack reports the last release.
-  let version = $state('')
-  let versionTouched = $state(false)
   let lastTag = $derived(overview?.lastTag ?? null)
   let lastVersion = $derived(lastTag?.replace(/^v/, '') ?? null)
-  let suggested = $derived(lastVersion && parseVersion(lastVersion) ? bumpVersion(lastVersion, 'patch') : overview?.version?.trim() || '1.0.0')
-
-  $effect(() => {
-    if (!versionTouched && overview) version = suggested
-  })
-
-  function bump(kind: Bump) {
-    if (!lastVersion) return
-    version = bumpVersion(lastVersion, kind)
-    versionTouched = true
-  }
 
   onMount(() => {
     loadChangelog()
@@ -77,7 +61,6 @@
 
   onJobEnd('publish', (phase) => {
     if (phase !== 'done') return
-    versionTouched = false
     commitMessage = ''
     names = noOverrides()
     renaming = { client: false, server: false }
@@ -105,8 +88,8 @@
     }
   }
 
-  let trimmed = $derived(version.trim())
-  let defaultMessage = $derived(`Release ${trimmed || suggested}`)
+  let trimmed = $derived(overview?.version?.trim() ?? '')
+  let defaultMessage = $derived(`Release ${trimmed}`)
   let uncommitted = $derived(overview?.changed ?? [])
 
   $effect(() => {
@@ -121,6 +104,7 @@
           if (!current) return
           problems = result.problems
           exportWarnings = result.warnings
+          tagTaken = result.tagTaken
           defaultNames = { client: result.client, server: result.server }
         },
         (e) => current && (problems = [`Couldn't run the pre-publish checks: ${errorText(e)}`]),
@@ -181,7 +165,7 @@
       (p): p is string => !!p,
     ),
   )
-  let tagTaken = $derived(problems.some((p) => p.startsWith('You already released')))
+  let tagTaken = $state(false)
   let emptyNotes = $derived(changelog !== null && !changelog.trim())
   let warnings = $derived(
     [
@@ -291,28 +275,18 @@
   <section class="step" aria-labelledby="version-title">
     <h3 id="version-title">Version</h3>
     <div class="version-row">
-      <label class="version-field">
-        <span class="visually-hidden">Version to publish</span>
-        <input bind:value={version} oninput={() => (versionTouched = true)} placeholder={suggested} spellcheck="false" aria-describedby="version-hint" aria-invalid={tagTaken} />
-      </label>
-      {#if lastVersion && parseVersion(lastVersion)}
-        <span class="bumps" role="group" aria-label="Bump from {lastVersion}">
-          {#each ['patch', 'minor', 'major'] as const as kind (kind)}
-            {@const next = bumpVersion(lastVersion, kind)}
-            <button type="button" class="ghost" aria-pressed={trimmed === next} onclick={() => bump(kind)}>
-              {kind[0].toUpperCase() + kind.slice(1)} <span class="file">{next}</span>
-            </button>
-          {/each}
-        </span>
+      <span class="version" class:taken={tagTaken}>{trimmed || 'Not set'}</span>
+      {#if trimmed}
+        <button class="link" aria-label="Change the version" onclick={() => (nav.editVersion = true)}>Change</button>
+      {:else}
+        <button class="link" onclick={onchanges}>Set up Better Compatibility Checker in Changes</button>
       {/if}
     </div>
-    <p class="muted small" id="version-hint">
-      {#if tagTaken}
-        <span class="failed">{trimmed} is already released (tag v{trimmed}). Pick a newer version.</span>
-      {:else if lastTag}
-        The last release is <span class="file">{lastTag}</span>. packraven writes this version into the pack when you publish.
+    <p class="muted small">
+      {#if lastTag}
+        The last release is <span class="file">{lastTag}</span>.
       {:else}
-        This is the first release. packraven writes this version into the pack when you publish.
+        This is the first release.
       {/if}
     </p>
   </section>
@@ -417,12 +391,12 @@
       </div>
       <div>
         <dt>Git</dt>
-        <dd>{#if trimmed}Commit and tag <span class="file">v{trimmed}</span>{push ? ', then push' : ''}{:else}<span class="muted">Set a version above</span>{/if}</dd>
+        <dd>{#if trimmed}Commit and tag <span class="file">v{trimmed}</span>{push ? ', then push' : ''}{:else}<span class="muted">Set a version first</span>{/if}</dd>
       </div>
       <div>
         <dt>Notes</dt>
         <dd>
-          {#if trimmed}Archived to <span class="file">changelogs/{trimmed}.md</span>, and changelog.md is cleared{:else}<span class="muted">Set a version above</span>{/if}
+          {#if trimmed}Archived to <span class="file">changelogs/{trimmed}.md</span>, and changelog.md is cleared{:else}<span class="muted">Set a version first</span>{/if}
         </dd>
       </div>
     </dl>
@@ -544,29 +518,17 @@
   .version-row {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
+    align-items: baseline;
     gap: 10px 16px;
   }
 
-  .version-field input {
-    width: 160px;
+  .version {
     font-family: var(--font-log);
     font-size: var(--step-1);
   }
 
-  .version-field input[aria-invalid='true'] {
-    border-color: var(--fail-border);
-  }
-
-  .bumps {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-
-  .bumps button[aria-pressed='true'] {
-    background: var(--here);
-    border-color: var(--here-border);
+  .version.taken {
+    color: var(--fail);
   }
 
   .row {

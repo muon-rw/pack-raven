@@ -161,6 +161,21 @@ let installedMods: MockMod[] =
         { path: 'shaderpacks/ComplementaryReimagined_r5.5.1.zip', projectId: 627557, fileId: 8200000, name: 'Complementary Shaders - Reimagined', url: cfUrl('complementary-reimagined'), logo: logo('C', '#2a4a7a'), releaseType: 'release', requires: [], newer: [newer(8950000, 'ComplementaryReimagined_r5.6.zip')] },
       ]
 
+// The empty scenario is a fresh pack without Better Compatibility Checker, so it has no version yet.
+// Ready has bumped past the last release; dirty still reports it, so publishing would reuse the tag.
+const bcc = { installed: scenario !== 'empty', version: scenario === 'empty' ? null : scenario === 'ready' ? '0.2.0' : (fx.version as string | null) }
+
+// A copy of version_problem in pack.rs.
+function versionProblem(raw: string) {
+  const version = raw.trim()
+  if (!version) return 'Enter a version.'
+  if (/[\s\p{Cc}]/u.test(version)) return "Versions can't contain spaces."
+  if (/[~^:?*[\\"<>|/]/.test(version)) return 'Versions can\'t contain any of ~ ^ : ? * [ \\ " < > | /.'
+  if (version.includes('..') || version.includes('@{')) return "Versions can't contain .. or @{."
+  if (version.endsWith('.') || version.endsWith('.lock')) return "Versions can't end in . or .lock."
+  return null
+}
+
 function mockJob(job: string, lines: string[], message: string, change: () => void) {
   emit('job-state', { job, state: 'running', message: null })
   lines.forEach((text, i) => setTimeout(() => emit('job-log', { job, stream: 'info', text }), 150 * (i + 1)))
@@ -500,7 +515,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   list_packs: () => (scenario === 'nopack' ? { active: null, packs: [], instancesRoot: 'C:/Instances' } : { active: pack.dir, packs: [pack], instancesRoot: 'C:/Instances' }),
   overview: () => ({
     name: pack.name,
-    version: fx.version,
+    version: bcc.version,
+    bccInstalled: bcc.installed,
     minecraft: fx.minecraft,
     loader: fx.loader,
     lockCount: fx.lockCount,
@@ -629,8 +645,19 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   changelog_preview: () => ({ diff: modDiff, markdown: renderChangelog() }),
   publish_preflight: () => {
     const stem = `${pack.name.replace(/[^\w -]/g, '').trim().replace(/ /g, '-')}-{version}`
+    const tagTaken = scenario !== 'empty' && bcc.version === '0.1.0'
+    const invalid = bcc.version === null ? null : versionProblem(bcc.version)
+    const blocker =
+      bcc.version === null
+        ? 'Install Better Compatibility Checker in Changes. packraven keeps the pack version in its config.'
+        : invalid
+          ? `${invalid} Change the version to publish.`
+          : tagTaken
+            ? 'You already released 0.1.0 (tag v0.1.0 exists). Change the version to publish a new release.'
+            : null
     return {
-      problems: preflight,
+      problems: blocker ? [blocker, ...preflight] : preflight,
+      tagTaken,
       warnings: scenario === 'dirty' ? ['betterclouds-neoforge-1.3.2.jar is disabled, so packraven leaves it out of the export.'] : [],
       client: { displayName: `${pack.name} {version}`, fileName: `${stem}.zip` },
       server: { displayName: 'Server Pack {version}', fileName: `${stem}-server.zip` },
@@ -674,6 +701,21 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   set_mod_locked: (a) => {
     config.updates.locked = config.updates.locked.filter((id) => id !== a.projectId)
     if (a.locked) config.updates.locked.push(Number(a.projectId))
+  },
+  set_version: (a) => {
+    const problem = versionProblem(String(a.version))
+    if (problem) throw problem
+    bcc.version = String(a.version).trim()
+  },
+  version_problem: (a) => versionProblem(String(a.version)),
+  set_up_version_checker: (a) => {
+    const placeConfig = () => (bcc.version ??= String(a.version).trim())
+    if (bcc.installed) return placeConfig()
+    const file = 'BetterCompatibilityChecker-neoforge-5.1.4+1.21.1.jar'
+    mockJob('mods', [`Downloading mods/${file}`, `Placed ${file}`], 'Installed Better Compatibility Checker.', () => {
+      bcc.installed = true
+      placeConfig()
+    })
   },
   change_mods: (a) => changeMods(a.requests as { fileId: number; replaces: string | null }[]),
   search_mods: (a) => searchMods(a.request as Parameters<typeof searchMods>[0]),

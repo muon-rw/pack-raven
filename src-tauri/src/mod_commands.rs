@@ -1,13 +1,16 @@
 use std::collections::HashSet;
 
+use anyhow::Context;
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
+use crate::curseforge;
 use crate::history::{self, Action};
+use crate::jobs::Log;
 use crate::mod_updates::{self, AddonKind, Category, InstalledMods, ModCheck, ModFile, ModRequest, SearchPage, SearchRequest};
 use crate::modsync;
-use crate::pack::{Pack, ReleaseType};
+use crate::pack::{Pack, ReleaseType, BCC_PROJECT_ID};
 use crate::sides::MetadataCache;
 
 type CmdResult<T> = Result<T, String>;
@@ -142,29 +145,54 @@ pub fn change_mods(app: AppHandle, state: State<'_, AppState>, requests: Vec<Mod
             project.and_then(|id| cache.known_name(id)).map_or_else(|| path.rsplit('/').next().unwrap_or(path).to_string(), |n| n.name.clone())
         })
         .collect();
+    state.jobs.start(&app, "mods", move |log| async move { apply_mod_requests(&pack, &requests, &updated, &log).await })
+}
+
+async fn apply_mod_requests(pack: &Pack, requests: &[ModRequest], updated: &[String], log: &Log) -> anyhow::Result<String> {
+    let plan = mod_updates::plan(pack, requests).await?;
+    let mut message = Vec::new();
+    // Past a handful of names, a count reads better than a list.
+    match updated.len() {
+        0 => {}
+        1..=4 => message.push(format!("Updated {}.", names(updated))),
+        n => message.push(format!("Updated {}, {} and {} more.", updated[0], updated[1], n - 2)),
+    }
+    if !plan.installs.is_empty() {
+        message.push(format!("Installed {}.", names(&plan.installs)));
+    }
+    if !plan.dependencies.is_empty() {
+        message.push(format!("Added {} as required.", names(&plan.dependencies)));
+    }
+    if !plan.unavailable.is_empty() {
+        message.push(format!("CurseForge has no file of {} for this pack's version, so you'll need to find one.", names(&plan.unavailable)));
+    }
+    {
+        let _guard = modsync::MOD_LIST_GUARD.lock().await;
+        modsync::place(&pack.dir, plan.placements, log).await?;
+    }
+    Ok(message.join(" "))
+}
+
+#[tauri::command]
+pub fn set_up_version_checker(app: AppHandle, state: State<'_, AppState>, version: String) -> CmdResult<()> {
+    let pack = state.pack().map_err(err)?;
+    if pack.has_bcc() {
+        return pack.write_bcc_config_if_missing(version.trim()).map_err(err);
+    }
+    if client_running(&state) {
+        return Err(CLIENT_HAS_MODS_OPEN.into());
+    }
     state.jobs.start(&app, "mods", move |log| async move {
-        let plan = mod_updates::plan(&pack, &requests).await?;
-        let mut message = Vec::new();
-        // Past a handful of names, a count reads better than a list.
-        match updated.len() {
-            0 => {}
-            1..=4 => message.push(format!("Updated {}.", names(&updated))),
-            n => message.push(format!("Updated {}, {} and {} more.", updated[0], updated[1], n - 2)),
-        }
-        if !plan.installs.is_empty() {
-            message.push(format!("Installed {}.", names(&plan.installs)));
-        }
-        if !plan.dependencies.is_empty() {
-            message.push(format!("Added {} as required.", names(&plan.dependencies)));
-        }
-        if !plan.unavailable.is_empty() {
-            message.push(format!("CurseForge has no file of {} for this pack's version, so you'll need to find one.", names(&plan.unavailable)));
-        }
-        {
-            let _guard = modsync::MOD_LIST_GUARD.lock().await;
-            modsync::place(&pack.dir, plan.placements, &log).await?;
-        }
-        Ok(message.join(" "))
+        let loader = curseforge::loader_type(&pack.lock.mod_loader()?);
+        let files = curseforge::project_files(BCC_PROJECT_ID, pack.lock.minecraft()?, Some(loader)).await?;
+        let file = files
+            .iter()
+            .find(|f| f.release_type == 1)
+            .or(files.first())
+            .context("CurseForge has no Better Compatibility Checker file for this pack's Minecraft version and loader")?;
+        let message = apply_mod_requests(&pack, &[ModRequest { file_id: file.id, replaces: None }], &[], &log).await?;
+        pack.write_bcc_config_if_missing(version.trim())?;
+        Ok(message)
     })
 }
 

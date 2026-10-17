@@ -8,8 +8,9 @@
   import { nav } from '../lib/nav.svelte'
   import RenderedChangelog from '../components/RenderedChangelog.svelte'
   import LinkedText from '../components/LinkedText.svelte'
+  import { job, onJobEnd } from '../lib/jobs.svelte'
 
-  let { overview, onpublish, onchange }: { overview: Overview | null; onpublish: () => void; onchange: () => void } = $props()
+  let { overview, onchange }: { overview: Overview | null; onchange: () => void } = $props()
 
   let notes = $state('')
   let savedNotes = $state('')
@@ -35,6 +36,37 @@
         ]
       : null,
   )
+
+  let savedVersion = $derived(overview?.version ?? null)
+  let lastVersion = $derived(overview?.lastTag?.replace(/^v/, '') ?? null)
+  let installingBcc = $state(false)
+  let bccError: string | null = $state(null)
+  let bccBusy = $derived(installingBcc && job('mods').phase === 'running')
+
+  let bccSetUp = $state<'installed' | 'configured' | null>(null)
+
+  onJobEnd('mods', (phase) => {
+    if (!installingBcc) return
+    installingBcc = false
+    bccError = phase === 'failed' ? `Couldn't install Better Compatibility Checker: ${job('mods').message ?? 'the install failed'}` : null
+    if (phase === 'done') bccSetUp = 'installed'
+    onchange()
+  })
+
+  async function setUpBcc() {
+    bccError = null
+    try {
+      installingBcc = !overview?.bccInstalled
+      await api.setUpVersionChecker(lastVersion ?? '1.0.0')
+      if (!installingBcc) {
+        bccSetUp = 'configured'
+        onchange()
+      }
+    } catch (error) {
+      installingBcc = false
+      bccError = `Couldn't set up Better Compatibility Checker: ${errorText(error)}`
+    }
+  }
 
   async function loadDiff() {
     loadingDiff = true
@@ -165,9 +197,37 @@
     <div class="released">
       <span class="muted small">Last release</span>
       <span class="file tag">{overview?.lastTag ?? 'None yet'}</span>
-      <button class="link small" onclick={onpublish}>Choose the next version in Publish</button>
+      {#if savedVersion !== null}<button class="link small" onclick={() => (nav.editVersion = true)}>Change the version</button>{/if}
     </div>
   </header>
+
+  {#if overview && savedVersion === null}
+    <Notice tone="warn">
+      <div class="bcc-notice">
+        <p>
+          <strong>{overview.bccInstalled ? 'Better Compatibility Checker has no config yet.' : "This pack doesn't have Better Compatibility Checker."}</strong>
+          packraven keeps the pack version in its config, so you need it to set a version and publish.
+          {overview.bccInstalled
+            ? 'Better Compatibility Checker writes its config the first time the game loads, or packraven can write it now.'
+            : 'packraven can install it from CurseForge and write its config.'}
+        </p>
+        <div class="actions">
+          <button class:busy={bccBusy} disabled={bccBusy} onclick={setUpBcc}>
+            {bccBusy ? 'Installing' : overview.bccInstalled ? 'Write the config' : 'Install Better Compatibility Checker'}
+          </button>
+        </div>
+        {#if bccError}<p class="failed"><LinkedText text={bccError} /></p>{/if}
+      </div>
+    </Notice>
+  {:else if bccSetUp && savedVersion !== null}
+    <Notice tone="ok">
+      <p class="bcc-done" role="status">
+        packraven {bccSetUp === 'installed' ? 'installed Better Compatibility Checker and set' : 'wrote the Better Compatibility Checker config and set'} the version to
+        <span class="file">{savedVersion}</span>.
+        <button class="link" onclick={() => (nav.editVersion = true)}>Change the version</button>
+      </p>
+    </Notice>
+  {/if}
 
   {#if firstRelease && firstRelease.some((item) => !item.done)}
     <section class="first-release" aria-labelledby="first-release-title">
@@ -402,6 +462,16 @@
 
   .released .tag {
     font-size: var(--step-1);
+  }
+
+  .bcc-notice {
+    display: grid;
+    gap: 10px;
+  }
+
+  .bcc-notice p,
+  .bcc-done {
+    max-width: 65ch;
   }
 
   .small {

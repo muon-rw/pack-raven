@@ -107,6 +107,7 @@ pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> CmdResul
 pub struct Overview {
     name: String,
     version: Option<String>,
+    bcc_installed: bool,
     minecraft: Option<String>,
     loader: Option<String>,
     lock_count: usize,
@@ -167,6 +168,7 @@ pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
     Ok(Overview {
         name: pack.name(),
         version: pack.version(),
+        bcc_installed: pack.has_bcc(),
         minecraft: pack.lock.minecraft.clone(),
         loader: pack.lock.loader.clone(),
         lock_count: pack.lock.files.len(),
@@ -201,9 +203,19 @@ pub fn save_pack_config(state: State<'_, AppState>, config: PackConfig) -> CmdRe
     pack.save_config().map_err(err)
 }
 
+// Publish commits whatever is on disk after its uploads, so a version changed mid-publish would
+// land in the commit for the old tag.
 #[tauri::command]
 pub fn set_version(state: State<'_, AppState>, version: String) -> CmdResult<()> {
+    if state.jobs.running().iter().any(|job| job == "publish") {
+        return Err("packraven is publishing. Change the version once it finishes.".into());
+    }
     state.pack().map_err(err)?.set_version(version.trim()).map_err(err)
+}
+
+#[tauri::command]
+pub fn version_problem(version: String) -> Option<String> {
+    crate::pack::version_problem(&version)
 }
 
 #[tauri::command]
@@ -298,6 +310,7 @@ pub fn set_side_override(state: State<'_, AppState>, project_id: u64, mode: Stri
 pub struct Preflight {
     problems: Vec<String>,
     warnings: Vec<String>,
+    tag_taken: bool,
     client: publish::UploadNames,
     server: publish::UploadNames,
 }
@@ -310,6 +323,7 @@ pub fn publish_preflight(state: State<'_, AppState>, version: String) -> CmdResu
     Ok(Preflight {
         problems: publish::preflight(&pack, version, &not_on_curseforge, &state.settings().identity()),
         warnings: publish::preflight_warnings(&pack),
+        tag_taken: !version.is_empty() && publish::tag_exists(&pack, version),
         client: publish::default_client_names(&pack),
         server: publish::default_server_names(&pack),
     })

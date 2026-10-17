@@ -11,6 +11,7 @@ pub const CHANGELOG: &str = "changelog.md";
 pub const CHANGELOG_ARCHIVE: &str = "changelogs";
 pub const SERVER_ICON: &str = "server-icon.png";
 const BCC_CONFIG: &str = "config/bcc-common.toml";
+pub const BCC_PROJECT_ID: u64 = 551894;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -266,6 +267,9 @@ impl Pack {
     }
 
     pub fn set_version(&self, version: &str) -> Result<()> {
+        if let Some(problem) = version_problem(version) {
+            bail!("{problem}");
+        }
         let path = self.dir.join(BCC_CONFIG);
         let text = std::fs::read_to_string(&path).context("reading the Better Compatibility Checker config")?;
         let pattern = bcc_pattern("modpackVersion");
@@ -275,6 +279,29 @@ impl Pack {
         let updated = pattern.replace(&text, |caps: &regex::Captures| format!("{}\"{}\"", &caps[1], version));
         std::fs::write(&path, updated.as_ref())?;
         Ok(())
+    }
+
+    pub fn has_bcc(&self) -> bool {
+        self.lock.files.iter().any(|e| e.project_id == BCC_PROJECT_ID && !e.path.ends_with(".disabled"))
+    }
+
+    // BCC only writes its config the first time the game loads it, so we write one up front to
+    // give the version somewhere to live before then. BCC fills in any keys we leave out.
+    pub fn write_bcc_config_if_missing(&self, version: &str) -> Result<()> {
+        let path = self.dir.join(BCC_CONFIG);
+        if path.exists() {
+            return Ok(());
+        }
+        let name = toml::Value::String(self.name()).to_string();
+        let version = toml::Value::String(version.into()).to_string();
+        std::fs::create_dir_all(path.parent().context("the BCC config path has no parent")?)?;
+        std::fs::write(
+            &path,
+            format!(
+                "#General settings\n[general]\n\t#The name of the modpack\n\tmodpackName = {name}\n\t#The version of the modpack\n\tmodpackVersion = {version}\n\t#Use the metadata.json to determine the modpack version\n\t#ONLY ENABLE THIS IF YOU KNOW WHAT YOU ARE DOING\n\tuseMetadata = false\n"
+            ),
+        )
+        .with_context(|| format!("writing {BCC_CONFIG}"))
     }
 
     fn bcc_value(&self, key: &str) -> Option<String> {
@@ -304,6 +331,27 @@ impl Pack {
     }
 }
 
+// Publishing uploads to CurseForge before it tags v<version> and writes changelogs/<version>.md, so we
+// reject anything git won't take as a tag or Windows won't take as a file name before it gets that far.
+// That also keeps quotes out of the BCC config, which set_version writes without escaping.
+pub fn version_problem(version: &str) -> Option<String> {
+    const UNSAFE: &[char] = &['~', '^', ':', '?', '*', '[', '\\', '"', '<', '>', '|', '/'];
+    let version = version.trim();
+    if version.is_empty() {
+        Some("Enter a version.".into())
+    } else if version.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        Some("Versions can't contain spaces.".into())
+    } else if version.contains(UNSAFE) {
+        Some("Versions can't contain any of ~ ^ : ? * [ \\ \" < > | /.".into())
+    } else if version.contains("..") || version.contains("@{") {
+        Some("Versions can't contain .. or @{.".into())
+    } else if version.ends_with('.') || version.ends_with(".lock") {
+        Some("Versions can't end in . or .lock.".into())
+    } else {
+        None
+    }
+}
+
 fn bcc_pattern(key: &str) -> Regex {
     Regex::new(&format!(r#"(?m)^(\s*{key}\s*=\s*)"([^"]*)""#)).expect("valid regex")
 }
@@ -323,5 +371,36 @@ mod tests {
         assert_eq!(lock("fabric-0.19.2-1.21.1").mod_loader().unwrap(), ModLoader::Fabric("0.19.2"));
         assert_eq!(lock("fabric-0.19.2-1.21.1").mod_loader().unwrap().manifest_id(), "fabric-0.19.2");
         assert!(lock("quilt-0.26.0-1.21.1").mod_loader().is_err());
+    }
+
+    #[test]
+    fn accepts_free_text_versions_that_work_as_tags_and_file_names() {
+        for version in ["1.0.0", "2026.10-winter", "1.0-beta+3", "v2", "R7_hotfix"] {
+            assert_eq!(version_problem(version), None, "{version}");
+        }
+        for version in ["", "1.0 beta", "1.0\"beta\"", "1.0/2", "1..2", "1.0.", "1.0.lock", "a@{b", "1:2"] {
+            assert!(version_problem(version).is_some(), "{version}");
+        }
+    }
+
+    #[test]
+    fn writes_a_bcc_config_we_can_read_back_and_update() {
+        let dir = std::env::temp_dir().join(format!("packraven-bcc-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let pack = Pack { dir: dir.clone(), config: PackConfig::default(), lock: Lockfile::default() };
+        std::fs::create_dir_all(dir.join("config")).unwrap();
+        std::fs::write(dir.join(BCC_CONFIG), "").unwrap();
+        pack.write_bcc_config_if_missing("1.0.0").unwrap();
+        assert_eq!(pack.version(), None, "we leave an existing config alone");
+
+        std::fs::remove_file(dir.join(BCC_CONFIG)).unwrap();
+        let pack = Pack { dir: dir.join("Raven's Fantasy"), ..pack };
+        pack.write_bcc_config_if_missing("1.0.0").unwrap();
+        assert_eq!(pack.name(), "Raven's Fantasy");
+        assert_eq!(pack.version().as_deref(), Some("1.0.0"));
+        pack.set_version("1.1.0").unwrap();
+        assert_eq!(pack.version().as_deref(), Some("1.1.0"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

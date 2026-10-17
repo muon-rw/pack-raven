@@ -101,6 +101,7 @@ export interface ModPreview {
 export interface Overview {
   name: string
   version: string | null
+  bccInstalled: boolean
   minecraft: string | null
   loader: string | null
   lockCount: number
@@ -426,13 +427,16 @@ export const api = {
   modCategories: (kind: AddonKind) => invoke<{ id: number; name: string }[]>('mod_categories', { kind }),
   previewMods: (requests: ModRequest[]) => invoke<ModPreview>('preview_mods', { requests }),
   changeMods: (requests: ModRequest[]) => invoke<void>('change_mods', { requests }),
+  setVersion: (version: string) => invoke<void>('set_version', { version }),
+  versionProblem: (version: string) => invoke<string | null>('version_problem', { version }),
+  setUpVersionChecker: (version: string) => invoke<void>('set_up_version_checker', { version }),
   setModLocked: (projectId: number, locked: boolean) => invoke<void>('set_mod_locked', { projectId, locked }),
   setModsEnabled: (paths: string[], enabled: boolean) => invoke<string[]>('set_mods_enabled', { paths, enabled }),
   modChangelog: (projectId: number, fileId: number) => invoke<string>('mod_changelog', { projectId, fileId }),
   modDescription: (projectId: number) => invoke<string>('mod_description', { projectId }),
   removeMods: (paths: string[]) => invoke<void>('remove_mods', { paths }),
   publishPreflight: (version: string) =>
-    invoke<{ problems: string[]; warnings: string[]; client: UploadNames; server: UploadNames }>('publish_preflight', { version }),
+    invoke<{ problems: string[]; warnings: string[]; tagTaken: boolean; client: UploadNames; server: UploadNames }>('publish_preflight', { version }),
   buildClientExport: () => invoke<void>('build_client_export'),
   buildServerPack: () => invoke<void>('build_server_pack'),
   startTest: (recopyAll: boolean, connect: boolean) => invoke<void>('start_test', { recopyAll, connect }),

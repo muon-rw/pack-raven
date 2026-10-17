@@ -26,6 +26,7 @@
   import PackSwitcher from './components/PackSwitcher.svelte'
   import RavenMark from './components/RavenMark.svelte'
   import ThemeToggle from './components/ThemeToggle.svelte'
+  import VersionEditor from './components/VersionEditor.svelte'
   import { modCountsSummary, notOnCurseforgeSummary } from './lib/modsync'
   import { shortcut } from './lib/platform'
 
@@ -286,7 +287,7 @@
       <div class="identity">
         <PackSwitcher list={packs} name={overview?.name ?? (packs?.active ? 'Pack unavailable' : 'No pack')} onswitch={switchPack} onadd={() => (view = 'add')} />
         {#if overview}
-          <div class="version" title="Pack version, from the Better Compatibility Checker config">{overview.version ?? 'No version'}</div>
+          <VersionEditor version={overview.version} lastTag={overview.lastTag} onchange={refresh} />
           <div class="game">Minecraft {overview.minecraft} with {loaderName(overview.loader)}</div>
         {/if}
       </div>
@@ -398,7 +399,7 @@
             <p><button onclick={() => (view = 'settings')}>Open App settings</button></p>
           </Notice>
         {:else if view === 'changes'}
-          <Changes {overview} onpublish={() => (view = 'publish')} onchange={refresh} />
+          <Changes {overview} onchange={refresh} />
         {:else if view === 'mods'}
           <Mods pack={packs?.active ?? null} game={overview ? `${overview.minecraft} ${loaderName(overview.loader).split(' ')[0]}` : 'this pack'} clientRunning={!!overview?.clientRunning} />
         {:else if view === 'server'}
@@ -442,11 +443,32 @@
     gap: 18px;
     min-height: 0;
     overflow-y: auto;
-    padding: 20px 22px;
+    padding: 20px 16px 20px 22px;
     color: var(--rail-text);
     background: var(--rail);
     border-right: 1px solid var(--rail-edge);
-    scrollbar-color: var(--rail-edge) transparent;
+    /* We always reserve the 6px gutter and take it out of the right padding, so nothing shifts when
+       an editor or list makes the rail scrollable. Chromium ignores ::-webkit-scrollbar while
+       scrollbar-color is set, and the root sets it, so we reset it here to get a bar without arrows. */
+    scrollbar-color: auto;
+    scrollbar-gutter: stable;
+  }
+
+  .rail::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .rail::-webkit-scrollbar-thumb {
+    background: var(--rail-edge);
+    border-radius: 3px;
+  }
+
+  .rail::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .rail::-webkit-scrollbar-button {
+    display: none;
   }
 
   .brand {
@@ -472,16 +494,8 @@
   .identity {
     display: grid;
     gap: 6px;
+    min-width: 0;
     padding-inline: 6px;
-  }
-
-  .version {
-    font-family: var(--font-log);
-    font-variant-numeric: tabular-nums;
-    font-size: var(--step-2);
-    line-height: 1.1;
-    color: var(--rail-strong);
-    overflow-wrap: anywhere;
   }
 
   .game {

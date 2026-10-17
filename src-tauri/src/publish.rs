@@ -10,7 +10,7 @@ use crate::export;
 use crate::git;
 use crate::jobs::Log;
 use crate::git::Identity;
-use crate::pack::{Pack, CHANGELOG_ARCHIVE};
+use crate::pack::{version_problem, Pack, CHANGELOG_ARCHIVE};
 use crate::sides::{self, MetadataCache};
 use crate::modsync;
 
@@ -86,11 +86,19 @@ fn upload_names(title: &str, overrides: &UploadNames, defaults: UploadNames, ver
 
 pub fn preflight_warnings(pack: &Pack) -> Vec<String> {
     let disabled: Vec<&str> = pack.lock.files.iter().filter_map(|e| e.path.strip_suffix(".disabled")?.split_once('/').map(|(_, name)| name)).collect();
-    match disabled[..] {
+    let mut warnings = match disabled[..] {
         [] => vec![],
         [one] => vec![format!("{one} is disabled, so packraven will leave it out of the export.")],
         _ => vec![format!("{} files are disabled, so packraven will leave them out of the export: {}.", disabled.len(), disabled.join(", "))],
+    };
+    if pack.version().is_some() && !pack.has_bcc() {
+        warnings.push("Better Compatibility Checker isn't in the mods folder, so the pack won't show its version in game.".into());
     }
+    warnings
+}
+
+pub fn tag_exists(pack: &Pack, version: &str) -> bool {
+    git::run(&pack.dir, &["rev-parse", "-q", "--verify", &format!("refs/tags/v{version}")]).is_ok()
 }
 
 pub fn preflight(pack: &Pack, version: &str, not_on_curseforge: &[String], identity: &Identity) -> Vec<String> {
@@ -104,10 +112,16 @@ pub fn preflight(pack: &Pack, version: &str, not_on_curseforge: &[String], ident
     if curseforge::core_key().is_none() {
         problems.push("This packraven build has no CurseForge API key. Build it with PACKRAVEN_CF_API_KEY set.".into());
     }
-    if version.trim().is_empty() {
-        problems.push("Enter a version.".into());
-    } else if git::run(&pack.dir, &["rev-parse", "-q", "--verify", &format!("refs/tags/v{version}")]).is_ok() {
-        problems.push(format!("You already released {version} (tag v{version} exists)."));
+    if pack.version().is_none() {
+        problems.push(if pack.has_bcc() {
+            "Better Compatibility Checker has no config yet, so the pack has no version. Create it in Changes.".into()
+        } else {
+            "Install Better Compatibility Checker in Changes. packraven keeps the pack version in its config.".into()
+        });
+    } else if let Some(problem) = version_problem(version) {
+        problems.push(format!("{problem} Change the version to publish."));
+    } else if tag_exists(pack, version) {
+        problems.push(format!("You already released {version} (tag v{version} exists). Change the version to publish a new release."));
     }
     match not_on_curseforge {
         [] => {}
