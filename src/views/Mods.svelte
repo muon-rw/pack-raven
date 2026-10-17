@@ -3,6 +3,7 @@
   import JobLog from '../components/JobLog.svelte'
   import ModBrowser from '../components/ModBrowser.svelte'
   import ContextMenu from '../components/ContextMenu.svelte'
+  import DisableDialog, { type Dependent } from '../components/DisableDialog.svelte'
   import { onMount, untrack } from 'svelte'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { ask } from '@tauri-apps/plugin-dialog'
@@ -40,6 +41,9 @@
   let removing: string | null = $state(null)
   let toggling: string | null = $state(null)
   let menu: { x: number; y: number; label: string; items: MenuItem[] } | null = $state(null)
+  let disabling: { mod: InstalledMod; name: string; dependents: (Dependent & { mod: InstalledMod })[] } | null = $state(null)
+  let changelogs: Record<number, string | { error: string }> = $state({})
+  let openChangelog: number | null = $state(null)
 
   let updating = $derived(job('mods').phase === 'running')
   let blocked = $derived(updating || clientRunning)
@@ -125,22 +129,73 @@
     }
   }
 
+  // Every enabled file that requires this one, directly or through another, nearest first, so
+  // the dialog can nest each under the mod it needs.
+  function dependentsOf(root: InstalledMod): (Dependent & { mod: InstalledMod })[] {
+    const found: (Dependent & { mod: InstalledMod })[] = []
+    const seen = new Set([root.projectId])
+    const walk = (projectId: number, depth: number) => {
+      for (const mod of mods) {
+        if (seen.has(mod.projectId) || mod.path.endsWith('.disabled')) continue
+        if (!modUpdates.checks?.get(mod.path)?.requires.includes(projectId)) continue
+        seen.add(mod.projectId)
+        found.push({ name: mod.name, path: mod.path, depth, mod })
+        walk(mod.projectId, depth + 1)
+      }
+    }
+    walk(root.projectId, 1)
+    return found
+  }
+
   async function setEnabled(mod: InstalledMod, enabled: boolean) {
-    toggling = mod.path
+    if (!enabled) {
+      // We only know what depends on a file from a check, so we finish one before asking.
+      if (mods.some((m) => !modUpdates.checks?.has(m.path))) await check()
+      const dependents = dependentsOf(mod)
+      if (dependents.length) {
+        disabling = { mod, name: mod.name, dependents }
+        return
+      }
+    }
+    await setFilesEnabled([mod], enabled)
+  }
+
+  async function setFilesEnabled(targets: InstalledMod[], enabled: boolean) {
+    // We leave the switches enabled while files rename, so they keep keyboard focus, and drop repeats.
+    if (toggling) return
+    toggling = targets[0].path
     actionError = null
     try {
-      const path = await api.setModEnabled(mod.path, enabled)
-      // The check is keyed by path, so it follows the file to its new name.
-      const status = modUpdates.checks?.get(mod.path)
-      if (modUpdates.checks && status) modUpdates.checks = new Map([...modUpdates.checks].map(([key, value]) => (key === mod.path ? [path, { ...status, path }] : [key, value])))
-      if (expanded === mod.path) expanded = path
-      mods = mods.map((m) => (m.path === mod.path ? { ...m, path } : m))
+      const paths = await api.setModsEnabled(targets.map((m) => m.path), enabled)
+      const renamed = new Map(targets.map((m, i) => [m.path, paths[i]]))
+      // Checks are keyed by path, so they follow each file to its new name.
+      if (modUpdates.checks) modUpdates.checks = new Map([...modUpdates.checks].map(([key, value]) => [renamed.get(key) ?? key, { ...value, path: renamed.get(key) ?? key }]))
+      if (expanded) expanded = renamed.get(expanded) ?? expanded
+      mods = mods.map((m) => (renamed.has(m.path) ? { ...m, path: renamed.get(m.path)! } : m))
       serverMods.changedSinceBuild = true
       serverMods.changedSinceTest = true
     } catch (error) {
-      actionError = `Couldn't ${enabled ? 'enable' : 'disable'} ${mod.name}: ${errorText(error)}`
+      const what = targets.length === 1 ? targets[0].name : `${targets.length} files`
+      actionError = `Couldn't ${enabled ? 'enable' : 'disable'} ${what}: ${errorText(error)}`
     } finally {
       toggling = null
+    }
+  }
+
+  function confirmDisable(cascade: boolean) {
+    if (!disabling) return
+    const { mod, dependents } = disabling
+    disabling = null
+    setFilesEnabled(cascade ? [mod, ...dependents.map((d) => d.mod)] : [mod], false)
+  }
+
+  async function toggleChangelog(projectId: number, fileId: number) {
+    openChangelog = openChangelog === fileId ? null : fileId
+    if (openChangelog === null || changelogs[fileId] !== undefined) return
+    try {
+      changelogs[fileId] = sanitizeRemoteHtml(await api.modChangelog(projectId, fileId)) || '<p>The author left this changelog empty.</p>'
+    } catch (error) {
+      changelogs[fileId] = { error: `Couldn't load the changelog from CurseForge: ${errorText(error)}` }
     }
   }
 
@@ -174,16 +229,12 @@
     if (confirmed) await update([...updates].map(([path, file]) => ({ fileId: file.fileId, replaces: path })))
   }
 
-  function requiredBy(mod: InstalledMod): string[] {
-    return mods.filter((m) => m.path !== mod.path && modUpdates.checks?.get(m.path)?.requires.includes(mod.projectId)).map((m) => m.name)
-  }
-
   async function remove(mod: InstalledMod) {
     // We only know what depends on a mod from a check, so we finish one before warning you.
     if (mods.some((m) => !modUpdates.checks?.has(m.path))) await check()
-    const dependents = requiredBy(mod)
+    const dependents = dependentsOf(mod).map((d) => d.name)
     const lines = [`Move ${fileName(mod.path)} to the ${trashName}?`]
-    if (dependents.length) lines.push(`${list(dependents)} ${dependents.length === 1 ? 'requires' : 'require'} ${mod.name}, so ${dependents.length === 1 ? 'it' : 'they'} may not load without it.`)
+    if (dependents.length) lines.push(`${list(dependents)} ${dependents.length === 1 ? 'requires' : 'require'} ${mod.name}, directly or through another mod, so ${dependents.length === 1 ? 'it' : 'they'} may not load without it.`)
     const confirmed = await ask(lines.join('\n\n'), { title: `Remove ${mod.name}`, kind: 'warning', okLabel: `Move to ${trashName}`, cancelLabel: 'Cancel' })
     if (!confirmed) return
     removing = mod.path
@@ -262,7 +313,7 @@
         { label: 'Copy link', disabled: !mod.url, run: () => mod.url && navigator.clipboard.writeText(mod.url) },
         'separator',
         { label: lockedHere ? 'Unlock' : 'Lock to this version', run: () => setLocked(mod, !lockedHere) },
-        ...(isMod(mod) ? [{ label: disabled ? 'Enable' : 'Disable', disabled: blocked, run: () => setEnabled(mod, disabled) }] : []),
+        { label: disabled ? 'Enable' : 'Disable', disabled: blocked, run: () => setEnabled(mod, disabled) },
         'separator',
         { label: `Move to ${trashName}`, danger: true, disabled: blocked, run: () => remove(mod) },
       ],
@@ -478,6 +529,7 @@
             </button>
           {/each}
         </div>
+        <input type="search" bind:this={searchField} bind:value={search} placeholder="Find a mod or author" aria-label="Find a mod or author" title="Find a mod or author ({shortcut('Ctrl+F')})" />
         <label class="channel">
           Update to
           <select value={modUpdates.channel} onchange={(e) => setChannel(e.currentTarget)}>
@@ -486,7 +538,6 @@
             <option value="release">Releases only</option>
           </select>
         </label>
-        <input type="search" bind:this={searchField} bind:value={search} placeholder="Find a mod or author" aria-label="Find a mod or author" title="Find a mod or author ({shortcut('Ctrl+F')})" />
       </div>
 
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -515,7 +566,8 @@
                 </tr>
               {/each}
             {:else}
-              {#each visible as mod (mod.path)}
+              <!-- Disabling a file renames it, so we key rows by what stays put and keep focus on the switch. -->
+              {#each visible as mod (`${mod.projectId}:${mod.fileId}`)}
                 {@const status = checkFor(mod)}
                 {@const next = updates.get(mod.path)}
                 {@const lockedHere = modUpdates.locked.has(mod.projectId)}
@@ -524,17 +576,16 @@
                 {@const logo = mod.logo ?? status?.logo}
                 <tr class="row" class:open={expanded === mod.path} class:off={disabled} onclick={(e) => onRowClick(e, mod)} oncontextmenu={(e) => openMenu(e, mod)}>
                   <td class="enabled">
-                    {#if isMod(mod)}
-                      <button
-                        class="switch"
-                        role="switch"
-                        aria-checked={!disabled}
-                        aria-label="Enable {mod.name}"
-                        title={disabled ? 'Disabled. packraven leaves it out of exports.' : 'Enabled'}
-                        disabled={blocked || toggling === mod.path}
-                        onclick={() => setEnabled(mod, disabled)}
-                      ></button>
-                    {/if}
+                    <button
+                      class="switch"
+                      role="switch"
+                      aria-checked={!disabled}
+                      aria-label="Enable {mod.name}"
+                      title={disabled ? 'Disabled. packraven leaves it out of exports.' : 'Enabled'}
+                      disabled={blocked}
+                      aria-busy={toggling === mod.path}
+                      onclick={() => setEnabled(mod, disabled)}
+                    ></button>
                   </td>
                   <td class="name">
                     <div class="identity">
@@ -548,6 +599,7 @@
                           {@render fileText(fileName(mod.path).replace(/\.disabled$/, ''))}
                           {#if status?.releaseType && status.releaseType !== 'release'}<span class="chip pending">{typeLabels[status.releaseType]}</span>{/if}
                         </div>
+                        {#if mod.authors.length}<div class="byline muted">by {mod.authors.join(', ')}</div>{/if}
                         {#if lockedHere && held}
                           <div class="muted held">Locked. {@render fileText(held.fileName)} is available.</div>
                         {:else if next}
@@ -565,6 +617,9 @@
                   <td class="update">
                     {#if next}
                       <button onclick={() => update([{ fileId: next.fileId, replaces: mod.path }])} disabled={blocked} aria-label="Update {mod.name}">Update</button>
+                    {:else if lockedHere && held}
+                      <!-- aria-disabled keeps the button hoverable, so its title can say why it's off. -->
+                      <button aria-disabled="true" aria-label="Update {mod.name}, locked" title="Unlock {mod.name} to update it">Update</button>
                     {/if}
                   </td>
                   <td class="locked">
@@ -607,8 +662,13 @@
                         {:else}
                           <ul class="files" aria-label="Versions of {mod.name}">
                             {#each versions as file (file.fileId)}
+                              {@const changelog = changelogs[file.fileId]}
                               <li>
-                                {@render fileText(file.fileName)}
+                                <button class="changelog-toggle" aria-expanded={openChangelog === file.fileId} aria-controls="changelog-{file.fileId}" onclick={() => toggleChangelog(mod.projectId, file.fileId)}>
+                                  <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3.5 2 6.5 5 3.5 8" /></svg>
+                                  {@render fileText(file.fileName)}
+                                  <span class="visually-hidden">changelog</span>
+                                </button>
                                 <span class="chip {file.releaseType === 'release' ? 'ok' : 'pending'}">{typeLabels[file.releaseType]}</span>
                                 <span class="muted">{date(file.fileDate)}</span>
                                 {#if file.fileId === mod.fileId}
@@ -617,6 +677,18 @@
                                   <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={blocked} aria-label="Use {file.fileName}">Use this</button>
                                 {/if}
                               </li>
+                              {#if openChangelog === file.fileId}
+                                <li class="changelog" id="changelog-{file.fileId}">
+                                  {#if changelog === undefined}
+                                    <p class="muted">Loading the changelog from CurseForge.</p>
+                                  {:else if typeof changelog !== 'string'}
+                                    <p class="failed">{changelog.error}</p>
+                                  {:else}
+                                    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (links inside are real links; this only routes their clicks) -->
+                                    <div class="description" onclick={onDescriptionClick}>{@html changelog}</div>
+                                  {/if}
+                                </li>
+                              {/if}
                             {/each}
                           </ul>
                         {/if}
@@ -652,6 +724,8 @@
     {/if}
   </div>
 </div>
+
+<DisableDialog request={disabling} onconfirm={confirmDisable} oncancel={() => (disabling = null)} />
 
 {#if menu}
   <ContextMenu x={menu.x} y={menu.y} label={menu.label} items={menu.items} onclose={() => (menu = null)} />
@@ -719,6 +793,7 @@
   }
 
   .panel {
+    container-type: inline-size;
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -735,8 +810,12 @@
 
   .actions {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 8px;
   }
+
+
 
   .filters {
     display: flex;
@@ -792,7 +871,8 @@
   }
 
   .tools input {
-    flex: 0 1 240px;
+    flex: 1 1 160px;
+    max-width: 280px;
     min-width: 0;
   }
 
@@ -846,8 +926,14 @@
     color: var(--muted);
     font-weight: 400;
     background: var(--surface);
-    padding: 4px 8px;
+    padding: 0;
     white-space: nowrap;
+    /* A nominal height lets the sort buttons fill the row with height: 100%. */
+    height: 1px;
+  }
+
+  th.trash {
+    padding: 4px 8px;
   }
 
   th.enabled,
@@ -856,19 +942,23 @@
     width: 1%;
   }
 
-  th.update {
-    text-align: right;
-  }
-
+  /* The whole header cell sorts, out to the column edges, not just its label. */
   .sort {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: 4px;
-    padding: 4px;
+    width: 100%;
+    height: 100%;
+    padding: 8px;
     font: inherit;
     color: inherit;
     background: transparent;
     border: 0;
+    border-radius: 0;
+  }
+
+  th.update .sort {
+    justify-content: flex-end;
   }
 
   .sort:hover:not(:disabled) {
@@ -1025,9 +1115,52 @@
     stroke-linejoin: round;
   }
 
-  .author {
+  .author,
+  .byline {
     font-size: var(--step--1);
+  }
+
+  .author {
     min-width: 9ch;
+  }
+
+  .byline {
+    display: none;
+  }
+
+  /* A narrow table folds the author column under each mod rather than scrolling sideways. */
+  @container (max-width: 600px) {
+    th.author,
+    td.author {
+      display: none;
+    }
+
+    .byline {
+      display: block;
+    }
+  }
+
+  /* In a short window a second scroller inside the page would show only a few rows, so the
+     table grows with the page instead and its header sticks to the page's scroller. */
+  @media (max-height: 700px) {
+    .mods,
+    .panel {
+      flex: none;
+    }
+
+    .table {
+      flex: none;
+      min-height: 0;
+      overflow: visible;
+    }
+
+    th:first-child {
+      border-top-left-radius: var(--radius-panel);
+    }
+
+    th:last-child {
+      border-top-right-radius: var(--radius-panel);
+    }
   }
 
   .update {
@@ -1152,9 +1285,56 @@
     padding: 4px 0;
   }
 
-  .files li button,
+  .files li > button:last-child,
   .files .current {
     margin-left: auto;
+  }
+
+  .changelog-toggle {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 2px 4px;
+    margin-left: -4px;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    background: transparent;
+    border: 0;
+  }
+
+  .changelog-toggle:hover:not(:disabled) {
+    background: var(--control-hi);
+  }
+
+  .changelog-toggle svg {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: transform 120ms ease-out;
+  }
+
+  .changelog-toggle[aria-expanded='true'] svg {
+    transform: rotate(90deg);
+  }
+
+  .changelog-toggle .file {
+    margin-right: 0;
+  }
+
+  .files li.changelog {
+    display: block;
+    padding: 4px 0 10px 18px;
+  }
+
+  .changelog .description {
+    max-height: 240px;
+    font-size: var(--step--1);
   }
 
   .details p {

@@ -32,6 +32,9 @@ test('installed mods can be sorted, filtered, expanded and changed', async ({ pa
 
   await page.getByRole('button', { name: /^Resource packs/ }).click()
   await expect(rows).toHaveCount(1)
+  const freshAnimations = page.getByRole('switch', { name: 'Enable Fresh Animations' })
+  await freshAnimations.click()
+  await expect(freshAnimations).toHaveAttribute('aria-checked', 'false')
   await page.getByRole('button', { name: /^Data packs/ }).click()
   await expect(page.getByRole('region', { name: 'Installed mods' })).toContainText('no data packs from CurseForge yet')
   await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Mods/ }).click()
@@ -67,7 +70,7 @@ test('installed mods can be sorted, filtered, expanded and changed', async ({ pa
   await page.keyboard.press('Escape')
 
   page.once('dialog', (dialog) => {
-    expect(dialog.message()).toContain('Apotheosis requires Placebo')
+    expect(dialog.message()).toContain("Apotheosis and Iron's Spells 'n Spellbooks require Placebo, directly or through another mod")
     dialog.accept()
   })
   await page.getByRole('button', { name: 'Remove Placebo' }).click()
@@ -98,12 +101,53 @@ test('a locked mod stays out of Update all', async ({ page }) => {
   await lock.click()
   await expect(lock).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByRole('button', { name: 'Update all (4)' })).toBeEnabled()
-  await expect(page.getByRole('button', { name: 'Update Apotheosis' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Update Apotheosis', exact: true })).toHaveCount(0)
   await expect(page.getByText('Locked. Apotheosis-1.21.1-8.9.0.jar is available.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Update Apotheosis, locked' })).toHaveAttribute('aria-disabled', 'true')
 
-  await page.getByRole('button', { name: 'Locked' }).click()
+  await page.getByRole('button', { name: 'Locked', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Installed mods' }).locator('tbody > tr.row').first()).toContainText('Apotheosis')
 
   await lock.click()
   await expect(page.getByRole('button', { name: 'Update all (5)' })).toBeEnabled()
+})
+
+test('disabling a mod others need offers to disable them too', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  const placebo = page.getByRole('switch', { name: 'Enable Placebo' })
+  await expect(page.getByRole('button', { name: 'Update all (5)' })).toBeEnabled()
+
+  await placebo.click()
+  const dialog = page.getByRole('dialog', { name: 'Disable Placebo' })
+  await expect(dialog.getByRole('list', { name: 'Mods that require Placebo' }).getByRole('listitem')).toHaveText(['Apotheosis', "Iron's Spells 'n Spellbooks"])
+  await expect(dialog.getByRole('checkbox')).toBeChecked()
+  await dialog.getByRole('button', { name: 'Disable 3 files' }).click()
+  for (const name of ['Placebo', 'Apotheosis', "Iron's Spells 'n Spellbooks"]) {
+    await expect(page.getByRole('switch', { name: `Enable ${name}` })).toHaveAttribute('aria-checked', 'false')
+  }
+
+  // Turning dependents back on is a choice per mod, so enabling Placebo leaves the others off.
+  await placebo.click()
+  await expect(placebo).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByRole('switch', { name: 'Enable Apotheosis' })).toHaveAttribute('aria-checked', 'false')
+
+  await page.getByRole('switch', { name: 'Enable Apotheosis' }).click()
+  await page.getByRole('switch', { name: "Enable Iron's Spells 'n Spellbooks" }).click()
+  await placebo.click()
+  await dialog.getByRole('checkbox').uncheck()
+  await dialog.getByRole('button', { name: 'Disable Placebo only' }).click()
+  await expect(placebo).toHaveAttribute('aria-checked', 'false')
+  await expect(page.getByRole('switch', { name: 'Enable Apotheosis' })).toHaveAttribute('aria-checked', 'true')
+})
+
+test('clicking a version shows its changelog', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  await page.getByRole('button', { name: 'Apotheosis', exact: true }).click()
+  const versions = page.getByRole('list', { name: 'Versions of Apotheosis' })
+  const first = versions.getByRole('button', { name: /changelog$/ }).first()
+  await first.click()
+  await expect(first).toHaveAttribute('aria-expanded', 'true')
+  await expect(versions.locator('.changelog')).toContainText('Fixed a crash with Iris')
+  await first.click()
+  await expect(versions.locator('.changelog')).toHaveCount(0)
 })

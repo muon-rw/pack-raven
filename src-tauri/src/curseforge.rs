@@ -281,6 +281,10 @@ pub async fn description(project_id: u64) -> Result<String> {
     Ok(core_get(&format!("/mods/{project_id}/description")).await?.as_str().unwrap_or_default().to_string())
 }
 
+pub async fn changelog(project_id: u64, file_id: u64) -> Result<String> {
+    Ok(core_get(&format!("/mods/{project_id}/files/{file_id}/changelog")).await?.as_str().unwrap_or_default().to_string())
+}
+
 pub fn file_status_name(status: u32) -> &'static str {
     match status {
         1 => "Processing",

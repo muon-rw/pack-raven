@@ -46,11 +46,11 @@ pub fn save_releases(path: &Path, releases: &[Release]) -> Result<()> {
 }
 
 pub fn preflight_warnings(pack: &Pack) -> Vec<String> {
-    let disabled: Vec<&str> = pack.lock.files.iter().filter_map(|e| e.path.strip_prefix("mods/")?.strip_suffix(".disabled")).collect();
+    let disabled: Vec<&str> = pack.lock.files.iter().filter_map(|e| e.path.strip_suffix(".disabled")?.split_once('/').map(|(_, name)| name)).collect();
     match disabled[..] {
         [] => vec![],
         [one] => vec![format!("{one} is disabled, so packraven leaves it out of the export.")],
-        _ => vec![format!("{} mods are disabled, so packraven leaves them out of the export: {}.", disabled.len(), disabled.join(", "))],
+        _ => vec![format!("{} files are disabled, so packraven leaves them out of the export: {}.", disabled.len(), disabled.join(", "))],
     }
 }
 

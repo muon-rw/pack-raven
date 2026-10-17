@@ -56,4 +56,7 @@ mods/*.disabled
 resourcepacks/*.zip
 shaderpacks/*.zip
 datapacks/*.zip
+resourcepacks/*.disabled
+shaderpacks/*.disabled
+datapacks/*.disabled
 config/spark/

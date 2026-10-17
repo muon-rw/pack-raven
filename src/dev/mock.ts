@@ -142,7 +142,7 @@ let installedMods: MockMod[] =
         ...(scenario === 'dirty'
           ? [{ path: 'mods/iris-neoforge-1.8.0.jar', projectId: 455508, fileId: 8600500, name: 'Iris Shaders', url: cfUrl('irisshaders'), logo: logo('I', '#6a3f8a'), releaseType: 'release', requires: [394468], newer: [] }]
           : []),
-        { path: 'mods/irons_spellbooks-1.21.1-3.4.0.jar', projectId: 855414, fileId: 8600000, name: "Iron's Spells 'n Spellbooks", url: cfUrl('irons-spells-n-spellbooks'), logo: logo('I', '#8a3f3f'), releaseType: 'release', requires: [], newer: [newer(8990000, 'irons_spellbooks-1.21.1-3.5.0-beta.2.jar', 'beta')] },
+        { path: 'mods/irons_spellbooks-1.21.1-3.4.0.jar', projectId: 855414, fileId: 8600000, name: "Iron's Spells 'n Spellbooks", url: cfUrl('irons-spells-n-spellbooks'), logo: logo('I', '#8a3f3f'), releaseType: 'release', requires: [313970], newer: [newer(8990000, 'irons_spellbooks-1.21.1-3.5.0-beta.2.jar', 'beta')] },
         { path: 'mods/jei-1.21.1-neoforge-19.21.0.247.jar', projectId: 238222, fileId: 8650000, name: 'Just Enough Items (JEI)', url: cfUrl('jei'), logo: logo('J', '#4a6a2a'), releaseType: 'release', requires: [], newer: [] },
         { path: 'mods/shouldersurfing-neoforge-4.5.0.jar', projectId: 243190, fileId: 8500000, name: 'Shoulder Surfing Reloaded', url: null, logo: logo('S', '#2a5a6a'), releaseType: 'release', requires: [], newer: [] },
         { path: 'mods/betterclouds-neoforge-1.3.2.jar.disabled', projectId: 438180, fileId: 8400000, name: 'Better Clouds', url: cfUrl('better-clouds'), logo: logo('B', '#5a7a9a'), releaseType: 'release', requires: [], newer: [newer(8800500, 'betterclouds-neoforge-1.3.4.jar')] },
@@ -595,11 +595,14 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     mods: installedMods.map(({ path, projectId, fileId, name, url, logo }) => ({ path, projectId, fileId, name, url, logo, authors: authorsOf[projectId] ?? [] })),
     locked: config.updates.locked,
   }),
-  set_mod_enabled: (a) => {
-    const mod = installedMods.find((m) => m.path === a.path)!
-    mod.path = a.enabled ? mod.path.replace(/\.disabled$/, '') : `${mod.path}.disabled`
-    return mod.path
-  },
+  set_mods_enabled: (a) =>
+    (a.paths as string[]).map((path) => {
+      const mod = installedMods.find((m) => m.path === path)!
+      mod.path = a.enabled ? mod.path.replace(/\.disabled$/, '') : mod.path.endsWith('.disabled') ? mod.path : `${mod.path}.disabled`
+      return mod.path
+    }),
+  mod_changelog: (a) =>
+    new Promise((resolve) => setTimeout(() => resolve(`<h3>Changes in file ${a.fileId}</h3><ul><li>Fixed a crash with <strong>Iris</strong></li><li>Updated translations</li></ul><p>Full notes on <a href="https://github.com/example/changelog">GitHub</a>.</p>`), 200)),
   mod_description: (a) =>
     new Promise((resolve) =>
       setTimeout(

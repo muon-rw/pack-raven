@@ -92,21 +92,39 @@ pub async fn mod_description(project_id: u64) -> CmdResult<String> {
 const DISABLED_SUFFIX: &str = ".disabled";
 
 #[tauri::command]
-pub async fn set_mod_enabled(state: State<'_, AppState>, path: String, enabled: bool) -> CmdResult<String> {
+pub async fn mod_changelog(project_id: u64, file_id: u64) -> CmdResult<String> {
+    crate::curseforge::changelog(project_id, file_id).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn set_mods_enabled(state: State<'_, AppState>, paths: Vec<String>, enabled: bool) -> CmdResult<Vec<String>> {
     if client_running(&state) {
         return Err(CLIENT_HAS_MODS_OPEN.into());
     }
-    if !path.starts_with("mods/") {
-        return Err(format!("{path} isn't in the mods folder"));
-    }
-    let renamed = match (enabled, path.strip_suffix(DISABLED_SUFFIX)) {
-        (true, Some(plain)) => plain.to_string(),
-        (false, None) => format!("{path}{DISABLED_SUFFIX}"),
-        _ => return Ok(path),
-    };
+    let dir = state.settings().instance_dir;
     let _guard = modsync::MOD_LIST_GUARD.lock().await;
-    modsync::rename_locked_file(&state.settings().instance_dir, &path, &renamed).map_err(err)?;
-    Ok(renamed)
+    let mut renamed_paths = Vec::new();
+    for path in paths {
+        let Some((folder, _)) = path.split_once('/').filter(|(folder, _)| ["mods", "resourcepacks", "shaderpacks", "datapacks"].contains(folder)) else {
+            return Err(format!("{path} isn't in a folder packraven manages"));
+        };
+        let renamed = match (enabled, path.strip_suffix(DISABLED_SUFFIX)) {
+            (true, Some(plain)) => plain.to_string(),
+            (false, None) => format!("{path}{DISABLED_SUFFIX}"),
+            _ => {
+                renamed_paths.push(path);
+                continue;
+            }
+        };
+        // Packs set up before we supported disabling resource packs and shaders don't ignore their
+        // disabled files yet, and git would offer to commit them.
+        if !enabled {
+            crate::setup::ensure_lines(&dir.join(".gitignore"), &[&format!("{folder}/*{DISABLED_SUFFIX}")]).map_err(err)?;
+        }
+        modsync::rename_locked_file(&dir, &path, &renamed).map_err(err)?;
+        renamed_paths.push(renamed);
+    }
+    Ok(renamed_paths)
 }
 
 #[tauri::command]

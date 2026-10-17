@@ -23,7 +23,17 @@ const HOOKS: [(&str, &str); 5] = [
 const REMOVED_HOOKS: [&str; 2] = ["modsync.py", "iris_clean.py"];
 const GITIGNORE_TEMPLATE: &str = include_str!("../resources/pack.gitignore");
 const GITATTRIBUTES: [&str; 3] = [".githooks/* text eol=lf", "mods.lock.json text eol=lf", "config/iris.properties filter=iris"];
-const BINARY_PATTERNS: [&str; 6] = ["mods/*.jar", "mods/*.disabled", "resourcepacks/*.zip", "shaderpacks/*.zip", "datapacks/*.zip", "config/spark"];
+const BINARY_PATTERNS: [&str; 9] = [
+    "mods/*.jar",
+    "mods/*.disabled",
+    "resourcepacks/*.zip",
+    "resourcepacks/*.disabled",
+    "shaderpacks/*.zip",
+    "shaderpacks/*.disabled",
+    "datapacks/*.zip",
+    "datapacks/*.disabled",
+    "config/spark",
+];
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]

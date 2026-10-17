@@ -281,6 +281,18 @@
     padding: 14px 16px;
   }
 
+  @media (max-height: 700px) {
+    .browser {
+      flex: none;
+    }
+
+    .results {
+      flex: none;
+      min-height: 0;
+      overflow: visible;
+    }
+  }
+
   .stale {
     opacity: 0.55;
     transition: opacity 120ms ease-out;
