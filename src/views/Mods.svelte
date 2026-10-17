@@ -1,15 +1,16 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
   import JobLog from '../components/JobLog.svelte'
+  import ModBrowser from '../components/ModBrowser.svelte'
   import { onMount, untrack } from 'svelte'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { ask } from '@tauri-apps/plugin-dialog'
-  import { api, errorText, type InstalledMod, type ModCheck, type ModFile, type ReleaseType, type UpdateRequest } from '../lib/api'
+  import { api, errorText, type InstalledMod, type ModCheck, type ModFile, type ReleaseType, type ModRequest } from '../lib/api'
   import { job, onJobEnd, serverMods } from '../lib/jobs.svelte'
-  import { availableUpdate, modUpdates } from '../lib/modUpdates.svelte'
+  import { availableUpdate, browse, modUpdates } from '../lib/modUpdates.svelte'
   import { commandKey, shortcut, trashName } from '../lib/platform'
 
-  let { pack, clientRunning }: { pack: string | null; clientRunning: boolean } = $props()
+  let { pack, game, clientRunning }: { pack: string | null; game: string; clientRunning: boolean } = $props()
 
   type Filter = 'updates' | 'all'
 
@@ -94,10 +95,10 @@
     }
   }
 
-  async function update(requests: UpdateRequest[]) {
+  async function update(requests: ModRequest[]) {
     actionError = null
     try {
-      await api.updateMods(requests)
+      await api.changeMods(requests)
     } catch (error) {
       actionError = `Couldn't start the update: ${errorText(error)}`
     }
@@ -192,13 +193,19 @@
     return `${updates.size} ${updates.size === 1 ? 'has an update' : 'have updates'}.`
   })
 
-  let searchField: HTMLInputElement
+  let installedIds = $derived(new Set(mods.map((m) => m.projectId)))
+
+  let searchField: HTMLInputElement | undefined = $state()
+  let browser: ModBrowser | undefined = $state()
 
   function onKey(event: KeyboardEvent) {
     if (event.key.toLowerCase() !== 'f' || event.shiftKey || !commandKey(event) || event.defaultPrevented) return
     event.preventDefault()
-    searchField.focus()
-    searchField.select()
+    if (browse.tab === 'browse') browser?.focusSearch()
+    else {
+      searchField?.focus()
+      searchField?.select()
+    }
   }
 </script>
 
@@ -213,7 +220,9 @@
     <div class="title">
     <h2>Mods</h2>
     <p class="muted">
-      {#if loading && !mods.length}
+      {#if browse.tab === 'browse'}
+        Search CurseForge for mods, resource packs and shaders that run on {game}.
+      {:else if loading && !mods.length}
         Reading the mod list.
       {:else if !mods.length}
         This pack has no mods from CurseForge yet.
@@ -222,18 +231,28 @@
       {/if}
     </p>
     </div>
+    {#if browse.tab === 'installed'}
     <div class="actions">
       <button onclick={check} disabled={checking || updating || !mods.length} class:busy={checking}>{checking ? 'Checking' : 'Check for updates'}</button>
       <button
         class="primary"
         class:busy={updating}
         disabled={!updates.size || locked}
-        onclick={() => update([...updates].map(([path, file]) => ({ path, fileId: file.fileId })))}
+        onclick={() => update([...updates].map(([path, file]) => ({ fileId: file.fileId, replaces: path })))}
       >
         {updating ? 'Updating' : updates.size ? `Update all (${updates.size})` : 'Update all'}
       </button>
     </div>
+    {/if}
   </header>
+
+  <div class="tabs" role="tablist" aria-label="Mods">
+    {#each [['installed', 'Installed'], ['browse', 'Browse']] as const as [tab, label] (tab)}
+      <button role="tab" id="mods-tab-{tab}" aria-selected={browse.tab === tab} aria-controls="mods-panel" class:on={browse.tab === tab} onclick={() => (browse.tab = tab)}>
+        {label}{#if tab === 'installed' && mods.length}<span class="muted tab-count">{mods.length}</span>{/if}
+      </button>
+    {/each}
+  </div>
 
   {#if loadError}
     <Notice tone="error">
@@ -265,16 +284,20 @@
     <Notice tone="ok"><p>{job('mods').message}</p></Notice>
   {:else if job('mods').phase === 'failed'}
     <Notice tone="error">
-      <p>Couldn't finish the update: {job('mods').message}</p>
+      <p>Couldn't finish changing mods: {job('mods').message}</p>
     </Notice>
   {/if}
   {#if updating || job('mods').phase === 'failed'}
     <details class="log" open={job('mods').phase === 'failed'}>
-      <summary>{updating ? 'Downloading updates' : 'Update log'}</summary>
-      <JobLog lines={job('mods').lines} label="Update log" />
+      <summary>{updating ? 'Downloading mods' : 'Log'}</summary>
+      <JobLog lines={job('mods').lines} label="Mod changes log" />
     </details>
   {/if}
 
+  <div class="panel" id="mods-panel" role="tabpanel" aria-labelledby="mods-tab-{browse.tab}">
+  {#if browse.tab === 'browse'}
+    <ModBrowser bind:this={browser} {installedIds} {locked} {game} install={update} />
+  {:else}
   <div class="tools">
     <div class="filters" role="group" aria-label="Show">
       <button aria-pressed={filter === 'all'} class:on={filter === 'all'} onclick={() => (filter = 'all')}>All</button>
@@ -341,7 +364,7 @@
               <td>
                 <div class="row-actions">
                 {#if next}
-                  <button onclick={() => update([{ path: mod.path, fileId: next.fileId }])} disabled={locked} aria-label="Update {mod.name}">Update</button>
+                  <button onclick={() => update([{ fileId: next.fileId, replaces: mod.path }])} disabled={locked} aria-label="Update {mod.name}">Update</button>
                 {/if}
                 <button class="ghost" aria-expanded={expanded === mod.path} onclick={() => toggleVersions(mod)} aria-label="Versions of {mod.name}">Versions</button>
                 <button class="ghost" onclick={() => remove(mod)} disabled={locked || removing === mod.path} aria-label="Remove {mod.name}">Remove</button>
@@ -367,7 +390,7 @@
                           {#if file.fileId === mod.fileId}
                             <span class="muted current">Installed</span>
                           {:else}
-                            <button onclick={() => update([{ path: mod.path, fileId: file.fileId }])} disabled={locked}>
+                            <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={locked}>
                               Use this
                             </button>
                           {/if}
@@ -386,7 +409,7 @@
                 {:else if filter === 'updates'}
                   {modUpdates.checks ? 'Every mod is on its newest file for this update channel.' : "Check for updates to see which mods have one."}
                 {:else}
-                  This pack has no mods from CurseForge yet.
+                  This pack has no mods from CurseForge yet. <button class="link" onclick={() => (browse.tab = 'browse')}>Browse CurseForge</button>
                 {/if}
               </td>
             </tr>
@@ -394,6 +417,8 @@
         {/if}
       </tbody>
     </table>
+  </div>
+  {/if}
   </div>
 </div>
 
@@ -421,6 +446,48 @@
 
   .head p {
     max-width: 64ch;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .tabs button {
+    margin-bottom: -1px;
+    padding: 8px 14px;
+    font-weight: 400;
+    color: var(--muted);
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+  }
+
+  .tabs button:hover:not(.on) {
+    color: var(--text);
+    background: transparent;
+  }
+
+  .tabs button.on {
+    color: var(--text);
+    font-weight: 700;
+    border-bottom-color: var(--forest);
+  }
+
+  .tab-count {
+    margin-left: 6px;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-height: 0;
   }
 
   .tools {

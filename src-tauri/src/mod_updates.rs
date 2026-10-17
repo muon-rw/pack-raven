@@ -42,13 +42,14 @@ pub struct ModCheck {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdateRequest {
-    pub path: String,
+pub struct ModRequest {
     pub file_id: u64,
+    pub replaces: Option<String>,
 }
 
-pub struct UpdatePlan {
+pub struct ModPlan {
     pub placements: Vec<Placement>,
+    pub installs: Vec<String>,
     pub dependencies: Vec<String>,
     pub unavailable: Vec<String>,
 }
@@ -176,16 +177,151 @@ pub async fn versions(pack: &Pack, path: &str, project_id: u64) -> Result<Vec<Mo
         .collect())
 }
 
-pub async fn plan(pack: &Pack, requests: &[UpdateRequest]) -> Result<UpdatePlan> {
+#[derive(Deserialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AddonKind {
+    Mods,
+    ResourcePacks,
+    ShaderPacks,
+    DataPacks,
+}
+
+// CurseForge's class IDs for Minecraft.
+const KINDS: [(AddonKind, u64, &str); 4] =
+    [(AddonKind::Mods, 6, "mods"), (AddonKind::ResourcePacks, 12, "resourcepacks"), (AddonKind::ShaderPacks, 6552, "shaderpacks"), (AddonKind::DataPacks, 6945, "datapacks")];
+
+impl AddonKind {
+    fn class_id(self) -> u64 {
+        KINDS.iter().find(|(kind, ..)| *kind == self).map_or(6, |(_, id, _)| *id)
+    }
+}
+
+fn folder_for(class_id: Option<u64>) -> &'static str {
+    KINDS.iter().find(|(_, id, _)| Some(*id) == class_id).map_or("mods", |(.., folder)| folder)
+}
+
+#[derive(Deserialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchSort {
+    Popularity,
+    Downloads,
+    Updated,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchRequest {
+    text: String,
+    kind: AddonKind,
+    category_id: Option<u64>,
+    sort: SearchSort,
+    index: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResult {
+    project_id: u64,
+    name: String,
+    summary: String,
+    authors: Vec<String>,
+    downloads: u64,
+    updated: String,
+    logo: Option<String>,
+    url: Option<String>,
+    file: Option<ModFile>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchPage {
+    results: Vec<SearchResult>,
+    total: u32,
+}
+
+#[derive(Serialize)]
+pub struct Category {
+    id: u64,
+    name: String,
+}
+
+const SEARCH_PAGE_SIZE: u32 = 20;
+
+pub async fn search(pack: &Pack, request: &SearchRequest) -> Result<SearchPage> {
+    let target = Target::of(pack)?;
+    let query = curseforge::SearchQuery {
+        text: &request.text,
+        class_id: request.kind.class_id(),
+        category_id: request.category_id,
+        minecraft: &target.minecraft,
+        // Only mods have a loader. CurseForge returns no resource packs if we ask for one.
+        loader_type: matches!(request.kind, AddonKind::Mods).then_some(target.loaders[0]),
+        sort_field: match request.sort {
+            SearchSort::Popularity => 2,
+            SearchSort::Updated => 3,
+            SearchSort::Downloads => 6,
+        },
+        index: request.index,
+        page_size: SEARCH_PAGE_SIZE.min(curseforge::MAX_SEARCH_RESULTS.saturating_sub(request.index)),
+    };
+    let (projects, total) = curseforge::search(&query).await?;
+    let channel = pack.config.updates.channel;
+    let results = projects
+        .into_iter()
+        .map(|project| {
+            let file = target.newest(&project, channel).or_else(|| target.newest(&project, ReleaseType::Alpha)).map(|i| ModFile {
+                file_id: i.file_id,
+                file_name: i.filename.clone(),
+                release_type: release_type(i.release_type),
+                file_date: None,
+            });
+            SearchResult {
+                project_id: project.id,
+                authors: project.authors.iter().map(|a| a.name.clone()).collect(),
+                logo: project.logo.map(|l| l.thumbnail_url),
+                url: project.links.website_url,
+                name: project.name,
+                summary: project.summary,
+                downloads: project.download_count,
+                updated: project.date_modified,
+                file,
+            }
+        })
+        .collect();
+    Ok(SearchPage { results, total })
+}
+
+pub async fn categories(kind: AddonKind) -> Result<Vec<Category>> {
+    Ok(curseforge::categories(kind.class_id()).await?.into_iter().map(|c| Category { id: c.id, name: c.name }).collect())
+}
+
+pub async fn plan(pack: &Pack, requests: &[ModRequest]) -> Result<ModPlan> {
     let target = Target::of(pack)?;
     let requested: Vec<u64> = requests.iter().map(|r| r.file_id).collect();
     let files = curseforge::files(&requested).await?;
+    let file = |id: u64| files.get(&id).with_context(|| format!("CurseForge has no file {id}"));
+    let new_projects: Vec<u64> = requests.iter().filter(|r| r.replaces.is_none()).map(|r| file(r.file_id).map(|f| f.mod_id)).collect::<Result<_>>()?;
+    let new_projects = if new_projects.is_empty() { HashMap::new() } else { curseforge::mods(&new_projects).await? };
     let mut present: HashSet<u64> = pack.lock.files.iter().map(|e| e.project_id).collect();
     let mut placements = Vec::new();
+    let mut installs = Vec::new();
     for request in requests {
-        let file = files.get(&request.file_id).with_context(|| format!("CurseForge has no file {}", request.file_id))?;
-        let (folder, _) = request.path.rsplit_once('/').with_context(|| format!("{} isn't in a pack folder", request.path))?;
-        placements.push(Placement { entry: lock_entry(file, folder, request.path.ends_with(DISABLED_SUFFIX))?, replaces: Some(request.path.clone()) });
+        let file = file(request.file_id)?;
+        let entry = match &request.replaces {
+            Some(path) => {
+                let (folder, _) = path.rsplit_once('/').with_context(|| format!("{path} isn't in a pack folder"))?;
+                lock_entry(file, folder, path.ends_with(DISABLED_SUFFIX))?
+            }
+            None => {
+                let project = new_projects.get(&file.mod_id).with_context(|| format!("CurseForge has no project {}", file.mod_id))?;
+                if present.contains(&file.mod_id) {
+                    bail!("{} is already in this pack", project.name);
+                }
+                installs.push(project.name.clone());
+                lock_entry(file, folder_for(project.class_id), false)?
+            }
+        };
+        placements.push(Placement { entry, replaces: request.replaces.clone() });
         present.insert(file.mod_id);
     }
 
@@ -218,7 +354,7 @@ pub async fn plan(pack: &Pack, requests: &[UpdateRequest]) -> Result<UpdatePlan>
         }
         wanted = missing_dependencies(chosen_files.values(), &present);
     }
-    Ok(UpdatePlan { placements, dependencies, unavailable })
+    Ok(ModPlan { placements, installs, dependencies, unavailable })
 }
 
 fn missing_dependencies<'a>(files: impl Iterator<Item = &'a CfFile>, present: &HashSet<u64>) -> Vec<u64> {
@@ -228,15 +364,6 @@ fn missing_dependencies<'a>(files: impl Iterator<Item = &'a CfFile>, present: &H
     missing
 }
 
-// CurseForge's class IDs for Minecraft.
-fn folder_for(class_id: Option<u64>) -> &'static str {
-    match class_id {
-        Some(12) => "resourcepacks",
-        Some(6552) => "shaderpacks",
-        Some(6945) => "datapacks",
-        _ => "mods",
-    }
-}
 
 pub(crate) fn lock_entry(file: &CfFile, folder: &str, disabled: bool) -> Result<LockEntry> {
     if file.file_name.contains(['/', '\\']) || file.file_name.starts_with('.') {

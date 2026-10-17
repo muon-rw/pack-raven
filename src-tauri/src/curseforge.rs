@@ -30,6 +30,34 @@ pub struct CfMod {
     pub class_id: Option<u64>,
     #[serde(default)]
     pub latest_files_indexes: Vec<CfFileIndex>,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub download_count: u64,
+    #[serde(default)]
+    pub categories: Vec<CfCategory>,
+    #[serde(default)]
+    pub date_modified: String,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CfCategory {
+    pub id: u64,
+    pub name: String,
+    #[serde(default)]
+    pub parent_category_id: Option<u64>,
+}
+
+pub struct SearchQuery<'a> {
+    pub text: &'a str,
+    pub class_id: u64,
+    pub category_id: Option<u64>,
+    pub minecraft: &'a str,
+    pub loader_type: Option<u32>,
+    pub sort_field: u32,
+    pub index: u32,
+    pub page_size: u32,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -210,6 +238,43 @@ pub async fn project_files(project_id: u64, minecraft: &str, loader_type: Option
     let loader = loader_type.map(|l| format!("&modLoaderType={l}")).unwrap_or_default();
     let data = core_get(&format!("/mods/{project_id}/files?gameVersion={minecraft}{loader}&pageSize=50")).await?;
     Ok(serde_json::from_value(data)?)
+}
+
+// CurseForge rejects a search whose index plus page size passes 10,000.
+pub const MAX_SEARCH_RESULTS: u32 = 10_000;
+
+pub async fn search(query: &SearchQuery<'_>) -> Result<(Vec<CfMod>, u32)> {
+    let key = core_key().context(NO_CORE_KEY)?;
+    let mut params: Vec<(&str, String)> = vec![
+        ("gameId", MINECRAFT_GAME_ID.to_string()),
+        ("classId", query.class_id.to_string()),
+        ("gameVersion", query.minecraft.to_string()),
+        ("sortField", query.sort_field.to_string()),
+        ("sortOrder", "desc".into()),
+        ("index", query.index.to_string()),
+        ("pageSize", query.page_size.to_string()),
+    ];
+    if !query.text.trim().is_empty() {
+        params.push(("searchFilter", query.text.trim().to_string()));
+    }
+    if let Some(category) = query.category_id {
+        params.push(("categoryId", category.to_string()));
+    }
+    if let Some(loader) = query.loader_type {
+        params.push(("modLoaderType", loader.to_string()));
+    }
+    let response = CLIENT.get(format!("{CORE_API}/mods/search")).query(&params).header("x-api-key", key).send().await?;
+    let mut body = response.error_for_status()?.json::<Value>().await?;
+    let total = body["pagination"]["totalCount"].as_u64().unwrap_or_default().min(u64::from(MAX_SEARCH_RESULTS)) as u32;
+    Ok((serde_json::from_value(body["data"].take())?, total))
+}
+
+pub async fn categories(class_id: u64) -> Result<Vec<CfCategory>> {
+    let data = core_get(&format!("/categories?gameId={MINECRAFT_GAME_ID}&classId={class_id}")).await?;
+    let mut categories: Vec<CfCategory> = serde_json::from_value(data)?;
+    categories.retain(|c| c.parent_category_id == Some(class_id));
+    categories.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(categories)
 }
 
 pub fn file_status_name(status: u32) -> &'static str {

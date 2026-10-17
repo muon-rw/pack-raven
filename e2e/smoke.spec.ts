@@ -42,3 +42,19 @@ test('mods can be filtered, updated and removed', async ({ page }) => {
   await page.getByRole('button', { name: 'Remove Placebo' }).click()
   await expect(page.getByRole('button', { name: 'Remove Placebo' })).toHaveCount(0)
 })
+
+test('mods can be found on CurseForge and installed with their dependencies', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  await page.getByRole('tab', { name: 'Browse' }).click()
+  await expect(page.getByRole('region', { name: 'Search results' }).getByText('Installed', { exact: true })).not.toHaveCount(0)
+
+  await page.getByRole('searchbox', { name: 'Search CurseForge' }).fill('steam')
+  await expect(page.getByRole('button', { name: /^Install / })).toHaveCount(1)
+  await page.getByRole('button', { name: "Install Create: Steam 'n' Rails" }).click()
+  await expect(page.getByRole('group', { name: "Install Create: Steam 'n' Rails" })).toContainText('requires Create and Flywheel')
+  await page.getByRole('button', { name: 'Install all 3' }).click()
+
+  await expect(page.getByRole('status').filter({ hasText: "Installed Create: Steam 'n' Rails. Added Create and Flywheel as required." })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Install / })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Installed' })).toContainText('13')
+})

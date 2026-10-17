@@ -143,7 +143,83 @@ function mockJob(job: string, lines: string[], message: string, change: () => vo
   }, 150 * (lines.length + 2))
 }
 
-function updateMods(requests: { path: string; fileId: number }[]) {
+type MockProject = { projectId: number; name: string; summary: string; authors: string[]; downloads: number; updated: string; kind: string; fileName: string | null; releaseType?: string; requires?: number[] }
+// prettier-ignore
+const catalog: MockProject[] = [
+  { projectId: 313970, name: 'Apotheosis', summary: 'All things that should have been.', authors: ['Shadows_of_Fire'], downloads: 135562157, updated: '2026-10-04T05:31:43Z', kind: 'mods', fileName: 'Apotheosis-1.21.1-8.9.0.jar', requires: [283644] },
+  { projectId: 328085, name: 'Create', summary: 'Aesthetic technology that empowers the player.', authors: ['simibubi'], downloads: 162400000, updated: '2026-09-30T12:00:00Z', kind: 'mods', fileName: 'create-1.21.1-6.0.6.jar', requires: [486392] },
+  { projectId: 688231, name: "Create: Steam 'n' Rails", summary: 'Adding depth to Create\'s rail network & steam system.', authors: ['IThundxr', 'Slimeist'], downloads: 41800000, updated: '2026-09-18T09:00:00Z', kind: 'mods', fileName: 'Steam_Rails-1.7.0+neoforge-mc1.21.1.jar', requires: [328085] },
+  { projectId: 486392, name: 'Flywheel', summary: 'An overhauled rendering engine for Minecraft mods.', authors: ['Jozufozu'], downloads: 98000000, updated: '2026-09-12T09:00:00Z', kind: 'mods', fileName: 'flywheel-neoforge-1.21.1-1.0.4.jar' },
+  { projectId: 238222, name: 'Just Enough Items (JEI)', summary: 'View items and recipes.', authors: ['mezz'], downloads: 389000000, updated: '2026-10-10T09:00:00Z', kind: 'mods', fileName: 'jei-1.21.1-neoforge-19.21.0.247.jar' },
+  { projectId: 520110, name: 'Farmer\'s Delight', summary: 'A gentle expansion to farming and cooking in Minecraft.', authors: ['vectorwing'], downloads: 120000000, updated: '2026-08-20T09:00:00Z', kind: 'mods', fileName: 'FarmersDelight-1.21.1-1.2.9.jar' },
+  { projectId: 551736, name: 'Distant Horizons', summary: 'See farther without turning your game into a slide show.', authors: ['James Seibel'], downloads: 24000000, updated: '2026-10-08T09:00:00Z', kind: 'mods', fileName: 'DistantHorizons-2.4.0-b-1.21.1-fabric-neoforge.jar', releaseType: 'beta' },
+  { projectId: 404465, name: 'FTB Quests', summary: 'Questing mod that lets pack authors write a quest book.', authors: ['FTB'], downloads: 87000000, updated: '2026-07-01T09:00:00Z', kind: 'mods', fileName: null },
+  { projectId: 855414, name: "Iron's Spells 'n Spellbooks", summary: 'Upgrade your magic with 80+ spells, scrolls and spellbooks.', authors: ['iron431'], downloads: 61000000, updated: '2026-10-01T09:00:00Z', kind: 'mods', fileName: 'irons_spellbooks-1.21.1-3.5.0.jar' },
+  { projectId: 453763, name: 'Fresh Animations', summary: 'Breathing new life into the mobs of Minecraft.', authors: ['FreshLX'], downloads: 18000000, updated: '2026-09-01T09:00:00Z', kind: 'resourcepacks', fileName: 'FreshAnimations_v1.9.4.zip' },
+  { projectId: 627557, name: 'Complementary Shaders - Reimagined', summary: 'Complementary with the classic looks.', authors: ['EminGT'], downloads: 32000000, updated: '2026-09-21T09:00:00Z', kind: 'shaderpacks', fileName: 'ComplementaryReimagined_r5.6.zip' },
+]
+const colors = ['#7a4b2a', '#5b6b8a', '#3f6e4e', '#6a3f8a', '#8a3f3f', '#4a6a2a', '#2a5a6a', '#9a6a2a', '#2a4a7a']
+const projectLogo = (p: MockProject) => logo(p.name[0], colors[p.projectId % colors.length])
+
+function searchMods(request: { text: string; kind: string; categoryId: number | null; sort: string; index: number }) {
+  const text = request.text.trim().toLowerCase()
+  const sorted = catalog
+    .filter((p) => p.kind === request.kind && (!text || p.name.toLowerCase().includes(text) || p.summary.toLowerCase().includes(text)))
+    .sort((a, b) => (request.sort === 'updated' ? b.updated.localeCompare(a.updated) : b.downloads - a.downloads))
+  const results = sorted.slice(request.index, request.index + 8).map((p) => ({
+    projectId: p.projectId,
+    name: p.name,
+    summary: p.summary,
+    authors: p.authors,
+    downloads: p.downloads,
+    updated: p.updated,
+    logo: projectLogo(p),
+    url: cfUrl(p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')),
+    file: p.fileName ? { fileId: p.projectId * 10, fileName: p.fileName, releaseType: p.releaseType ?? 'release', fileDate: null } : null,
+  }))
+  return new Promise((resolve) => setTimeout(() => resolve({ results, total: sorted.length }), 250))
+}
+
+// Mirrors mod_updates::plan's dependency walk over the mock catalog.
+function installPlan(fileIds: number[]) {
+  const present = new Set(installedMods.map((m) => m.projectId))
+  const wanted = fileIds.map((id) => catalog.find((p) => p.projectId * 10 === id)!)
+  wanted.forEach((p) => present.add(p.projectId))
+  const dependencies: MockProject[] = []
+  for (let i = 0; i < wanted.length + dependencies.length; i++) {
+    const project = [...wanted, ...dependencies][i]
+    for (const id of project.requires ?? []) {
+      if (present.has(id)) continue
+      present.add(id)
+      dependencies.push(catalog.find((p) => p.projectId === id)!)
+    }
+  }
+  return { wanted, dependencies }
+}
+
+const names = (projects: MockProject[]) => projects.map((p) => p.name).join(', ').replace(/, ([^,]*)$/, ' and $1')
+
+function changeMods(requests: { fileId: number; replaces: string | null }[]) {
+  const installs = installPlan(requests.filter((r) => !r.replaces).map((r) => r.fileId))
+  const added = [...installs.wanted, ...installs.dependencies]
+  const message = [
+    installs.wanted.length ? `Installed ${names(installs.wanted)}.` : '',
+    installs.dependencies.length ? `Added ${names(installs.dependencies)} as required.` : '',
+  ]
+  updateMods(
+    requests.filter((r) => r.replaces).map((r) => ({ path: r.replaces!, fileId: r.fileId })),
+    added.map((p) => `Placed ${p.kind}/${p.fileName}`),
+    message,
+    () => {
+      for (const p of added) {
+        installedMods.push({ path: `${p.kind}/${p.fileName}`, projectId: p.projectId, fileId: p.projectId * 10, name: p.name, url: null, logo: projectLogo(p), releaseType: p.releaseType ?? 'release', requires: p.requires ?? [], newer: [] })
+      }
+      installedMods.sort((a, b) => a.name.localeCompare(b.name))
+    },
+  )
+}
+
+function updateMods(requests: { path: string; fileId: number }[], extraLines: string[] = [], extraMessage: string[] = [], extraChange = () => {}) {
   const files = requests.map((r) => {
     const mod = installedMods.find((m) => m.path === r.path)!
     const file = mod.newer.find((f) => f.fileId === r.fileId) ?? { fileId: r.fileId, fileName: `${mod.name.replace(/\W+/g, '')}-${r.fileId}.jar` }
@@ -151,9 +227,10 @@ function updateMods(requests: { path: string; fileId: number }[]) {
   })
   mockJob(
     'mods',
-    files.flatMap(({ mod, file }) => [`Downloading ${mod.path.slice(0, mod.path.indexOf('/'))}/${file.fileName}`, `Removed ${mod.path}`, `Placed ${file.fileName}`]),
-    files.length === 1 ? 'Updated 1 mod.' : `Updated ${files.length} mods.`,
+    [...files.flatMap(({ mod, file }) => [`Downloading ${mod.path.slice(0, mod.path.indexOf('/'))}/${file.fileName}`, `Removed ${mod.path}`, `Placed ${file.fileName}`]), ...extraLines],
+    [files.length ? (files.length === 1 ? 'Updated 1 mod.' : `Updated ${files.length} mods.`) : '', ...extraMessage].filter(Boolean).join(' '),
     () => {
+      extraChange()
       for (const { mod, file } of files) {
         const folder = mod.path.slice(0, mod.path.indexOf('/'))
         mod.path = `${folder}/${file.fileName}${mod.path.endsWith('.disabled') ? '.disabled' : ''}`
@@ -509,7 +586,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     }))
   },
   set_update_channel: (a) => (config.updates.channel = String(a.channel)),
-  update_mods: (a) => updateMods(a.requests as { path: string; fileId: number }[]),
+  change_mods: (a) => changeMods(a.requests as { fileId: number; replaces: string | null }[]),
+  search_mods: (a) => searchMods(a.request as Parameters<typeof searchMods>[0]),
+  mod_categories: (a) => (a.kind === 'mods' ? ['Adventure and RPG', 'Magic', 'Storage', 'Technology', 'World Gen'] : ['16x', 'Animated']).map((name, id) => ({ id, name })),
+  preview_mods: (a) => {
+    const { dependencies } = installPlan((a.requests as { fileId: number }[]).map((r) => r.fileId))
+    return new Promise((resolve) => setTimeout(() => resolve({ dependencies: dependencies.map((p) => p.name), unavailable: [] }), 300))
+  },
   remove_mods: (a) => (installedMods = installedMods.filter((m) => !(a.paths as string[]).includes(m.path))),
   // Shows the browser's confirm in place of the native dialog, and answers with the label of the button you chose.
   'plugin:dialog|message': (a) => {

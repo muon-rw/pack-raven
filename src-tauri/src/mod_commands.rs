@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 
+use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
 use crate::history::{self, Action};
-use crate::mod_updates::{self, InstalledMod, ModCheck, ModFile, UpdateRequest};
+use crate::mod_updates::{self, AddonKind, Category, InstalledMod, ModCheck, ModFile, ModRequest, SearchPage, SearchRequest};
 use crate::modsync;
 use crate::pack::{Pack, ReleaseType};
 use crate::sides::MetadataCache;
@@ -48,30 +49,65 @@ pub fn set_update_channel(state: State<'_, AppState>, channel: ReleaseType) -> C
 }
 
 #[tauri::command]
-pub fn update_mods(app: AppHandle, state: State<'_, AppState>, requests: Vec<UpdateRequest>) -> CmdResult<()> {
+pub async fn search_mods(state: State<'_, AppState>, request: SearchRequest) -> CmdResult<SearchPage> {
+    mod_updates::search(&state.pack().map_err(err)?, &request).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn mod_categories(kind: AddonKind) -> CmdResult<Vec<Category>> {
+    mod_updates::categories(kind).await.map_err(err)
+}
+
+#[derive(Serialize)]
+pub struct ModPreview {
+    dependencies: Vec<String>,
+    unavailable: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn preview_mods(state: State<'_, AppState>, requests: Vec<ModRequest>) -> CmdResult<ModPreview> {
+    let plan = mod_updates::plan(&state.pack().map_err(err)?, &requests).await.map_err(err)?;
+    Ok(ModPreview { dependencies: plan.dependencies, unavailable: plan.unavailable })
+}
+
+#[tauri::command]
+pub fn change_mods(app: AppHandle, state: State<'_, AppState>, requests: Vec<ModRequest>) -> CmdResult<()> {
     if client_running(&state) {
         return Err(CLIENT_HAS_MODS_OPEN.into());
     }
     let pack = state.pack().map_err(err)?;
     state.jobs.start(&app, "mods", move |log| async move {
         let plan = mod_updates::plan(&pack, &requests).await?;
-        let added = plan.dependencies.len();
+        let updated = requests.iter().filter(|r| r.replaces.is_some()).count();
+        let mut message = Vec::new();
+        match updated {
+            0 => {}
+            1 => message.push("Updated 1 mod.".to_string()),
+            n => message.push(format!("Updated {n} mods.")),
+        }
+        if !plan.installs.is_empty() {
+            message.push(format!("Installed {}.", names(&plan.installs)));
+        }
+        if !plan.dependencies.is_empty() {
+            message.push(format!("Added {} as required.", names(&plan.dependencies)));
+        }
+        if !plan.unavailable.is_empty() {
+            message.push(format!("CurseForge has no file of {} for this pack's version, so you'll need to find one.", names(&plan.unavailable)));
+        }
         {
             let _guard = modsync::MOD_LIST_GUARD.lock().await;
             modsync::place(&pack.dir, plan.placements, &log).await?;
         }
-        let mut message = match requests.len() {
-            1 => "Updated 1 mod.".to_string(),
-            n => format!("Updated {n} mods."),
-        };
-        if added > 0 {
-            message += &format!(" Added {} as required.", plan.dependencies.join(", "));
-        }
-        if !plan.unavailable.is_empty() {
-            message += &format!(" CurseForge has no file of {} for this pack's version, so you'll need to find one.", plan.unavailable.join(", "));
-        }
-        Ok(message)
+        Ok(message.join(" "))
     })
+}
+
+fn names(list: &[String]) -> String {
+    match list {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
 }
 
 #[tauri::command]

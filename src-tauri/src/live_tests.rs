@@ -259,7 +259,7 @@ async fn git_installer_download_matches_checksum() {
 #[tokio::test]
 #[ignore]
 async fn update_mod_with_dependencies() {
-    use crate::mod_updates::{self, UpdateRequest};
+    use crate::mod_updates::{self, ModRequest};
     use crate::modsync::{self, Placement};
     const APOTHEOSIS: u64 = 313970;
     const APOTHEOSIS_8_8_0: u64 = 8826922;
@@ -283,7 +283,7 @@ async fn update_mod_with_dependencies() {
     let newer = serde_json::to_value(&checks[0]).unwrap()["newer"].as_array().unwrap().clone();
     let file_id = newer.iter().find(|f| f["releaseType"] == "release").expect("a newer release")["fileId"].as_u64().unwrap();
 
-    let plan = mod_updates::plan(&pack, &[UpdateRequest { path: old_path.clone(), file_id }]).await.unwrap();
+    let plan = mod_updates::plan(&pack, &[ModRequest { file_id, replaces: Some(old_path.clone()) }]).await.unwrap();
     println!("dependencies {:?}, unavailable {:?}", plan.dependencies, plan.unavailable);
     assert!(!plan.dependencies.is_empty(), "Apotheosis requires Placebo and Apothic Attributes");
     modsync::place(&dir, plan.placements, &log).await.unwrap();
@@ -297,4 +297,37 @@ async fn update_mod_with_dependencies() {
     let written = std::fs::read_to_string(dir.join(crate::pack::LOCKFILE)).unwrap();
     assert!(modsync::refresh_mod_list(&dir).await.unwrap().is_empty());
     assert_eq!(std::fs::read_to_string(dir.join(crate::pack::LOCKFILE)).unwrap(), written, "the watcher's refresh should agree with what we wrote");
+}
+
+#[tokio::test]
+#[ignore]
+async fn install_mod_from_search() {
+    use crate::mod_updates::{self, ModRequest, SearchRequest};
+    use crate::modsync;
+
+    let dir = scratch().join("mod-install");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    crate::git::run(&dir, &["init", "-q"]).unwrap();
+    std::fs::write(dir.join(crate::pack::LOCKFILE), r#"{"minecraft": "1.21.1", "loader": "neoforge-21.1.209", "files": []}"#).unwrap();
+    let pack = Pack::open(&dir).unwrap();
+
+    let search = |text: &str, kind: &str| serde_json::from_value::<SearchRequest>(serde_json::json!({ "text": text, "kind": kind, "categoryId": null, "sort": "popularity", "index": 0 })).unwrap();
+    let page = serde_json::to_value(mod_updates::search(&pack, &search("apotheosis", "mods")).await.unwrap()).unwrap();
+    let apotheosis = page["results"].as_array().unwrap().iter().find(|r| r["projectId"] == 313970).expect("Apotheosis in the results");
+    let file_id = apotheosis["file"]["fileId"].as_u64().expect("a file for 1.21.1 NeoForge");
+
+    let resource_packs = serde_json::to_value(mod_updates::search(&pack, &search("", "resourcepacks")).await.unwrap()).unwrap();
+    assert!(resource_packs["results"].as_array().unwrap().iter().any(|r| !r["file"].is_null()), "resource packs have no loader, so they must still match");
+
+    let plan = mod_updates::plan(&pack, &[ModRequest { file_id, replaces: None }]).await.unwrap();
+    assert_eq!(plan.installs, ["Apotheosis"]);
+    println!("dependencies {:?}", plan.dependencies);
+    assert!(!plan.dependencies.is_empty());
+    modsync::place(&dir, plan.placements, &Log::console("mods")).await.unwrap();
+
+    let pack = Pack::open(&dir).unwrap();
+    assert_eq!(pack.lock.files.len(), plan.dependencies.len() + 1);
+    let again = mod_updates::plan(&pack, &[ModRequest { file_id, replaces: None }]).await;
+    assert!(again.is_err(), "installing a project the pack already has should fail");
 }

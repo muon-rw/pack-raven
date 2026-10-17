@@ -48,9 +48,37 @@ export interface ModCheck {
   newer: ModFile[]
 }
 
-export interface UpdateRequest {
-  path: string
+export interface ModRequest {
   fileId: number
+  replaces: string | null
+}
+
+export type AddonKind = 'mods' | 'resourcepacks' | 'shaderpacks' | 'datapacks'
+export type SearchSort = 'popularity' | 'downloads' | 'updated'
+
+export interface SearchRequest {
+  text: string
+  kind: AddonKind
+  categoryId: number | null
+  sort: SearchSort
+  index: number
+}
+
+export interface SearchResult {
+  projectId: number
+  name: string
+  summary: string
+  authors: string[]
+  downloads: number
+  updated: string
+  logo: string | null
+  url: string | null
+  file: ModFile | null
+}
+
+export interface ModPreview {
+  dependencies: string[]
+  unavailable: string[]
 }
 
 export interface Overview {
@@ -372,7 +400,10 @@ export const api = {
   checkModUpdates: () => invoke<ModCheck[]>('check_mod_updates'),
   modVersions: (path: string, projectId: number) => invoke<ModFile[]>('mod_versions', { path, projectId }),
   setUpdateChannel: (channel: ReleaseType) => invoke<void>('set_update_channel', { channel }),
-  updateMods: (requests: UpdateRequest[]) => invoke<void>('update_mods', { requests }),
+  searchMods: (request: SearchRequest) => invoke<{ results: SearchResult[]; total: number }>('search_mods', { request }),
+  modCategories: (kind: AddonKind) => invoke<{ id: number; name: string }[]>('mod_categories', { kind }),
+  previewMods: (requests: ModRequest[]) => invoke<ModPreview>('preview_mods', { requests }),
+  changeMods: (requests: ModRequest[]) => invoke<void>('change_mods', { requests }),
   removeMods: (paths: string[]) => invoke<void>('remove_mods', { paths }),
   publishPreflight: (version: string) => invoke<string[]>('publish_preflight', { version }),
   buildClientExport: () => invoke<void>('build_client_export'),

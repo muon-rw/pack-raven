@@ -1,4 +1,4 @@
-import type { ModCheck, ModFile, ReleaseType } from './api'
+import type { AddonKind, ModCheck, ModFile, ReleaseType, SearchSort } from './api'
 
 const stability: Record<ReleaseType, number> = { release: 1, beta: 2, alpha: 3 }
 
@@ -20,3 +20,11 @@ export function updateCount(pack: string | null): number {
   for (const check of modUpdates.checks.values()) if (availableUpdate(check, modUpdates.channel)) count++
   return count
 }
+
+export const browse = $state({
+  tab: 'installed' as 'installed' | 'browse',
+  text: '',
+  kind: 'mods' as AddonKind,
+  categoryId: null as number | null,
+  sort: 'popularity' as SearchSort,
+})
