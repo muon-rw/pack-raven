@@ -5,7 +5,7 @@ export const headings = {
   changes: 'Changes',
   test: 'Test',
   mods: 'Mods',
-  server: 'Server mods',
+  server: 'Server',
   files: 'Files',
   git: 'Git',
   publish: 'Publish',

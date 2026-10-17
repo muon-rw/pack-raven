@@ -27,7 +27,7 @@ set "JAVA=%GRAALVM_DIR%\bin\java.exe"
 
 :run
 echo Starting the server on %JAVA%
-"%JAVA%" @user_jvm_args.txt {{LAUNCH}} nogui %*
+"%JAVA%" @user_jvm_args.txt {{LAUNCH}} nogui{{ARGS}} %*
 pause
 exit /b
 

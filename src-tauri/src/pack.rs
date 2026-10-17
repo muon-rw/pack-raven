@@ -9,6 +9,7 @@ pub const CONFIG_FILE: &str = "packraven.toml";
 pub const LOCKFILE: &str = "mods.lock.json";
 pub const CHANGELOG: &str = "changelog.md";
 pub const CHANGELOG_ARCHIVE: &str = "changelogs";
+pub const SERVER_ICON: &str = "server-icon.png";
 const BCC_CONFIG: &str = "config/bcc-common.toml";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -87,6 +88,8 @@ pub struct ServerConfig {
     pub client_only: Vec<u64>,
     pub keep: Vec<u64>,
     pub memory: String,
+    pub jvm_args: Vec<String>,
+    pub args: Vec<String>,
     pub graalvm: String,
     pub properties: BTreeMap<String, String>,
 }
@@ -141,6 +144,8 @@ impl Default for ServerConfig {
             client_only: Vec::new(),
             keep: Vec::new(),
             memory: "6G".into(),
+            jvm_args: Vec::new(),
+            args: Vec::new(),
             graalvm: String::new(),
             properties: [("allow-flight", "true"), ("max-tick-time", "60000"), ("difficulty", "normal")]
                 .into_iter()

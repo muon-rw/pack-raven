@@ -9,7 +9,7 @@
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { ask } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type InstalledMod, type ModCheck, type ModFile, type ReleaseType, type ModRequest } from '../lib/api'
-  import { job, onJobEnd, serverMods } from '../lib/jobs.svelte'
+  import { job, onJobEnd, serverPack } from '../lib/jobs.svelte'
   import { availableUpdate, browse, modUpdates, newestOnChannel } from '../lib/modUpdates.svelte'
   import { sanitizeRemoteHtml } from '../lib/markdown'
   import type { MenuItem } from '../lib/menu'
@@ -100,8 +100,8 @@
   onJobEnd('mods', async (phase) => {
     finishedHere = true
     if (phase === 'done') {
-      serverMods.changedSinceBuild = true
-      serverMods.changedSinceTest = true
+      serverPack.changedSinceBuild = true
+      serverPack.changedSinceTest = true
     }
     expanded = null
     await load()
@@ -179,8 +179,8 @@
       if (expanded) expanded = renamed.get(expanded) ?? expanded
       mods = mods.map((m) => (renamed.has(m.path) ? { ...m, path: renamed.get(m.path)! } : m))
       selected = new Set([...selected].map((path) => renamed.get(path) ?? path))
-      serverMods.changedSinceBuild = true
-      serverMods.changedSinceTest = true
+      serverPack.changedSinceBuild = true
+      serverPack.changedSinceTest = true
       // Turning several files off at once is easy to regret, so we offer to turn them back on.
       undo = !enabled && targets.length > 1 ? { message: `Disabled ${list(targets.map((m) => m.name))}.`, paths: paths } : null
     } catch (error) {
@@ -264,8 +264,8 @@
     actionError = null
     try {
       await api.removeMods(paths)
-      serverMods.changedSinceBuild = true
-      serverMods.changedSinceTest = true
+      serverPack.changedSinceBuild = true
+      serverPack.changedSinceTest = true
       if (modUpdates.checks) modUpdates.checks = new Map([...modUpdates.checks].filter(([path]) => !paths.includes(path)))
       if (expanded && paths.includes(expanded)) expanded = null
       selected = new Set([...selected].filter((path) => !paths.includes(path)))
@@ -677,7 +677,7 @@
                       role="switch"
                       aria-checked={!disabled}
                       aria-label="Enable {mod.name}"
-                      title={disabled ? 'Disabled. packraven leaves it out of exports.' : 'Enabled'}
+                      title={disabled ? 'Disabled. We won\'t include it in exports.' : 'Enabled'}
                       disabled={blocked}
                       aria-busy={toggling === mod.path}
                       onclick={() => setEnabled([mod], disabled)}

@@ -5,6 +5,8 @@ use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
 use crate::join;
+use crate::pack::SERVER_ICON;
+use crate::server_icon;
 use crate::setup::{self, InstanceInfo, SetupOptions};
 
 type CmdResult<T> = Result<T, String>;
@@ -116,4 +118,46 @@ pub fn set_pack_java(state: State<'_, AppState>, java: Option<PathBuf>) -> CmdRe
             s.set_pack_java(&pack, java);
         })
         .map_err(err)
+}
+
+#[tauri::command]
+pub fn get_server_icon(state: State<'_, AppState>) -> CmdResult<Option<String>> {
+    Ok(server_icon::data_url(&state.pack().map_err(err)?))
+}
+
+#[tauri::command]
+pub fn set_server_icon(state: State<'_, AppState>, image: PathBuf) -> CmdResult<Option<String>> {
+    let pack = state.pack().map_err(err)?;
+    let bytes = std::fs::read(&image).map_err(|e| format!("Couldn't read {}: {e}", image.display()))?;
+    server_icon::save(&pack, &bytes).map_err(err)?;
+    Ok(server_icon::data_url(&pack))
+}
+
+#[tauri::command]
+pub async fn use_project_logo_as_server_icon(state: State<'_, AppState>) -> CmdResult<Option<String>> {
+    let pack = state.pack().map_err(err)?;
+    let logo = server_icon::project_logo(pack.config.curseforge.project_id).await.map_err(err)?;
+    server_icon::save(&pack, &logo).map_err(err)?;
+    Ok(server_icon::data_url(&pack))
+}
+
+#[tauri::command]
+pub fn remove_server_icon(state: State<'_, AppState>) -> CmdResult<()> {
+    match std::fs::remove_file(state.pack().map_err(err)?.dir.join(SERVER_ICON)) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(format!("Couldn't remove server-icon.png: {error}")),
+        _ => Ok(()),
+    }
+}
+
+#[derive(Serialize)]
+pub struct ServerLaunch {
+    windows: String,
+    unix: String,
+}
+
+#[tauri::command]
+pub fn server_launch(state: State<'_, AppState>) -> CmdResult<ServerLaunch> {
+    let pack = state.pack().map_err(err)?;
+    let launch = |windows| crate::export::loader_launch(&pack, windows).map_err(err);
+    Ok(ServerLaunch { windows: launch(true)?, unix: launch(false)? })
 }

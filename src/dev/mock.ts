@@ -63,7 +63,18 @@ const config = {
   author: 'muon-rw',
   curseforge: { project_id: scenario === 'empty' ? 0 : 1234567, release_type: 'beta', manual_release: false },
   export: { exclude: [] },
-  server: { exclude: [], client_only: [], keep: [], memory: '6G', graalvm: '', properties: {} },
+  server: {
+    exclude: [],
+    client_only: [],
+    keep: [],
+    memory: '6G',
+    jvm_args: scenario === 'empty' ? [] : ['-XX:+UseG1GC', '-Dfml.readTimeout=180'],
+    args: [] as string[],
+    graalvm: '',
+    properties: (scenario === 'empty'
+      ? { 'allow-flight': 'true', 'max-tick-time': '60000', difficulty: 'normal' }
+      : { motd: '§6{name} §e{version}§r\\n§7Dragons, dungeons and §aspells', 'allow-flight': 'true', difficulty: 'hard', 'max-players': '12', 'view-distance': '12', 'max-tick-time': '-1', 'pause-when-empty-seconds': '0' }) as Record<string, string>,
+  },
   test: { username: 'Dev', port: 25565, client_memory: '8G' },
   discord: { role_id: '112233445566778899', color: '#4d6b2f', announce_on_approval: true, title: '{project_name} - v{version}', show_author: true, header: '', footer: '[Install]({file_url})' },
   updates: { channel: 'alpha', locked: [] as number[] },
@@ -386,6 +397,25 @@ function readFile(path: string) {
 }
 
 // Draws a 16 px texture, or for fire.png a strip of four frames, as a PNG data URL.
+// A small pixel-art landscape, drawn at 16px and scaled up the way a pack author's icon often is.
+function mockServerIcon() {
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = 64
+  const context = canvas.getContext('2d')!
+  context.imageSmoothingEnabled = false
+  for (let y = 0; y < 16; y++) {
+    for (let x = 0; x < 16; x++) {
+      const hill = 10 - Math.round(2 * Math.sin(x / 2.5))
+      context.fillStyle = y < hill ? (y < 4 ? '#20291b' : '#463b1c') : y === hill ? '#7f9b5c' : (x + y) % 3 ? '#4d6b2f' : '#3c5524'
+      if (y >= 3 && y <= 5 && x >= 10 && x <= 12) context.fillStyle = '#e3c46f'
+      context.fillRect(x * 4, y * 4, 4, 4)
+    }
+  }
+  return canvas.toDataURL('image/png')
+}
+
+let serverIcon: string | null = scenario === 'empty' ? null : 'pending'
+
 function mockImage(path: string) {
   const canvas = document.createElement('canvas')
   const frames = path.includes('fire') ? 4 : 1
@@ -498,6 +528,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     conflicts: [{ name: 'sodium-neoforge-0.6.13.jar', mine: 'sodium-neoforge-0.6.14.jar', theirs: 'sodium-neoforge-0.6.15.jar' }],
   }),
   get_pack_config: () => config,
+  save_pack_config: (a) => Object.assign(config, a.config),
+  get_server_icon: () => (serverIcon === 'pending' ? (serverIcon = mockServerIcon()) : serverIcon),
+  set_server_icon: () => (serverIcon = mockServerIcon()),
+  use_project_logo_as_server_icon: () => (serverIcon = mockServerIcon()),
+  remove_server_icon: () => (serverIcon = null),
+  server_launch: () => {
+    const args = `@libraries/net/neoforged/neoforge/${fx.loader.replace(/^neoforge-/, '')}`
+    return { windows: `${args}/win_args.txt`, unix: `${args}/unix_args.txt` }
+  },
   get_webhook: () => 'https://discord.com/api/webhooks/0000/example',
   git_version: () => '2.56.0.windows.2',
   credentials_status: () => ({ builtInApiKey: true, upload: { source: { kind: 'env', name: 'CURSEFORGE_TOKEN' }, present: true }, github: { source: { kind: 'stored' }, present: true }, keychain: 'Windows Credential Manager' }),

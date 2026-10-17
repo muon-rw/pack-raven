@@ -1,4 +1,4 @@
-import { test } from '@playwright/test'
+import { test, type Page } from '@playwright/test'
 import { openApp, packViews, scenarios, type Scenario, type View } from './app.ts'
 
 // Captures every view in every scenario at the window sizes we design for, in both themes.
@@ -14,6 +14,16 @@ const themes = ['light', 'dark'] as const
 // the most zoom we design for. Zoom doesn't change the theme's layout, so we capture it in light only.
 const zooms = [125]
 
+// Tabs the URL can't open, captured as <view>-<tab>.png after the view's own shot.
+const tabs: Partial<Record<View, string[]>> = { server: ['Properties', 'Startup'] }
+
+async function shootTabs(page: Page, view: View, path: (name: string) => string) {
+  for (const tab of tabs[view] ?? []) {
+    await page.getByRole('tab', { name: tab }).click()
+    await page.screenshot({ path: path(`${view}-${tab.toLowerCase()}`), animations: 'disabled' })
+  }
+}
+
 function views(scenario: Scenario) {
   return pick(process.env.SHOTS_VIEWS, scenario === 'nopack' ? (['add'] as View[]) : packViews)
 }
@@ -27,6 +37,7 @@ for (const scenario of pick(process.env.SHOTS_SCENARIOS, scenarios)) {
           await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
           await openApp(page, view, scenario)
           await page.screenshot({ path: `shots/${scenario}-${width}-${theme}-${view}.png`, animations: 'disabled' })
+          await shootTabs(page, view, (name) => `shots/${scenario}-${width}-${theme}-${name}.png`)
         })
       }
     }
@@ -42,6 +53,7 @@ for (const zoom of zooms) {
           await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
           await openApp(page, view, scenario)
           await page.screenshot({ path: `shots/${scenario}-960@${zoom}-light-${view}.png`, animations: 'disabled' })
+          await shootTabs(page, view, (name) => `shots/${scenario}-960@${zoom}-light-${name}.png`)
         })
       }
     }

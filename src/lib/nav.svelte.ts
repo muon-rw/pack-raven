@@ -1,5 +1,7 @@
 export const nav = $state({ view: null as 'changes' | 'git' | 'files' | 'settings' | 'pack' | null, diffPath: null as string | null, filePath: null as string | null })
 
+export const serverView = $state({ tab: 'mods' as 'mods' | 'properties' | 'startup' })
+
 export function showDiff(path: string) {
   nav.diffPath = path
   nav.view = 'git'

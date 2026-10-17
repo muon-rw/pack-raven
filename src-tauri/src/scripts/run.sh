@@ -42,4 +42,4 @@ elif [ -z "$JAVA" ]; then
 fi
 
 echo "Starting the server on $JAVA"
-exec "$JAVA" @user_jvm_args.txt {{LAUNCH}} nogui "$@"
+exec "$JAVA" @user_jvm_args.txt {{LAUNCH}} nogui{{ARGS}} "$@"

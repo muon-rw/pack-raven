@@ -233,8 +233,10 @@ mod tests {
     fn token_reaches_git_only_for_github() {
         let auth = RemoteAuth { github_token: Some("secret-token".into()) };
         let fill = |host: &str| {
+            // We clear the developer's own helpers, or Git Credential Manager opens a sign-in window for gitlab.com.
             let mut command = git::command();
-            command.args(auth.config_args()).args(["credential", "fill"]).env("GIT_TERMINAL_PROMPT", "0").env(TOKEN_ENV, "secret-token");
+            command.args(["-c", "credential.helper="]).args(auth.config_args()).args(["credential", "fill"]);
+            command.env("GIT_TERMINAL_PROMPT", "0").env("GCM_INTERACTIVE", "never").env(TOKEN_ENV, "secret-token");
             command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
             let mut child = command.spawn().unwrap();
             use std::io::Write;

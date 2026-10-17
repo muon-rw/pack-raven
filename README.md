@@ -1,53 +1,73 @@
 # packraven
 
-## Release builds
+A desktop app for developing and releasing CurseForge modpacks. You keep a CurseForge instance in git without committing mod jars, share it across machines or with collaborators, test it on a local server, and publish the client and server files to CurseForge with a matching git tag.
 
-Set `PACKRAVEN_CF_API_KEY` to packraven's CurseForge for Studios API key when you build, e.g. `PACKRAVEN_CF_API_KEY=... npm run tauri build`. We embed the key in the binary (masked) at build time, so it never goes in the repo. If you build without it, we can't look up or recognize mods on CurseForge.
+packraven runs on Windows and macOS. Linux is not yet supported.
 
-# Svelte + TS + Vite
+## What it does
 
-This template should help get you started developing with Svelte and TypeScript in Vite.
+- **Tracks your modpack in git.** We record every Curseforge file's (mods, etc.) metadata instead of committing them. Anything that isn't on CurseForge is instead added to git directly.
+- **Syncs collaborators.** When you pull, we merge mod lists mod by mod and download whatever the other side added. Mods you lock in the CurseForge app stay locked in packraven, and the reverse.
+- **Makes your server pack.** We detect client-only mods from Modrinth and CurseForge metadata, so the server pack leaves them out. You can override any mod's side settings as needed.
+- **Tests before you ship.** Start an offline test server built from your server pack, and a client that joins it automatically, so you can quickly run end to end tests before publishing. 
+- **Publishes.** Set a version number and release notes, we'll detect all mod changes. packraven then uploads the files to Curseforge, attaching the server file to the main upload automatically. It also commits, tags, and (optionally) pushes to git.
+- **Announces.** Follow the status of your CurseForge review automatically, then announce the release on Discord via a webhook. Discohook support is built in.
+- **Manages mods.** Search CurseForge, add and update mods, see file changelogs, and disable any pack file, in fewer clicks. 
+- **Edit Files.** Browse files in your pack, and edit them right in the app. We validate most file formats (json, toml, etc.), can view images and play media. 
 
-## Recommended IDE Setup
+packraven sits in the tray and can start when you sign in.
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode).
+## Getting started
 
-## Need an official Svelte framework?
+Click **Add pack** and pick one of two paths:
 
-Check out [SvelteKit](https://github.com/sveltejs/kit#readme), which is also powered by Vite. Deploy anywhere with its serverless-first approach and adapt to various platforms, with out of the box support for TypeScript, SCSS, and Less, and easily-added support for mdsvex, GraphQL, PostCSS, Tailwind CSS, and more.
+- **Set up a pack** from an existing CurseForge instance. packraven lists every step before it makes a change: it creates a git repository if there isn't one, installs the sync hooks in `.githooks`, writes a `.gitignore` that leaves out logs, saves, caches and mod jars, and writes `mods.lock.json`. It stages the result, and you make the commits yourself.
+- **Join a pack** from a git remote. Create a profile in the CurseForge app with the pack's Minecraft version and mod loader, then point packraven at it and the remote. packraven fetches the pack, links the hooks, downloads the mods, and sets aside any CurseForge files in the profile that the pack doesn't include. If the profile's version or loader doesn't match the pack's, packraven stops without changing anything.
 
-## Technical considerations
+If packraven can't find git, it offers to install it (Git for Windows, or the macOS developer tools). The test server and client need Java; packraven uses the same Java you run the game with, or falls back to `java` on your PATH.
 
-**Why use this over SvelteKit?**
+### Tokens
 
-- It brings its own routing solution which might not be preferable for some users.
-- It is first and foremost a framework that just happens to use Vite under the hood, not a Vite app.
+Publishing needs a CurseForge upload token, and pushing over HTTPS to GitHub needs a GitHub token. Add them under **App settings**, where you can store each one in the system keychain or name an environment variable to read it from. For older setups, we still read `CURSEFORGE_TOKEN` or `CF_TOKEN` until you choose a source.
 
-This template contains as little as possible to get started with Vite + TypeScript + Svelte, while taking into account the developer experience with regards to HMR and intellisense. It demonstrates capabilities on par with the other `create-vite` templates and is a good starting point for beginners dipping their toes into a Vite + Svelte project.
+### Pack settings
 
-Should you later need the extended capabilities and extensibility provided by SvelteKit, the template has been structured similarly to SvelteKit so that it is easy to migrate.
+Each pack's settings live in `packraven.toml` at the root of the pack repo, so collaborators share them. Edit them under **Pack settings**: the CurseForge project and release type, files to leave out of the client and server exports, client-only and keep-on-server overrides, server memory and properties, the test server port and username, Discord announcement text, and the update channel.
 
-**Why `global.d.ts` instead of `compilerOptions.types` inside `jsconfig.json` or `tsconfig.json`?**
+Release notes go in `changelog.md`. When you publish, we archive them to a file for that version and clear the working notes. We store the pack version in the Better Compatibility Checker config.
 
-Setting `compilerOptions.types` shuts out all other types not explicitly listed in the configuration. Using triple-slash references keeps the default TypeScript setting of accepting type information from the entire workspace, while also adding `svelte` and `vite/client` type information.
+## Building from source
 
-**Why include `.vscode/extensions.json`?**
+You need [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/) 1.91 or newer, and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your platform.
 
-Other templates indirectly recommend extensions via the README, but this file allows VS Code to prompt the user to install the recommended extension upon opening the project.
-
-**Why enable `allowJs` in the TS template?**
-
-While `allowJs: false` would indeed prevent the use of `.js` files in the project, it does not prevent the use of JavaScript syntax in `.svelte` files. In addition, it would force `checkJs: false`, bringing the worst of both worlds: not being able to guarantee the entire codebase is TypeScript, and also having worse typechecking for the existing JavaScript. In addition, there are valid use cases in which a mixed codebase may be relevant.
-
-**Why is HMR not preserving my local component state?**
-
-HMR state preservation comes with a number of gotchas! It has been disabled by default in both `svelte-hmr` and `@sveltejs/vite-plugin-svelte` due to its often surprising behavior. You can read the details [here](https://github.com/rixo/svelte-hmr#svelte-hmr).
-
-If you have state that's important to retain within a component, consider creating an external store which would not be replaced by HMR.
-
-```ts
-// store.ts
-// An extremely simple external store
-import { writable } from 'svelte/store'
-export default writable(0)
+```sh
+npm install
+npm run tauri dev
 ```
+
+For a release build, set `PACKRAVEN_CF_API_KEY` to packraven's CurseForge for Studios API key:
+
+```sh
+PACKRAVEN_CF_API_KEY=... npm run tauri build
+```
+
+We embed the key in the binary (masked) at build time, so it never goes in the repo. Without it, packraven can't look up or recognize mods on CurseForge.
+
+## Development
+
+| Path | Contents |
+| --- | --- |
+| `src-tauri/src/` | The Rust backend. All file, git, network and process work happens here. |
+| `src/` | The Svelte 5 + TypeScript UI, built with Vite. It reaches the backend only through `src/lib/api.ts`. |
+| `src/dev/mock.ts` | A stand-in backend we install when the UI runs in a plain browser, so you can work on the UI without Tauri. |
+| `e2e/` | Playwright tests that render the UI against the mock backend. |
+
+Run `npm run dev` and open the printed URL to work on the UI in a browser against the mock. Add a mock handler for any new backend command the UI calls on load, or `npm run test:ui` will fail.
+
+| Command | What it runs |
+| --- | --- |
+| `npm run check` | Type-checks the UI, the Playwright tests and the configs. |
+| `npm run test:ui` | Renders every view in every mock scenario and fails on errors. |
+| `npm run shots` | Screenshots every view, scenario, width and theme into `shots/`. |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | Backend tests. |
+| `npm run test:live` | Backend tests that call CurseForge. These need `PACKRAVEN_CF_API_KEY` set at build time. |

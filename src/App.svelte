@@ -4,9 +4,9 @@
   import { onMount } from 'svelte'
   import { listen } from '@tauri-apps/api/event'
   import { api, errorText, type Overview, type PackList } from './lib/api'
-  import { job, jobs, serverMods, startListening, testState } from './lib/jobs.svelte'
+  import { job, jobs, serverPack, startListening, testState } from './lib/jobs.svelte'
   import Changes from './views/Changes.svelte'
-  import ServerMods from './views/ServerMods.svelte'
+  import Server from './views/Server.svelte'
   import Mods from './views/Mods.svelte'
   import { updateCount } from './lib/modUpdates.svelte'
   import TestRun from './views/TestRun.svelte'
@@ -215,10 +215,10 @@
         },
         {
           id: 'server',
-          title: 'Server mods',
+          title: 'Server',
           key: '4',
-          status: serverMods.changedSinceBuild ? 'Changed since you last built the server pack' : undefined,
-          tone: serverMods.changedSinceBuild ? 'warn' : 'idle',
+          status: serverPack.changedSinceBuild ? 'Changed since you last built the server pack' : undefined,
+          tone: serverPack.changedSinceBuild ? 'warn' : 'idle',
         },
         { id: 'files', title: 'Files', key: '5', alias: 'E' },
         {
@@ -248,7 +248,7 @@
   ])
 
   $effect(() => {
-    if (job('server-pack').phase === 'done' || publishPhase === 'done') serverMods.changedSinceBuild = false
+    if (job('server-pack').phase === 'done' || publishPhase === 'done') serverPack.changedSinceBuild = false
   })
 
   // Every view shares one scroller, so we reset it to the top on each view change.
@@ -402,9 +402,9 @@
         {:else if view === 'mods'}
           <Mods pack={packs?.active ?? null} game={overview ? `${overview.minecraft} ${loaderName(overview.loader).split(' ')[0]}` : 'this pack'} clientRunning={!!overview?.clientRunning} />
         {:else if view === 'server'}
-          <ServerMods />
+          <Server {overview} />
         {:else if view === 'test'}
-          <TestRun {overview} onservermods={() => (view = 'server')} />
+          <TestRun {overview} onserver={() => (view = 'server')} />
         {:else if view === 'files'}
           {#await loadFiles() then { default: Files }}
             <Files pack={packs?.active ?? null} />
@@ -416,7 +416,7 @@
         {:else if view === 'releases'}
           <Releases onsettings={() => (view = 'pack')} />
         {:else if view === 'pack' && packs?.active}
-          <PackSettings dir={packs.active} name={overview?.name ?? 'this pack'} minecraft={overview?.minecraft ?? null} onchange={refresh} onremoved={() => { view = 'changes'; refresh() }} />
+          <PackSettings dir={packs.active} name={overview?.name ?? 'this pack'} onserver={() => (view = 'server')} onchange={refresh} onremoved={() => { view = 'changes'; refresh() }} />
         {:else}
           <SettingsView onchange={refresh} />
         {/if}
@@ -663,7 +663,7 @@
     min-width: 0;
   }
 
-  /* We overlay the hint instead of giving it room, so a long label like Server mods doesn't wrap
+  /* We overlay the hint instead of giving it room, so a long label like Pack settings doesn't wrap
      when it appears. */
   .item {
     position: relative;

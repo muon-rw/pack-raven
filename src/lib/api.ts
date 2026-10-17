@@ -17,7 +17,16 @@ export interface PackConfig {
   author: string
   curseforge: { project_id: number; release_type: string; manual_release: boolean }
   export: { exclude: string[] }
-  server: { exclude: string[]; client_only: number[]; keep: number[]; memory: string; graalvm: string; properties: Record<string, string> }
+  server: {
+    exclude: string[]
+    client_only: number[]
+    keep: number[]
+    memory: string
+    jvm_args: string[]
+    args: string[]
+    graalvm: string
+    properties: Record<string, string>
+  }
   test: { username: string; port: number; client_memory: string }
   discord: { role_id: string; color: string; announce_on_approval: boolean; title: string; show_author: boolean; header: string; footer: string }
   updates: { channel: ReleaseType; locked: number[] }
@@ -328,6 +337,11 @@ export const api = {
   setIconTheme: (dark: boolean) => invoke<void>('set_icon_theme', { dark }),
   getPackJava: () => invoke<string | null>('get_pack_java'),
   setPackJava: (java: string | null) => invoke<void>('set_pack_java', { java }),
+  getServerIcon: () => invoke<string | null>('get_server_icon'),
+  setServerIcon: (image: string) => invoke<string | null>('set_server_icon', { image }),
+  useProjectLogoAsServerIcon: () => invoke<string | null>('use_project_logo_as_server_icon'),
+  removeServerIcon: () => invoke<void>('remove_server_icon'),
+  serverLaunch: () => invoke<{ windows: string; unix: string }>('server_launch'),
   getWebhook: () => invoke<string | null>('get_webhook'),
   setWebhook: (url: string) => invoke<void>('set_webhook', { url }),
   discordTest: () => invoke<void>('discord_test'),

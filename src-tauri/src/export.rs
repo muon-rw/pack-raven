@@ -16,7 +16,7 @@ use crate::git;
 use crate::http;
 use crate::jobs::Log;
 use crate::mirror::{mirror, FilePlan, Planned};
-use crate::pack::{LockEntry, ModLoader, Pack};
+use crate::pack::{LockEntry, ModLoader, Pack, SERVER_ICON};
 use crate::sides::{ModSide, Side};
 
 const NEOFORGE_MAVEN: &str = "https://maven.neoforged.net/releases/net/neoforged/neoforge";
@@ -123,7 +123,7 @@ pub fn client_export(pack: &Pack, version: &str, out_dir: &Path, log: &Log) -> R
             jars.join(", ")
         );
     }
-    let overrides = override_files(pack, &[])?;
+    let overrides = override_files(pack, &[SERVER_ICON.to_string()])?;
     let mut zip = ZipWriter::new(File::create(&path)?);
     zip.start_file("manifest.json", options())?;
     zip.write_all(serde_json::to_string_pretty(&manifest)?.as_bytes())?;
@@ -269,22 +269,66 @@ pub async fn server_plan(pack: &Pack, sides: &[ModSide], version: &str, java: &P
         let source = pack.dir.join(&file);
         plan.insert(file, Planned::Copy(source));
     }
+    // We ship the icon before it's committed, so a test run shows the one you just picked.
+    let icon = pack.dir.join(SERVER_ICON);
+    if icon.is_file() {
+        plan.insert(SERVER_ICON.into(), Planned::Copy(icon));
+    }
 
     let mut properties = pack.config.server.properties.clone();
-    properties.entry("motd".into()).or_insert_with(|| format!("{} {version}", pack.name()));
-    plan.insert("server.properties".into(), Planned::Write(properties.iter().map(|(k, v)| format!("{k}={v}\n")).collect()));
+    let motd = fill_motd(properties.get("motd").map_or(DEFAULT_MOTD, String::as_str), &pack.name(), version, pack.lock.minecraft.as_deref().unwrap_or_default());
+    properties.insert("motd".into(), motd);
+    plan.insert("server.properties".into(), Planned::Write(properties.iter().map(|(k, v)| format!("{k}={}\n", escape_property(v))).collect()));
     let jvm_args = std::fs::read_to_string(base.join("user_jvm_args.txt")).unwrap_or_default();
-    plan.insert("user_jvm_args.txt".into(), Planned::Write(format!("{jvm_args}\n-Xmx{}\n", pack.config.server.memory)));
+    plan.insert("user_jvm_args.txt".into(), Planned::Write(user_jvm_args(&jvm_args, pack)));
     // We replace the NeoForge and Forge installers' run scripts, which call whatever java is on
     // PATH, and Fabric's installer writes none.
     let graalvm = server_graalvm(pack)?;
-    let run_bat = start_script(RUN_BAT, &loader_launch(pack, true)?, graalvm.as_deref()).replace('\n', "\r\n");
+    let args = &pack.config.server.args;
+    let run_bat = start_script(RUN_BAT, &loader_launch(pack, true)?, graalvm.as_deref(), &script_args(args, true)).replace('\n', "\r\n");
     plan.insert("run.bat".into(), Planned::Write(run_bat));
-    plan.insert("run.sh".into(), Planned::Write(start_script(RUN_SH, &loader_launch(pack, false)?, graalvm.as_deref())));
+    plan.insert("run.sh".into(), Planned::Write(start_script(RUN_SH, &loader_launch(pack, false)?, graalvm.as_deref(), &script_args(args, false))));
     Ok(plan)
 }
 
-fn loader_launch(pack: &Pack, windows: bool) -> Result<String> {
+const DEFAULT_MOTD: &str = "{name} {version}";
+
+fn fill_motd(template: &str, name: &str, version: &str, minecraft: &str) -> String {
+    template.replace("{name}", name).replace("{version}", version).replace("{minecraft}", minecraft)
+}
+
+// Older Minecraft versions read server.properties as Latin-1, so a MOTD's section signs and other
+// non-ASCII text only survive as Java's \uXXXX escapes.
+fn escape_property(value: &str) -> String {
+    value.encode_utf16().map(|unit| if unit < 0x80 { char::from(unit as u8).to_string() } else { format!("\\u{unit:04X}") }).collect()
+}
+
+fn user_jvm_args(installer_args: &str, pack: &Pack) -> String {
+    let mut text = format!("{installer_args}\n-Xmx{}\n", pack.config.server.memory);
+    for flag in pack.config.server.jvm_args.iter().map(|flag| flag.trim()).filter(|flag| !flag.is_empty()) {
+        text.push_str(flag);
+        text.push('\n');
+    }
+    text
+}
+
+fn script_args(args: &[String], windows: bool) -> String {
+    args.iter()
+        .map(|arg| arg.trim())
+        .filter(|arg| !arg.is_empty())
+        .map(|arg| {
+            let plain = arg.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_=.,:/@+".contains(&b));
+            match (plain, windows) {
+                (true, _) => format!(" {arg}"),
+                // cmd expands %VAR% even inside quotes, so we double the percent signs.
+                (false, true) => format!(" \"{}\"", arg.replace('%', "%%").replace('"', "")),
+                (false, false) => format!(" '{}'", arg.replace('\'', "'\\''")),
+            }
+        })
+        .collect()
+}
+
+pub fn loader_launch(pack: &Pack, windows: bool) -> Result<String> {
     let args_file = if windows { "win_args.txt" } else { "unix_args.txt" };
     Ok(match pack.lock.mod_loader()? {
         ModLoader::NeoForge(version) => format!("@libraries/net/neoforged/neoforge/{version}/{args_file}"),
@@ -299,7 +343,8 @@ pub fn server_args(pack: &Pack, dir: &Path) -> Result<Vec<String>> {
     if !dir.join(launched_file).exists() {
         bail!("the {} installer didn't create {launched_file}, so packraven can't start this server", pack.lock.mod_loader()?.name());
     }
-    Ok(["@user_jvm_args.txt"].into_iter().chain(launch.split(' ')).chain(["nogui"]).map(String::from).collect())
+    let args = pack.config.server.args.iter().map(|arg| arg.trim()).filter(|arg| !arg.is_empty());
+    Ok(["@user_jvm_args.txt"].into_iter().chain(launch.split(' ')).chain(["nogui"]).chain(args).map(String::from).collect())
 }
 
 fn server_graalvm(pack: &Pack) -> Result<Option<String>> {
@@ -327,12 +372,13 @@ fn graalvm_url_prefix(version: &str) -> String {
     }
 }
 
-fn start_script(template: &str, launch: &str, graalvm: Option<&str>) -> String {
+fn start_script(template: &str, launch: &str, graalvm: Option<&str>, args: &str) -> String {
     template
         .replace("\r\n", "\n")
         .replace("{{GRAALVM}}", graalvm.unwrap_or_default())
         .replace("{{URL_PREFIX}}", &graalvm.map(graalvm_url_prefix).unwrap_or_default())
         .replace("{{LAUNCH}}", launch)
+        .replace("{{ARGS}}", args)
 }
 
 pub async fn server_pack(pack: &Pack, sides: &[ModSide], version: &str, out_dir: &Path, java: &Path, data_dir: &Path, log: &Log) -> Result<PathBuf> {
@@ -375,6 +421,25 @@ mod tests {
         let forced: BTreeMap<String, String> = [("enableShaders", "false"), ("added", "1")].into_iter().map(|(k, v)| (k.into(), v.into())).collect();
         let text = "#enableShaders=true\nenableShaders=true\nshaderPack=x\n";
         assert_eq!(force_properties(text, &forced), "#enableShaders=true\nenableShaders=false\nshaderPack=x\nadded=1\n");
+    }
+
+    #[test]
+    fn fills_motd_placeholders() {
+        assert_eq!(fill_motd(DEFAULT_MOTD, "Ravens", "1.2.0", "1.21.1"), "Ravens 1.2.0");
+        assert_eq!(fill_motd("{name} for {minecraft}\\nv{version}", "Ravens", "1.2.0", "1.21.1"), "Ravens for 1.21.1\\nv1.2.0");
+    }
+
+    #[test]
+    fn escapes_non_ascii_properties() {
+        assert_eq!(escape_property("\u{a7}aRavens \u{2694}\\n1.0"), "\\u00A7aRavens \\u2694\\n1.0");
+    }
+
+    #[test]
+    fn quotes_script_args_that_need_it() {
+        let args: Vec<String> = ["--world", "My World", "", "100%"].map(String::from).to_vec();
+        assert_eq!(script_args(&args, true), " --world \"My World\" \"100%%\"");
+        assert_eq!(script_args(&args, false), " --world 'My World' '100%'");
+        assert_eq!(script_args(&["it's".into()], false), " 'it'\\''s'");
     }
 
     #[test]

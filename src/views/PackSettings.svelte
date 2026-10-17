@@ -3,31 +3,14 @@
   import { onMount } from 'svelte'
   import { ask, open } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type PackConfig } from '../lib/api'
+  import { serverView } from '../lib/nav.svelte'
 
-  let { dir, name, minecraft, onchange, onremoved }: { dir: string; name: string; minecraft: string | null; onchange: () => void; onremoved: () => void } =
-    $props()
+  let { dir, name, onserver, onchange, onremoved }: { dir: string; name: string; onserver: () => void; onchange: () => void; onremoved: () => void } = $props()
 
   let config: PackConfig | null = $state(null)
   let configError: string | null = $state(null)
   let webhook = $state('')
   let packJava = $state('')
-  let graalvmChoice = $state<GraalvmChoice>('auto')
-
-  let automaticGraalvm = $derived.by(() => {
-    const [major, minor] = (minecraft ?? '').split('.').map(Number)
-    if (major >= 26) return 'GraalVM 25'
-    if (major === 1 && minor >= 18) return 'GraalVM 21'
-    return minecraft ? "the host's own Java" : 'GraalVM 21, or 25 for Minecraft 26.1 and later'
-  })
-
-  type GraalvmChoice = 'auto' | '21' | '25' | 'exact'
-
-  function chooseGraalvm(choice: GraalvmChoice) {
-    graalvmChoice = choice
-    if (!config) return
-    if (graalvmChoice === 'exact') config.server.graalvm = config.server.graalvm.includes('.') ? config.server.graalvm : ''
-    else config.server.graalvm = graalvmChoice === 'auto' ? '' : graalvmChoice
-  }
   let message: string | null = $state(null)
   let messageFailed = $state(false)
   let discordMessage = $state<string | null>(null)
@@ -41,8 +24,6 @@
   async function load() {
     try {
       config = await api.getPackConfig()
-      const graalvm = config.server.graalvm.trim()
-      graalvmChoice = graalvm === '' ? 'auto' : graalvm === '21' || graalvm === '25' ? graalvm : 'exact'
       webhook = (await api.getWebhook()) ?? ''
       packJava = (await api.getPackJava()) ?? ''
       configError = null
@@ -68,7 +49,9 @@
     }
     saving = true
     try {
-      await api.savePackConfig(config)
+      // Server saves its own settings as you change them, so we keep whatever it wrote since we loaded.
+      const fresh = await api.getPackConfig()
+      await api.savePackConfig({ ...config, server: fresh.server, updates: fresh.updates })
       await api.setWebhook(webhook)
       await api.setPackJava(packJava.trim() || null)
       await load()
@@ -154,54 +137,26 @@
       </section>
 
       <section>
-        <h3>Server and test run</h3>
+        <h3>Test runs</h3>
         <div class="grid">
-          <label>Server memory <input bind:value={config.server.memory} placeholder="4G" aria-describedby="memory-hint" /></label>
-          <label>Test username <input bind:value={config.test.username} /></label>
+          <label>Username <input bind:value={config.test.username} /></label>
           <label>
-            Test server port
+            Server port
             <input type="number" min="1" max="65535" bind:this={portField} bind:value={config.test.port} aria-invalid={portMissing} aria-describedby={portMissing ? 'pack-save-status' : undefined} />
           </label>
+          <label>Client memory <input bind:value={config.test.client_memory} placeholder="8G" aria-describedby="test-memory-hint" /></label>
         </div>
-        <p class="hint" id="memory-hint">Server memory is the Java heap size, such as 4G or 6144M.</p>
-        <div class="field">
-          <label for="server-graalvm">Server pack Java</label>
-          <div class="inline">
-            <select
-              id="server-graalvm"
-              value={graalvmChoice}
-              onchange={(e) => chooseGraalvm(e.currentTarget.value as GraalvmChoice)}
-              aria-describedby="server-graalvm-hint"
-            >
-              <option value="auto">Automatic ({automaticGraalvm})</option>
-              <option value="21">Latest GraalVM 21</option>
-              <option value="25">Latest GraalVM 25</option>
-              <option value="exact">Exact GraalVM release</option>
-            </select>
-            {#if graalvmChoice === 'exact'}
-              <input
-                bind:value={config.server.graalvm}
-                required
-                pattern={'\\d+(\\.\\d+){1,2}'}
-                placeholder="21.0.7"
-                aria-label="GraalVM release"
-                aria-describedby="server-graalvm-hint"
-              />
-            {/if}
-          </div>
-          <p class="hint" id="server-graalvm-hint">
-            {#if graalvmChoice === 'exact'}Write a GraalVM release such as 21.0.7.{/if}
-            The server pack's run scripts download this on a host's first start. Latest means the newest release at that moment. Hosts can run their own Java
-            instead by writing its path in <span class="file">java.txt</span> next to the scripts.
-          </p>
-        </div>
+        <p class="hint" id="test-memory-hint">
+          These stay in the test loop. The test client gets the client memory as its Java heap size, such as 8G or 8192M. For the memory, Java and flags
+          that ship in the server pack, open <button type="button" class="link" onclick={() => ((serverView.tab = 'startup'), onserver())}>Server, Startup</button>.
+        </p>
         <div class="field">
           <label for="pack-java">Java on this machine</label>
           <div class="inline">
             <input id="pack-java" bind:value={packJava} placeholder="The Java from App settings" aria-describedby="pack-java-hint" />
             <button type="button" onclick={pickJava}>Choose</button>
           </div>
-          <p class="hint" id="pack-java-hint">Overrides the Java under App settings for this pack's test runs and server builds. packraven saves it only on this machine, never in the pack repo.</p>
+          <p class="hint" id="pack-java-hint">packraven uses this instead of the Java under App settings for this pack's test runs and server builds. packraven saves it only on this machine, never in the pack repo.</p>
         </div>
       </section>
 

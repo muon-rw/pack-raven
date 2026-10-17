@@ -36,6 +36,7 @@ mod pack_commands;
 mod process;
 mod publish;
 mod remote;
+mod server_icon;
 mod settings;
 mod setup;
 mod sides;
@@ -206,6 +207,11 @@ pub fn run() {
             pack_commands::update_hooks,
             pack_commands::get_pack_java,
             pack_commands::set_pack_java,
+            pack_commands::get_server_icon,
+            pack_commands::set_server_icon,
+            pack_commands::use_project_logo_as_server_icon,
+            pack_commands::remove_server_icon,
+            pack_commands::server_launch,
             git_commands::git_overview,
             git_commands::git_diff,
             git_commands::git_stage,

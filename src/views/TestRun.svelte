@@ -1,12 +1,13 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
   import { api, errorText, type Overview } from '../lib/api'
-  import { job, serverMods, testOptions, testState } from '../lib/jobs.svelte'
+  import { job, serverPack, testOptions, testState } from '../lib/jobs.svelte'
+  import { serverView } from '../lib/nav.svelte'
   import JobLog from '../components/JobLog.svelte'
   import Tip from '../components/Tip.svelte'
   import LinkedText from '../components/LinkedText.svelte'
 
-  let { overview, onservermods }: { overview: Overview | null; onservermods: () => void } = $props()
+  let { overview, onserver }: { overview: Overview | null; onserver: () => void } = $props()
 
 
   let join = $state(true)
@@ -17,7 +18,7 @@
   function startTest(connect: boolean) {
     return run(async () => {
       await api.startTest(testOptions.recopyAll, connect)
-      serverMods.changedSinceTest = false
+      serverPack.changedSinceTest = false
     })
   }
 
@@ -106,9 +107,9 @@
     </div>
   </div>
 
-  {#if serverRunning && serverMods.changedSinceTest}
+  {#if serverRunning && serverPack.changedSinceTest}
     <Notice tone="warn">
-      <p>You changed server mod overrides after the test server started. Stop it and start it again to use them.</p>
+      <p>You changed the server pack after the test server started. Stop it and start it again to use your changes.</p>
     </Notice>
   {/if}
   {#if error}<Notice tone="error"><p><LinkedText text={error} /></p></Notice>{/if}
@@ -146,7 +147,7 @@
       </form>
       <p class="hint muted" id="console-hint">
         {serverRunning ? 'Send commands to the server console. Use Stop to save and shut down, or Kill to end the process without saving.' : 'You can send commands once the server is running.'}
-        Server crashing due to a mod? <button class="link" onclick={onservermods}>Change server mods</button>.
+        Server crashing due to a mod? <button class="link" onclick={() => ((serverView.tab = 'mods'), onserver())}>Leave it off the server</button>.
       </p>
     </div>
 

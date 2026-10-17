@@ -184,3 +184,33 @@ test('clicking a version shows its changelog', async ({ page }) => {
   await first.click()
   await expect(versions.locator('.changelog')).toHaveCount(0)
 })
+
+test('server properties and startup save as you change them', async ({ page }) => {
+  const problems: string[] = []
+  page.on('console', (message) => message.type() === 'error' && !message.location().url.endsWith('/favicon.ico') && problems.push(message.text()))
+  await openApp(page, 'server', 'dirty')
+  await page.getByRole('tab', { name: 'Properties' }).click()
+  const entry = page.getByRole('img', { name: /in a player's server list/ })
+  await expect(entry).toContainText("Raven's High Fantasy 0.1.0")
+  await expect(entry).toContainText('0/12')
+
+  const motd = page.getByLabel('Message of the day')
+  await motd.fill('Welcome ')
+  await motd.press('End')
+  await page.getByRole('button', { name: 'Green, §a' }).click()
+  await expect(motd).toHaveValue('Welcome §a')
+  await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible()
+
+  await page.getByLabel('Difficulty', { exact: true }).selectOption('easy')
+  await expect(page.getByRole('button', { name: /^Reset Difficulty/ })).toHaveCount(0)
+
+  await page.getByRole('tab', { name: 'Startup' }).click()
+  await page.getByPlaceholder('6G').fill('lots')
+  await expect(page.getByText('Enter a size in gigabytes or megabytes')).toBeVisible()
+  await page.getByRole('textbox', { name: 'JVM flags' }).fill('-Xmx4G')
+  await expect(page.getByText('Set the heap size under Memory instead')).toBeVisible()
+  await page.getByRole('textbox', { name: 'Server arguments' }).fill('--world\nMy World')
+  await page.getByRole('textbox', { name: 'Server arguments' }).blur()
+  await expect(page.getByRole('complementary', { name: 'What hosts run' })).toContainText('nogui --world "My World"')
+  expect(problems).toEqual([])
+})
