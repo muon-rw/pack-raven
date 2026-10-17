@@ -20,6 +20,7 @@
   let previewError: { projectId: number; text: string } | null = $state(null)
 
   let searchField: HTMLInputElement
+  let resultsRegion: HTMLElement
 
   export function focusSearch() {
     searchField.focus()
@@ -76,7 +77,10 @@
     try {
       const preview = await api.previewMods(requests)
       if (preview.dependencies.length || preview.unavailable.length) confirming = { result, preview }
-      else await install(requests)
+      else {
+        await install(requests)
+        resultsRegion.focus()
+      }
     } catch (error) {
       previewError = { projectId: result.projectId, text: errorText(error) }
     } finally {
@@ -89,6 +93,7 @@
     const fileId = confirming.result.file.fileId
     confirming = null
     await install([{ fileId, replaces: null }])
+    resultsRegion.focus()
   }
 
   function list(names: string[]) {
@@ -145,8 +150,12 @@
     </Notice>
   {/if}
 
+  <p class="visually-hidden" role="status">
+    {#if searching}Searching CurseForge.{:else if !searchError}{results.length} {results.length === 1 ? 'result' : 'results'}.{/if}
+  </p>
+
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-  <div class="results" role="region" aria-label="Search results" aria-busy={searching} tabindex="0">
+  <div class="results" role="region" aria-label="Search results" aria-busy={searching} tabindex="0" bind:this={resultsRegion}>
     {#if !results.length && searching}
       <p class="muted empty">Searching CurseForge.</p>
     {:else if !results.length && !searchError}
@@ -154,7 +163,7 @@
         {browse.text.trim() ? `CurseForge has nothing matching "${browse.text.trim()}" for ${game}.` : `CurseForge has nothing in this category for ${game}.`}
       </p>
     {/if}
-    <ul>
+    <ul class:stale={searching && results.length}>
       {#each results as result (result.projectId)}
         {@const installed = installedIds.has(result.projectId)}
         <li>
@@ -167,7 +176,10 @@
             <p class="summary">{result.summary}</p>
             <p class="meta muted">{compact.format(result.downloads)} downloads · Updated {date(result.updated)}</p>
             {#if confirming?.result.projectId === result.projectId}
-              <div class="confirm" role="group" aria-label="Install {result.name}" {@attach (node) => node.scrollIntoView({ block: 'nearest' })}>
+              <div class="confirm" role="group" aria-label="Install {result.name}" {@attach (node) => {
+                node.scrollIntoView({ block: 'nearest' })
+                node.querySelector<HTMLButtonElement>('button.primary')?.focus()
+              }}>
                 {#if confirming.preview.dependencies.length}
                   <p>{result.name} requires {list(confirming.preview.dependencies)}, so packraven installs {confirming.preview.dependencies.length === 1 ? 'it' : 'them'} too.</p>
                 {/if}
@@ -178,7 +190,7 @@
                   <button class="primary" onclick={confirmInstall} disabled={blocked}>
                     {confirming.preview.dependencies.length ? `Install all ${confirming.preview.dependencies.length + 1}` : 'Install anyway'}
                   </button>
-                  <button class="quiet" onclick={() => (confirming = null)}>Cancel</button>
+                  <button class="quiet" onclick={() => { confirming = null; resultsRegion.focus() }}>Cancel</button>
                 </p>
               </div>
             {/if}
@@ -247,6 +259,7 @@
   }
 
   .results {
+    container-type: inline-size;
     flex: 1;
     min-height: 240px;
     overflow: auto;
@@ -266,6 +279,30 @@
     gap: 14px;
     align-items: start;
     padding: 14px 16px;
+  }
+
+  .stale {
+    opacity: 0.55;
+    transition: opacity 120ms ease-out;
+  }
+
+  /* At high zoom the results pane gets narrow, so the action drops under the text instead of
+     squeezing it. */
+  @container (max-width: 440px) {
+    li {
+      grid-template-columns: 32px 1fr;
+      gap: 10px 12px;
+    }
+
+    li img,
+    li .logo {
+      width: 32px;
+      height: 32px;
+    }
+
+    .action {
+      grid-column: 2;
+    }
   }
 
   li + li {

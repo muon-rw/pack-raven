@@ -80,6 +80,7 @@
   })
 
   onJobEnd('mods', async (phase) => {
+    finishedHere = true
     if (phase === 'done') {
       serverMods.changedSinceBuild = true
       serverMods.changedSinceTest = true
@@ -114,10 +115,19 @@
     }
   }
 
+  // The button you pressed is disabled or gone once a change starts, so we keep keyboard focus
+  // on the list instead of letting it fall back to the page.
+  function keepFocus(region: HTMLElement | undefined) {
+    if (region && !region.contains(document.activeElement) && document.activeElement !== document.body) return
+    region?.focus()
+  }
+
   async function update(requests: ModRequest[]) {
     actionError = null
+    finishedHere = false
     try {
       await api.changeMods(requests)
+      if (browse.tab === 'installed') tableRegion?.focus()
     } catch (error) {
       actionError = `Couldn't start the update: ${errorText(error)}`
     }
@@ -144,6 +154,7 @@
       if (modUpdates.checks) modUpdates.checks = new Map([...modUpdates.checks].filter(([path]) => path !== mod.path))
       if (expanded === mod.path) expanded = null
       await load()
+      keepFocus(tableRegion)
     } catch (error) {
       actionError = `Couldn't remove ${mod.name}: ${errorText(error)}`
     } finally {
@@ -216,7 +227,22 @@
   let installedIds = $derived(new Set(mods.map((m) => m.projectId)))
 
   let searchField: HTMLInputElement | undefined = $state()
+  let tableRegion: HTMLElement | undefined = $state()
+  // A run that finished before you opened the view already shows in the list, so we only
+  // report the ones that end while you're here.
+  let finishedHere = $state(false)
   let browser: ModBrowser | undefined = $state()
+
+  const tabs = ['installed', 'browse'] as const
+
+  function onTabKey(event: KeyboardEvent) {
+    const index = tabs.indexOf(browse.tab)
+    const next = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: tabs.length - 1 }[event.key]
+    if (next === undefined) return
+    event.preventDefault()
+    browse.tab = tabs[(next + tabs.length) % tabs.length]
+    document.getElementById(`mods-tab-${browse.tab}`)?.focus()
+  }
 
   function onKey(event: KeyboardEvent) {
     if (event.key.toLowerCase() !== 'f' || event.shiftKey || !commandKey(event) || event.defaultPrevented) return
@@ -266,9 +292,9 @@
     {/if}
   </header>
 
-  <div class="tabs" role="tablist" aria-label="Mods">
+  <div class="tabs" role="tablist" aria-label="Mods" tabindex="-1" onkeydown={onTabKey}>
     {#each [['installed', 'Installed'], ['browse', 'Browse']] as const as [tab, label] (tab)}
-      <button role="tab" id="mods-tab-{tab}" aria-selected={browse.tab === tab} aria-controls="mods-panel" class:on={browse.tab === tab} onclick={() => (browse.tab = tab)}>
+      <button role="tab" id="mods-tab-{tab}" aria-selected={browse.tab === tab} tabindex={browse.tab === tab ? 0 : -1} aria-controls="mods-panel" class:on={browse.tab === tab} onclick={() => (browse.tab = tab)}>
         {label}{#if tab === 'installed' && mods.length}<span class="muted tab-count">{mods.length}</span>{/if}
       </button>
     {/each}
@@ -300,7 +326,7 @@
   {#if actionError}
     <Notice tone="error"><p>{actionError}</p></Notice>
   {/if}
-  {#if job('mods').phase === 'done' && job('mods').message}
+  {#if finishedHere && job('mods').phase === 'done' && job('mods').message}
     <Notice tone="ok"><p>{job('mods').message}</p></Notice>
   {:else if job('mods').phase === 'failed'}
     <Notice tone="error">
@@ -338,7 +364,7 @@
   </div>
 
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-  <div class="table" role="region" aria-label="Mods" tabindex="0">
+  <div class="table" role="region" aria-label="Mods" tabindex="0" bind:this={tableRegion}>
     <table aria-busy={loading && !mods.length}>
       <thead>
         <tr><th>Mod</th><th>Version</th><th><span class="visually-hidden">Actions</span></th></tr>
@@ -427,7 +453,7 @@
                           {#if file.fileId === mod.fileId}
                             <span class="muted current">Installed</span>
                           {:else}
-                            <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={blocked}>
+                            <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={blocked} aria-label="Use {file.fileName}">
                               Use this
                             </button>
                           {/if}
@@ -542,8 +568,8 @@
   }
 
   .filters {
-    display: grid;
-    grid-template-columns: repeat(3, auto);
+    display: flex;
+    max-width: 100%;
     padding: 3px;
     gap: 3px;
     background: var(--paper);
@@ -553,7 +579,7 @@
 
   .filters button {
     font-weight: 400;
-    padding: 5px 16px;
+    padding: 5px clamp(8px, 2vw, 16px);
     color: var(--muted);
     background: transparent;
     border-color: transparent;
@@ -671,17 +697,17 @@
     vertical-align: -3px;
     fill: none;
     stroke: currentColor;
-    stroke-width: 1.5;
+    stroke-width: 1.25;
     stroke-linecap: round;
   }
 
   .lock[aria-pressed='false'] {
-    opacity: 0.35;
+    color: var(--muted);
   }
 
-  tr:hover .lock,
-  .lock:focus-visible {
-    opacity: 1;
+  tr:hover .lock[aria-pressed='false'],
+  .lock[aria-pressed='false']:focus-visible {
+    color: var(--text);
   }
 
   .lock[aria-pressed='true'] {
