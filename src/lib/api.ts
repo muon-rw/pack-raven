@@ -20,6 +20,37 @@ export interface PackConfig {
   server: { exclude: string[]; client_only: number[]; keep: number[]; memory: string; graalvm: string; properties: Record<string, string> }
   test: { username: string; port: number; client_memory: string }
   discord: { role_id: string; color: string; announce_on_approval: boolean; title: string; show_author: boolean; header: string; footer: string }
+  updates: { channel: ReleaseType }
+}
+
+export type ReleaseType = 'release' | 'beta' | 'alpha'
+
+export interface InstalledMod {
+  path: string
+  projectId: number
+  fileId: number
+  name: string
+  url: string | null
+}
+
+export interface ModFile {
+  fileId: number
+  fileName: string
+  releaseType: ReleaseType
+  fileDate: string | null
+}
+
+export interface ModCheck {
+  path: string
+  logo: string | null
+  releaseType: ReleaseType | null
+  requires: number[]
+  newer: ModFile[]
+}
+
+export interface UpdateRequest {
+  path: string
+  fileId: number
 }
 
 export interface Overview {
@@ -337,6 +368,12 @@ export const api = {
   revertMods: () => invoke<void>('revert_mods'),
   serverSides: () => invoke<ModSide[]>('server_sides'),
   setSideOverride: (projectId: number, mode: Override) => invoke<void>('set_side_override', { projectId, mode }),
+  installedMods: () => invoke<InstalledMod[]>('installed_mods'),
+  checkModUpdates: () => invoke<ModCheck[]>('check_mod_updates'),
+  modVersions: (path: string, projectId: number) => invoke<ModFile[]>('mod_versions', { path, projectId }),
+  setUpdateChannel: (channel: ReleaseType) => invoke<void>('set_update_channel', { channel }),
+  updateMods: (requests: UpdateRequest[]) => invoke<void>('update_mods', { requests }),
+  removeMods: (paths: string[]) => invoke<void>('remove_mods', { paths }),
   publishPreflight: (version: string) => invoke<string[]>('publish_preflight', { version }),
   buildClientExport: () => invoke<void>('build_client_export'),
   buildServerPack: () => invoke<void>('build_server_pack'),

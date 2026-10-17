@@ -253,3 +253,48 @@ async fn git_installer_download_matches_checksum() {
     println!("{} ({} bytes)", installer.display(), std::fs::metadata(&installer).unwrap().len());
     std::fs::remove_file(installer).unwrap();
 }
+
+// Installs an older Apotheosis into a fresh repo, then updates it, which also pulls in its
+// required dependencies.
+#[tokio::test]
+#[ignore]
+async fn update_mod_with_dependencies() {
+    use crate::mod_updates::{self, UpdateRequest};
+    use crate::modsync::{self, Placement};
+    const APOTHEOSIS: u64 = 313970;
+    const APOTHEOSIS_8_8_0: u64 = 8826922;
+
+    let dir = scratch().join("mod-updates");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("mods")).unwrap();
+    crate::git::run(&dir, &["init", "-q"]).unwrap();
+    std::fs::write(dir.join(crate::pack::LOCKFILE), r#"{"minecraft": "1.21.1", "loader": "neoforge-21.1.209", "files": []}"#).unwrap();
+    let log = Log::console("mods");
+
+    let old = crate::curseforge::files(&[APOTHEOSIS_8_8_0]).await.unwrap().remove(&APOTHEOSIS_8_8_0).unwrap();
+    let entry = mod_updates::lock_entry(&old, "mods", false).unwrap();
+    let old_path = entry.path.clone();
+    modsync::place(&dir, vec![Placement { entry, replaces: None }], &log).await.unwrap();
+    assert!(dir.join(&old_path).exists());
+
+    let pack = Pack::open(&dir).unwrap();
+    let checks = mod_updates::check(&pack).await.unwrap();
+    println!("{checks:#?}");
+    let newer = serde_json::to_value(&checks[0]).unwrap()["newer"].as_array().unwrap().clone();
+    let file_id = newer.iter().find(|f| f["releaseType"] == "release").expect("a newer release")["fileId"].as_u64().unwrap();
+
+    let plan = mod_updates::plan(&pack, &[UpdateRequest { path: old_path.clone(), file_id }]).await.unwrap();
+    println!("dependencies {:?}, unavailable {:?}", plan.dependencies, plan.unavailable);
+    assert!(!plan.dependencies.is_empty(), "Apotheosis requires Placebo and Apothic Attributes");
+    modsync::place(&dir, plan.placements, &log).await.unwrap();
+
+    let lock = Pack::open(&dir).unwrap().lock;
+    assert!(!dir.join(&old_path).exists());
+    assert!(lock.files.iter().any(|e| e.project_id == APOTHEOSIS && e.file_id == file_id));
+    assert!(lock.files.iter().all(|e| dir.join(&e.path).exists()));
+    assert_eq!(lock.files.len(), plan.dependencies.len() + 1);
+
+    let written = std::fs::read_to_string(dir.join(crate::pack::LOCKFILE)).unwrap();
+    assert!(modsync::refresh_mod_list(&dir).await.unwrap().is_empty());
+    assert_eq!(std::fs::read_to_string(dir.join(crate::pack::LOCKFILE)).unwrap(), written, "the watcher's refresh should agree with what we wrote");
+}

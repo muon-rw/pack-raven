@@ -20,6 +20,28 @@ pub struct PackConfig {
     pub server: ServerConfig,
     pub test: TestConfig,
     pub discord: DiscordConfig,
+    pub updates: UpdatesConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct UpdatesConfig {
+    pub channel: ReleaseType,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self { channel: ReleaseType::Release }
+    }
+}
+
+// Ordered from most to least stable, matching CurseForge's numbering.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum ReleaseType {
+    Release = 1,
+    Beta = 2,
+    Alpha = 3,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -85,6 +107,7 @@ impl Default for PackConfig {
             server: ServerConfig::default(),
             test: TestConfig::default(),
             discord: DiscordConfig::default(),
+            updates: UpdatesConfig::default(),
         }
     }
 }

@@ -81,6 +81,10 @@ impl MetadataCache {
         Ok(())
     }
 
+    pub fn known_name(&self, id: u64) -> Option<&ProjectName> {
+        self.names.get(&id)
+    }
+
     pub fn name(&self, id: u64) -> ProjectName {
         self.names.get(&id).cloned().unwrap_or(ProjectName { name: format!("Project {id}"), url: None })
     }

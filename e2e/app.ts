@@ -4,7 +4,8 @@ import type { Page } from '@playwright/test'
 export const headings = {
   changes: 'Changes',
   test: 'Test',
-  mods: 'Server mods',
+  mods: 'Mods',
+  server: 'Server mods',
   files: 'Files',
   git: 'Git',
   publish: 'Publish',

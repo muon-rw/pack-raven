@@ -282,7 +282,7 @@ fn cf_fingerprint(bytes: &[u8]) -> u32 {
     h ^ (h >> 15)
 }
 
-fn cdn_url(file_id: u64, file_name: &str) -> String {
+pub fn cdn_url(file_id: u64, file_name: &str) -> String {
     let mut encoded = String::new();
     for byte in file_name.bytes() {
         if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
@@ -659,6 +659,74 @@ pub async fn download_missing(dir: &Path, log: &Log) -> Result<()> {
     sync_folder(dir, log, false).await
 }
 
+pub struct Placement {
+    pub entry: LockEntry,
+    pub replaces: Option<String>,
+}
+
+// The caller holds MOD_LIST_GUARD. We download and check everything before we touch the folder, so
+// a failed download leaves the pack as it was. Writing the lock entries ourselves spares the next refresh a
+// fingerprint lookup.
+pub async fn place(dir: &Path, placements: Vec<Placement>, log: &Log) -> Result<()> {
+    let repo = Repo::open(dir)?;
+    std::fs::create_dir_all(repo.cache_dir())?;
+    let downloads: Vec<LockEntry> = placements.iter().filter(|p| !repo.cached(&p.entry.sha1).exists()).map(|p| p.entry.clone()).collect();
+    let results: Vec<Result<()>> = stream::iter(downloads)
+        .map(|entry| {
+            let target = repo.cached(&entry.sha1);
+            async move {
+                log.info(format!("Downloading {}", entry.path));
+                http::download(&entry.url, &target, Some(&entry.sha1)).await
+            }
+        })
+        .buffer_unordered(PARALLEL_DOWNLOADS)
+        .collect()
+        .await;
+    results.into_iter().collect::<Result<Vec<()>>>()?;
+    let replaced: HashSet<&str> = placements.iter().filter_map(|p| p.replaces.as_deref()).collect();
+    if let Some(taken) = placements.iter().find(|p| !replaced.contains(p.entry.path.as_str()) && repo.root.join(&p.entry.path).exists()) {
+        bail!("{} already exists", taken.entry.path);
+    }
+
+    let mut lock = repo.read_lock()?;
+    for Placement { entry, replaces } in placements {
+        if let Some(old) = replaces {
+            if let Some(old_entry) = lock.files.iter().find(|e| e.path == old) {
+                retire(&repo, &old, &old_entry.sha1)?;
+            } else {
+                std::fs::remove_file(repo.root.join(&old))?;
+            }
+            lock.files.retain(|e| e.path != old);
+            log.info(format!("Removed {old}"));
+        }
+        let target = repo.root.join(&entry.path);
+        std::fs::create_dir_all(target.parent().unwrap())?;
+        std::fs::copy(repo.cached(&entry.sha1), &target)?;
+        log.info(format!("Placed {}", entry.path));
+        lock.files.retain(|e| e.path != entry.path);
+        lock.files.push(entry);
+    }
+    repo.write_lock(&mut lock, false)
+}
+
+// We keep a replaced jar in the download cache, so switching back to it needs no download.
+fn retire(repo: &Repo, path: &str, sha1: &str) -> Result<()> {
+    let cached = repo.cached(sha1);
+    if cached.exists() {
+        std::fs::remove_file(repo.root.join(path))?;
+    } else {
+        std::fs::rename(repo.root.join(path), cached)?;
+    }
+    Ok(())
+}
+
+pub fn drop_from_lock(dir: &Path, paths: &[String]) -> Result<()> {
+    let repo = Repo::open(dir)?;
+    let mut lock = repo.read_lock()?;
+    lock.files.retain(|e| !paths.contains(&e.path));
+    repo.write_lock(&mut lock, false)
+}
+
 pub fn missing_count(dir: &Path) -> usize {
     let Ok(text) = std::fs::read_to_string(dir.join(LOCKFILE)) else { return 0 };
     Lockfile::parse(&text).map_or(0, |lock| lock.files.iter().filter(|e| !dir.join(&e.path).exists()).count())
@@ -685,12 +753,7 @@ async fn sync_folder(dir: &Path, log: &Log, replace_existing: bool) -> Result<()
     std::fs::create_dir_all(repo.cache_dir())?;
 
     for (path, sha1) in &plan.extra {
-        let cached = repo.cached(sha1);
-        if cached.exists() {
-            std::fs::remove_file(repo.root.join(path))?;
-        } else {
-            std::fs::rename(repo.root.join(path), cached)?;
-        }
+        retire(&repo, path, sha1)?;
         hashes.forget(path);
         log.info(format!("modsync: removed {path}"));
     }

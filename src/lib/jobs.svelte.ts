@@ -1,7 +1,7 @@
 import { untrack } from 'svelte'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-export type JobName = 'client-export' | 'server-pack' | 'test' | 'server' | 'client' | 'publish' | 'setup' | 'git' | 'restore'
+export type JobName = 'client-export' | 'server-pack' | 'test' | 'server' | 'client' | 'publish' | 'setup' | 'git' | 'restore' | 'mods'
 export type JobPhase = 'idle' | 'running' | 'done' | 'failed'
 
 export interface LogLine {

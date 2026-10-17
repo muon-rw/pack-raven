@@ -66,6 +66,7 @@ const config = {
   server: { exclude: [], client_only: [], keep: [], memory: '6G', graalvm: '', properties: {} },
   test: { username: 'Dev', port: 25565, client_memory: '8G' },
   discord: { role_id: '112233445566778899', color: '#4d6b2f', announce_on_approval: true, title: '{project_name} - v{version}', show_author: true, header: '', footer: '[Install]({file_url})' },
+  updates: { channel: 'release' },
 }
 
 const releases = scenario === 'empty' ? [] : [
@@ -106,6 +107,59 @@ const serverSides =
         { path: 'mods/shouldersurfing-neoforge-4.5.0.jar', projectId: 243190, name: 'Shoulder Surfing Reloaded', url: null, side: 'both', reason: 'CurseForge lists it for both sides', override: 'client' },
         { path: 'mods/Apotheosis-1.21.1-8.1.2.jar', projectId: 313970, name: 'Apotheosis', url: null, side: 'both', reason: 'CurseForge lists it for both sides', override: 'auto' },
       ]
+
+// A logo drawn inline, so the view never waits on CurseForge's image CDN.
+const logo = (letter: string, color: string) =>
+  `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28"><rect width="28" height="28" rx="4" fill="${color}"/><text x="14" y="19" font-family="sans-serif" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">${letter}</text></svg>`)}`
+
+type MockMod = { path: string; projectId: number; fileId: number; name: string; url: string | null; logo: string; releaseType: string; requires: number[]; newer: { fileId: number; fileName: string; releaseType: string; fileDate: null }[] }
+const newer = (fileId: number, fileName: string, releaseType = 'release') => ({ fileId, fileName, releaseType, fileDate: null })
+const cfUrl = (slug: string) => `https://www.curseforge.com/minecraft/mc-mods/${slug}`
+let installedMods: MockMod[] =
+  scenario === 'empty'
+    ? []
+    : [
+        { path: 'mods/Apotheosis-1.21.1-8.1.2.jar', projectId: 313970, fileId: 8826922, name: 'Apotheosis', url: cfUrl('apotheosis'), logo: logo('A', '#7a4b2a'), releaseType: 'release', requires: [283644], newer: [newer(8993983, 'Apotheosis-1.21.1-8.9.0.jar')] },
+        { path: 'mods/Placebo-1.21.1-9.9.1.jar', projectId: 283644, fileId: 8800001, name: 'Placebo', url: cfUrl('placebo'), logo: logo('P', '#5b6b8a'), releaseType: 'release', requires: [], newer: [] },
+        { path: 'mods/sodium-neoforge-0.6.15.jar', projectId: 394468, fileId: 8591792, name: 'Sodium', url: cfUrl('sodium'), logo: logo('S', '#3f6e4e'), releaseType: 'beta', requires: [], newer: [newer(8756580, 'sodium-neoforge-0.8.13+mc1.21.1.jar')] },
+        { path: 'mods/iris-neoforge-1.8.1.jar', projectId: 455508, fileId: 8700000, name: 'Iris Shaders', url: cfUrl('irisshaders'), logo: logo('I', '#6a3f8a'), releaseType: 'release', requires: [394468], newer: [] },
+        { path: 'mods/irons_spellbooks-1.21.1-3.4.0.jar', projectId: 855414, fileId: 8600000, name: "Iron's Spells 'n Spellbooks", url: cfUrl('irons-spells-n-spellbooks'), logo: logo('I', '#8a3f3f'), releaseType: 'release', requires: [], newer: [newer(8990000, 'irons_spellbooks-1.21.1-3.5.0-beta.2.jar', 'beta')] },
+        { path: 'mods/jei-1.21.1-neoforge-19.21.0.247.jar', projectId: 238222, fileId: 8650000, name: 'Just Enough Items (JEI)', url: cfUrl('jei'), logo: logo('J', '#4a6a2a'), releaseType: 'release', requires: [], newer: [] },
+        { path: 'mods/shouldersurfing-neoforge-4.5.0.jar', projectId: 243190, fileId: 8500000, name: 'Shoulder Surfing Reloaded', url: null, logo: logo('S', '#2a5a6a'), releaseType: 'release', requires: [], newer: [] },
+        { path: 'mods/betterclouds-neoforge-1.3.2.jar.disabled', projectId: 438180, fileId: 8400000, name: 'Better Clouds', url: cfUrl('better-clouds'), logo: logo('B', '#5a7a9a'), releaseType: 'release', requires: [], newer: [newer(8800500, 'betterclouds-neoforge-1.3.4.jar')] },
+        { path: 'resourcepacks/FreshAnimations_v1.9.4.zip', projectId: 453763, fileId: 8300000, name: 'Fresh Animations', url: cfUrl('fresh-animations'), logo: logo('F', '#9a6a2a'), releaseType: 'release', requires: [], newer: [] },
+        { path: 'shaderpacks/ComplementaryReimagined_r5.5.1.zip', projectId: 627557, fileId: 8200000, name: 'Complementary Shaders - Reimagined', url: cfUrl('complementary-reimagined'), logo: logo('C', '#2a4a7a'), releaseType: 'release', requires: [], newer: [newer(8950000, 'ComplementaryReimagined_r5.6.zip')] },
+      ]
+
+function mockJob(job: string, lines: string[], message: string, change: () => void) {
+  emit('job-state', { job, state: 'running', message: null })
+  lines.forEach((text, i) => setTimeout(() => emit('job-log', { job, stream: 'info', text }), 150 * (i + 1)))
+  setTimeout(() => {
+    change()
+    emit('job-state', { job, state: 'done', message })
+  }, 150 * (lines.length + 2))
+}
+
+function updateMods(requests: { path: string; fileId: number }[]) {
+  const files = requests.map((r) => {
+    const mod = installedMods.find((m) => m.path === r.path)!
+    const file = mod.newer.find((f) => f.fileId === r.fileId) ?? { fileId: r.fileId, fileName: `${mod.name.replace(/\W+/g, '')}-${r.fileId}.jar` }
+    return { mod, file }
+  })
+  mockJob(
+    'mods',
+    files.flatMap(({ mod, file }) => [`Downloading ${mod.path.slice(0, mod.path.indexOf('/'))}/${file.fileName}`, `Removed ${mod.path}`, `Placed ${file.fileName}`]),
+    files.length === 1 ? 'Updated 1 mod.' : `Updated ${files.length} mods.`,
+    () => {
+      for (const { mod, file } of files) {
+        const folder = mod.path.slice(0, mod.path.indexOf('/'))
+        mod.path = `${folder}/${file.fileName}${mod.path.endsWith('.disabled') ? '.disabled' : ''}`
+        mod.fileId = file.fileId
+        mod.newer = mod.newer.filter((f) => f.fileId > file.fileId)
+      }
+    },
+  )
+}
 
 const preflight = {
   dirty: ["mods/raven_tweaks-1.2.jar isn't on CurseForge. In Changes, add it to Git or move it to the trash."],
@@ -437,6 +491,26 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   publish_preflight: () => preflight,
   discover_instances: () => [pack, { ...pack, dir: 'C:/Instances/Shared Pack', name: 'Shared Pack', addonCount: 0, hasGit: false, hasLock: false, remote: null, added: false }],
   server_sides: () => serverSides,
+  installed_mods: () => installedMods.map(({ path, projectId, fileId, name, url }) => ({ path, projectId, fileId, name, url })),
+  check_mod_updates: () =>
+    new Promise((resolve) => setTimeout(() => resolve(installedMods.map(({ path, logo, releaseType, requires, newer }) => ({ path, logo, releaseType, requires, newer }))), 400)),
+  mod_versions: (a) => {
+    const mod = installedMods.find((m) => m.path === a.path)!
+    const base = mod.path.slice(mod.path.indexOf('/') + 1).replace(/\.disabled$/, '')
+    return [...mod.newer, { fileId: mod.fileId, fileName: base, releaseType: mod.releaseType, fileDate: null }, { fileId: mod.fileId - 90000, fileName: base.replace(/(\d+)(\.\w+)$/, (_, n, ext) => `${Math.max(0, Number(n) - 1)}${ext}`), releaseType: 'release', fileDate: null }].map((f, i) => ({
+      ...f,
+      fileDate: new Date(Date.UTC(2026, 9, 12 - i * 21)).toISOString(),
+    }))
+  },
+  set_update_channel: (a) => (config.updates.channel = String(a.channel)),
+  update_mods: (a) => updateMods(a.requests as { path: string; fileId: number }[]),
+  remove_mods: (a) => (installedMods = installedMods.filter((m) => !(a.paths as string[]).includes(m.path))),
+  // Shows the browser's confirm in place of the native dialog, and answers with the label of the button you chose.
+  'plugin:dialog|message': (a) => {
+    const buttons = a.buttons as { OkCancelCustom?: [string, string] } | string | undefined
+    const [ok, cancel] = (typeof buttons === 'object' && buttons.OkCancelCustom) || (buttons === 'YesNo' ? ['Yes', 'No'] : ['Ok', 'Cancel'])
+    return confirm(`${a.title ? `${a.title}\n\n` : ''}${a.message}`) ? ok : cancel
+  },
   discohook_link: () => 'https://discohook.app/?share=example',
   discohook_preview: () => 'https://discohook.app/?share=example',
   get_pack_java: () => null,

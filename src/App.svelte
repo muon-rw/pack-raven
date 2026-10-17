@@ -7,6 +7,8 @@
   import { job, jobs, serverMods, startListening, testState } from './lib/jobs.svelte'
   import Changes from './views/Changes.svelte'
   import ServerMods from './views/ServerMods.svelte'
+  import Mods from './views/Mods.svelte'
+  import { updateCount } from './lib/modUpdates.svelte'
   import TestRun from './views/TestRun.svelte'
   import Publish from './views/Publish.svelte'
   import SettingsView from './views/Settings.svelte'
@@ -29,9 +31,9 @@
 
   type View = (typeof views)[number]
   type Tone = 'ok' | 'warn' | 'bad' | 'busy' | 'idle'
-  type NavItem = { id: View; title: string; key?: string; alias?: string; status?: string; tone?: Tone; count?: number }
+  type NavItem = { id: View; title: string; key?: string; alias?: string; status?: string; tone?: Tone; count?: number; countText?: string }
 
-  const views = ['changes', 'test', 'mods', 'files', 'git', 'publish', 'releases', 'pack', 'settings', 'add'] as const
+  const views = ['changes', 'test', 'mods', 'server', 'files', 'git', 'publish', 'releases', 'pack', 'settings', 'add'] as const
 
   // In dev builds, `?view=publish` opens straight to a view, so screenshot scripts don't have to click there.
   function initialView(): View {
@@ -181,6 +183,8 @@
   )
 
   let publishPhase = $derived(job('publish').phase)
+  let modsPhase = $derived(job('mods').phase)
+  let updates = $derived(updateCount(packs?.active ?? null))
 
   let groups = $derived<{ label?: string; items: NavItem[] }[]>([
     {
@@ -202,13 +206,29 @@
         },
         {
           id: 'mods',
-          title: 'Server mods',
+          title: 'Mods',
           key: '3',
+          status: { running: 'Updating', failed: 'Update failed', done: undefined, idle: undefined }[modsPhase],
+          tone: ({ running: 'busy', failed: 'bad', done: 'idle', idle: 'idle' } as const)[modsPhase],
+          count: updates,
+          countText: `${updates} ${updates === 1 ? 'update' : 'updates'} available`,
+        },
+        {
+          id: 'server',
+          title: 'Server mods',
+          key: '4',
           status: serverMods.changedSinceBuild ? 'Changed since you last built the server pack' : undefined,
           tone: serverMods.changedSinceBuild ? 'warn' : 'idle',
         },
-        { id: 'files', title: 'Files', key: '4', alias: 'E' },
-        { id: 'git', title: 'Git', key: '5', alias: 'G', count: overview?.changed.length },
+        { id: 'files', title: 'Files', key: '5', alias: 'E' },
+        {
+          id: 'git',
+          title: 'Git',
+          key: '6',
+          alias: 'G',
+          count: overview?.changed.length,
+          countText: `${overview?.changed.length} uncommitted ${overview?.changed.length === 1 ? 'file' : 'files'}`,
+        },
       ],
     },
     {
@@ -217,14 +237,14 @@
         {
           id: 'publish',
           title: 'Publish',
-          key: '6',
+          key: '7',
           status: { running: 'Uploading', failed: 'Publish failed', done: 'Published', idle: undefined }[publishPhase],
           tone: ({ running: 'busy', failed: 'bad', done: 'ok', idle: 'idle' } as const)[publishPhase],
         },
-        { id: 'releases', title: 'Releases', key: '7' },
+        { id: 'releases', title: 'Releases', key: '8' },
       ],
     },
-    { items: [{ id: 'pack', title: 'Pack settings', key: '8' }] },
+    { items: [{ id: 'pack', title: 'Pack settings', key: '9' }] },
   ])
 
   $effect(() => {
@@ -323,7 +343,7 @@
                     {#if item.key}<kbd aria-hidden="true">{shortcut(`Ctrl+${item.key}`)}</kbd>{/if}
                     {#if item.count}
                       <span class="pending count" aria-hidden="true">{item.count}</span>
-                      <span class="visually-hidden">, {item.count} uncommitted {item.count === 1 ? 'file' : 'files'}</span>
+                      <span class="visually-hidden">, {item.countText}</span>
                     {/if}
                   </button>
                 </li>
@@ -380,9 +400,11 @@
         {:else if view === 'changes'}
           <Changes {overview} onpublish={() => (view = 'publish')} onchange={refresh} />
         {:else if view === 'mods'}
+          <Mods pack={packs?.active ?? null} />
+        {:else if view === 'server'}
           <ServerMods />
         {:else if view === 'test'}
-          <TestRun {overview} onservermods={() => (view = 'mods')} />
+          <TestRun {overview} onservermods={() => (view = 'server')} />
         {:else if view === 'files'}
           {#await loadFiles() then { default: Files }}
             <Files pack={packs?.active ?? null} />

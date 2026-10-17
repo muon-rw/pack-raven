@@ -17,3 +17,27 @@ for (const [view, scenario] of cases) {
     expect(problems).toEqual([])
   })
 }
+
+test('mods can be filtered, updated and removed', async ({ page }) => {
+  await openApp(page, 'mods', 'dirty')
+  const rows = page.getByRole('region', { name: 'Mods' }).locator('tbody > tr')
+  await expect(page.getByRole('button', { name: 'Update all (4)' })).toBeEnabled()
+
+  await page.getByRole('button', { name: /^Updates/ }).click()
+  await expect(rows).toHaveCount(4)
+
+  await page.getByRole('button', { name: 'Versions of Apotheosis' }).click()
+  await expect(page.getByRole('list', { name: 'Versions of Apotheosis' }).getByRole('listitem')).toHaveCount(3)
+
+  await page.getByRole('button', { name: 'Update Apotheosis' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Updated 1 mod.' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Update all (3)' })).toBeEnabled()
+
+  await page.getByRole('button', { name: 'All', exact: true }).click()
+  page.once('dialog', (dialog) => {
+    expect(dialog.message()).toContain('Apotheosis requires Placebo')
+    dialog.accept()
+  })
+  await page.getByRole('button', { name: 'Remove Placebo' }).click()
+  await expect(page.getByRole('button', { name: 'Remove Placebo' })).toHaveCount(0)
+})

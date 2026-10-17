@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 
 use crate::credentials::{self, Credential};
 use crate::http::CLIENT;
+use crate::pack::ModLoader;
 
 const CORE_API: &str = "https://api.curseforge.com/v1";
 const UPLOAD_API: &str = "https://minecraft.curseforge.com/api";
@@ -25,6 +26,20 @@ pub struct CfMod {
     pub logo: Option<CfLogo>,
     #[serde(default)]
     pub authors: Vec<CfAuthor>,
+    #[serde(default)]
+    pub class_id: Option<u64>,
+    #[serde(default)]
+    pub latest_files_indexes: Vec<CfFileIndex>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CfFileIndex {
+    pub game_version: String,
+    pub file_id: u64,
+    pub filename: String,
+    pub release_type: u8,
+    pub mod_loader: Option<u32>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -62,6 +77,53 @@ pub struct CfFile {
     pub is_server_pack: Option<bool>,
     #[serde(default)]
     pub server_pack_file_id: Option<u64>,
+    #[serde(default)]
+    pub release_type: u8,
+    #[serde(default)]
+    pub file_date: String,
+    #[serde(default)]
+    pub file_length: u64,
+    #[serde(default)]
+    pub download_url: Option<String>,
+    #[serde(default)]
+    pub hashes: Vec<CfHash>,
+    #[serde(default)]
+    pub dependencies: Vec<CfDependency>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct CfHash {
+    pub value: String,
+    pub algo: u32,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CfDependency {
+    pub mod_id: u64,
+    pub relation_type: u32,
+}
+
+const SHA1_ALGO: u32 = 1;
+const REQUIRED_DEPENDENCY: u32 = 3;
+
+impl CfFile {
+    pub fn sha1(&self) -> Option<&str> {
+        self.hashes.iter().find(|h| h.algo == SHA1_ALGO).map(|h| h.value.as_str())
+    }
+
+    pub fn required_projects(&self) -> impl Iterator<Item = u64> + '_ {
+        self.dependencies.iter().filter(|d| d.relation_type == REQUIRED_DEPENDENCY).map(|d| d.mod_id)
+    }
+}
+
+// CurseForge's ModLoaderType enum.
+pub fn loader_type(loader: &ModLoader) -> u32 {
+    match loader {
+        ModLoader::Forge(_) => 1,
+        ModLoader::Fabric(_) => 4,
+        ModLoader::NeoForge(_) => 6,
+    }
 }
 
 pub const NO_CORE_KEY: &str = "this packraven build has no CurseForge API key; build it with PACKRAVEN_CF_API_KEY set";
@@ -142,6 +204,12 @@ pub async fn file(project_id: u64, file_id: u64) -> Result<Option<CfFile>> {
         Err(error) if error.downcast_ref::<reqwest::Error>().and_then(|e| e.status()).is_some_and(|s| s.as_u16() == 404) => Ok(None),
         Err(error) => Err(error),
     }
+}
+
+pub async fn project_files(project_id: u64, minecraft: &str, loader_type: Option<u32>) -> Result<Vec<CfFile>> {
+    let loader = loader_type.map(|l| format!("&modLoaderType={l}")).unwrap_or_default();
+    let data = core_get(&format!("/mods/{project_id}/files?gameVersion={minecraft}{loader}&pageSize=50")).await?;
+    Ok(serde_json::from_value(data)?)
 }
 
 pub fn file_status_name(status: u32) -> &'static str {

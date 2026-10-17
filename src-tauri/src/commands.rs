@@ -54,7 +54,7 @@ impl AppState {
         settings.save(&self.settings_path)
     }
 
-    fn pack(&self) -> Result<Pack> {
+    pub(crate) fn pack(&self) -> Result<Pack> {
         Pack::open(&self.settings().instance_dir)
     }
 

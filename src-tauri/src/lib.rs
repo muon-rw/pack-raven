@@ -23,7 +23,9 @@ mod join;
 mod launch;
 mod logs;
 mod mirror;
+mod mod_commands;
 mod mod_list;
+mod mod_updates;
 mod modrinth;
 mod modsync;
 mod nbt;
@@ -170,6 +172,12 @@ pub fn run() {
             git_commands::git_pull_preview,
             commands::server_sides,
             commands::set_side_override,
+            mod_commands::installed_mods,
+            mod_commands::check_mod_updates,
+            mod_commands::mod_versions,
+            mod_commands::set_update_channel,
+            mod_commands::update_mods,
+            mod_commands::remove_mods,
             commands::publish_preflight,
             commands::build_client_export,
             commands::build_server_pack,
