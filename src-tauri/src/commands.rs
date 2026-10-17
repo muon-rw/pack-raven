@@ -346,20 +346,19 @@ async fn classify_cached(cache_path: &std::path::Path, pack: &Pack) -> Result<Ve
     Ok(sides)
 }
 
-async fn build_server(state_data: (PathBuf, PathBuf, PathBuf), pack: &Pack, java: &std::path::Path, log: &crate::jobs::Log) -> Result<PathBuf> {
+async fn build_server(state_data: (PathBuf, PathBuf, PathBuf), pack: &Pack, log: &crate::jobs::Log) -> Result<PathBuf> {
     let (data_dir, pack_data, cache_path) = state_data;
     let version = pack.version().unwrap_or_else(|| "dev".into());
     let sides = classify_cached(&cache_path, pack).await?;
-    export::server_pack(pack, &sides, &version, &pack_data.join("builds").join(&version), java, &data_dir, log).await
+    export::server_pack(pack, &sides, &version, &pack_data.join("builds").join(&version), &data_dir, log).await
 }
 
 #[tauri::command]
 pub fn build_server_pack(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let pack = state.pack().map_err(err)?;
-    let java = launch::java(&state.settings()).map_err(err)?;
     let data = (state.data_dir.clone(), state.pack_data(), state.cache_path());
     state.jobs.start(&app, "server-pack", move |log| async move {
-        let dir = build_server(data, &pack, &java, &log).await?;
+        let dir = build_server(data, &pack, &log).await?;
         let version = pack.version().unwrap_or_else(|| "dev".into());
         let out_dir = dir.parent().context("server pack folder has no parent")?;
         Ok(export::zip_server_pack(&pack, &version, out_dir, &log).await?.to_string_lossy().into_owned())
@@ -381,6 +380,10 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, recopy_all: bool, 
         return Err(MODS_CHANGING.into());
     }
     let settings = state.settings();
+    // We write eula=true into the test server folder, so you must accept the EULA yourself first.
+    if !settings.minecraft_eula_accepted {
+        return Err("Accept the Minecraft EULA before you start a test server.".into());
+    }
     let pack = state.pack().map_err(err)?;
     let java = launch::java(&settings).map_err(err)?;
     let (data_dir, cache_path) = (state.data_dir.clone(), state.cache_path());
@@ -392,7 +395,7 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, recopy_all: bool, 
     state.jobs.start(&app, "test", move |log| async move {
         let version = pack.version().unwrap_or_else(|| "dev".into());
         let sides = classify_cached(&cache_path, &pack).await?;
-        let plan = export::server_plan(&pack, &sides, &version, &java, &data_dir, &log).await?;
+        let plan = export::test_server_plan(&pack, &sides, &version, &java, &data_dir, &log).await?;
         log.info(if recopy_all { "Recopying every file in the test server folder" } else { "Syncing changed files to the test server folder" });
         let report = testrun::sync_server_dir(plan, &pack, &test_dir, recopy_all, &log)?;
         log.info(report.to_string());
@@ -458,7 +461,6 @@ pub fn publish(app: AppHandle, state: State<'_, AppState>, options: PublishOptio
         announce,
         pack,
         identity: state.settings().identity(),
-        java: launch::java(&state.settings()).map_err(err)?,
         data_dir: state.data_dir.clone(),
         pack_data: state.pack_data(),
         cache_path: state.cache_path(),

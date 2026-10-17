@@ -255,6 +255,7 @@ pub fn run() {
             system_commands::defender_status,
             system_commands::defender_exclude,
             system_commands::defender_dismiss,
+            system_commands::accept_minecraft_eula,
             system_commands::git_version,
             system_commands::install_git,
             system_commands::credentials_status,

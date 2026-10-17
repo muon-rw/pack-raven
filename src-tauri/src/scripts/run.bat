@@ -8,10 +8,10 @@ set "GRAALVM={{GRAALVM}}"
 set "JAVA="
 if exist java.txt set /p JAVA=<java.txt
 if defined JAVA set "JAVA=%JAVA:"=%"
-if defined JAVA goto run
+if defined JAVA goto install
 if "%GRAALVM%"=="" (
     set "JAVA=java"
-    goto run
+    goto install
 )
 
 set "GRAALVM_DIR=java\graalvm-%GRAALVM%"
@@ -25,6 +25,8 @@ del "%GRAALVM_DIR%.zip"
 :graalvm
 set "JAVA=%GRAALVM_DIR%\bin\java.exe"
 
+:install
+{{INSTALL}}
 :run
 echo Starting the server on %JAVA%
 "%JAVA%" @user_jvm_args.txt {{LAUNCH}} nogui{{ARGS}} %*

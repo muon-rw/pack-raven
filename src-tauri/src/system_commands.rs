@@ -60,6 +60,11 @@ pub fn defender_dismiss(state: State<'_, AppState>, dismissed: bool) -> CmdResul
 }
 
 #[tauri::command]
+pub fn accept_minecraft_eula(state: State<'_, AppState>) -> CmdResult<()> {
+    state.update_settings(|s| s.minecraft_eula_accepted = true).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
 pub fn git_version() -> Option<String> {
     crate::git::version()
 }

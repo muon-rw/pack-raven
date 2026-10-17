@@ -185,6 +185,23 @@ test('clicking a version shows its changelog', async ({ page }) => {
   await expect(versions.locator('.changelog')).toHaveCount(0)
 })
 
+test('test servers wait until you accept the Minecraft EULA', async ({ page }) => {
+  await openApp(page, 'test', 'empty')
+  const consent = page.getByRole('status').filter({ hasText: 'Accept the Minecraft EULA' })
+  await expect(consent.getByRole('link', { name: 'Read the Minecraft EULA' })).toHaveAttribute('href', 'https://aka.ms/MinecraftEULA')
+  for (const name of ['Quick test', 'Start server']) {
+    await expect(page.getByRole('button', { name, exact: true })).toHaveAttribute('aria-disabled', 'true')
+  }
+  await page.getByLabel('Join server').uncheck()
+  await expect(page.getByRole('button', { name: 'Launch client' })).toHaveAttribute('aria-disabled', 'false')
+
+  await consent.getByRole('button', { name: 'I accept the EULA' }).click()
+  await expect(consent).toHaveCount(0)
+  for (const name of ['Quick test', 'Start server']) {
+    await expect(page.getByRole('button', { name, exact: true })).toHaveAttribute('aria-disabled', 'false')
+  }
+})
+
 test('server properties and startup save as you change them', async ({ page }) => {
   const problems: string[] = []
   page.on('console', (message) => message.type() === 'error' && !message.location().url.endsWith('/favicon.ico') && problems.push(message.text()))

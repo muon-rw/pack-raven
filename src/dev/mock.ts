@@ -430,6 +430,8 @@ function mockServerIcon() {
 }
 
 let serverIcon: string | null = scenario === 'empty' ? null : 'pending'
+// A fresh setup hasn't accepted the Minecraft EULA yet.
+let eulaAccepted = scenario !== 'empty'
 
 function mockImage(path: string) {
   const canvas = document.createElement('canvas')
@@ -537,7 +539,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     clientRunning: false,
     hooks: 'current',
   }),
-  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: {}, defenderExcluded: [], defenderDismissed: false, editorAskMb: 50, editorMaxMb: 100, gitName: '', gitEmail: '' }),
+  accept_minecraft_eula: () => {
+    eulaAccepted = true
+  },
+  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: {}, defenderExcluded: [], defenderDismissed: false, minecraftEulaAccepted: eulaAccepted, editorAskMb: 50, editorMaxMb: 100, gitName: '', gitEmail: '' }),
   github_identity: () => ({ name: 'Muon', email: '1234567+muon-rw@users.noreply.github.com' }),
   git_pull_preview: () => ({
     incoming: { added: 1, updated: 3, removed: 0 },

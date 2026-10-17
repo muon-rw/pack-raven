@@ -147,7 +147,6 @@ pub fn preflight(pack: &Pack, version: &str, not_on_curseforge: &[String], ident
 pub struct PublishContext {
     pub pack: Pack,
     pub identity: Identity,
-    pub java: PathBuf,
     pub data_dir: PathBuf,
     pub pack_data: PathBuf,
     pub cache_path: PathBuf,
@@ -155,7 +154,7 @@ pub struct PublishContext {
 }
 
 pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> Result<String> {
-    let PublishContext { pack, identity, java, data_dir, pack_data, cache_path, announce } = ctx;
+    let PublishContext { pack, identity, data_dir, pack_data, cache_path, announce } = ctx;
     let version = options.version.trim().to_string();
     let _guard = modsync::MOD_LIST_GUARD.lock().await;
     let unknown = modsync::refresh_mod_list(&pack.dir).await?;
@@ -178,7 +177,7 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
     let baseline_path = pack_data.join(changelog::BASELINE_FILE);
     let diff = changelog::mod_diff(&pack, &pack.lock, &mut cache, &baseline_path).await?;
     cache.save(&cache_path)?;
-    export::server_pack(&pack, &sides, &version, &out_dir, &java, &data_dir, &log).await?;
+    export::server_pack(&pack, &sides, &version, &out_dir, &data_dir, &log).await?;
     let server_zip = export::zip_server_pack(&pack, &version, &out_dir, &log).await?;
     let notes = changelog::render(&changelog::read_notes(&pack), &diff);
 

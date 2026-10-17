@@ -21,10 +21,12 @@ use crate::sides::{ModSide, Side};
 
 const NEOFORGE_MAVEN: &str = "https://maven.neoforged.net/releases/net/neoforged/neoforge";
 const FORGE_MAVEN: &str = "https://maven.minecraftforge.net/net/minecraftforge/forge";
-const FABRIC_INSTALLERS: &str = "https://meta.fabricmc.net/v2/versions/installer";
+const FABRIC_META: &str = "https://meta.fabricmc.net/v2/versions";
 const FABRIC_LAUNCHER: &str = "fabric-server-launch.jar";
 const RUN_BAT: &str = include_str!("scripts/run.bat");
 const RUN_SH: &str = include_str!("scripts/run.sh");
+const INSTALL_BAT: &str = include_str!("scripts/install.bat");
+const INSTALL_SH: &str = include_str!("scripts/install.sh");
 
 fn globs(patterns: &[String]) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
@@ -172,12 +174,42 @@ pub async fn ensure_cached(pack: &Pack, entry: &LockEntry) -> Result<PathBuf> {
 #[derive(Deserialize)]
 struct FabricInstaller {
     url: String,
+    version: String,
     stable: bool,
 }
 
-async fn fabric_installer_url() -> Result<String> {
-    let installers: Vec<FabricInstaller> = http::CLIENT.get(FABRIC_INSTALLERS).send().await?.error_for_status()?.json().await?;
-    installers.into_iter().find(|i| i.stable).map(|i| i.url).context("Fabric lists no stable installer")
+async fn stable_fabric_installer() -> Result<FabricInstaller> {
+    let installers: Vec<FabricInstaller> = http::CLIENT.get(format!("{FABRIC_META}/installer")).send().await?.error_for_status()?.json().await?;
+    installers.into_iter().find(|i| i.stable).context("Fabric lists no stable installer")
+}
+
+fn forge_installer_url(minecraft: &str, loader: &ModLoader) -> Option<String> {
+    match loader {
+        ModLoader::NeoForge(version) => Some(format!("{NEOFORGE_MAVEN}/{version}/neoforge-{version}-installer.jar")),
+        ModLoader::Forge(version) => Some(format!("{FORGE_MAVEN}/{minecraft}-{version}/forge-{minecraft}-{version}-installer.jar")),
+        ModLoader::Fabric(_) => None,
+    }
+}
+
+fn url_file_name(url: &str) -> &str {
+    url.rsplit('/').next().unwrap_or(url)
+}
+
+async fn download_once(url: &str, path: &Path, what: &str, log: &Log) -> Result<PathBuf> {
+    if !path.exists() {
+        log.info(format!("Downloading {what}"));
+        http::download(url, path, None).await?;
+    }
+    Ok(path.to_path_buf())
+}
+
+async fn fabric_server_launcher(pack: &Pack, folder: &Path, log: &Log) -> Result<PathBuf> {
+    let minecraft = pack.lock.minecraft()?;
+    let ModLoader::Fabric(version) = pack.lock.mod_loader()? else { bail!("only Fabric packs have a Fabric server launcher") };
+    let installer = stable_fabric_installer().await?.version;
+    let url = format!("{FABRIC_META}/loader/{minecraft}/{version}/{installer}/server/jar");
+    let cached = folder.join(format!("fabric-server-mc.{minecraft}-loader.{version}-launcher.{installer}.jar"));
+    download_once(&url, &cached, "Fabric's server launcher", log).await
 }
 
 async fn loader_server_base(pack: &Pack, java: &Path, data_dir: &Path, log: &Log) -> Result<PathBuf> {
@@ -192,16 +224,12 @@ async fn loader_server_base(pack: &Pack, java: &Path, data_dir: &Path, log: &Log
     if base.join("libraries").exists() {
         return Ok(base);
     }
-    let (installer_url, args) = match loader {
-        ModLoader::NeoForge(version) => (format!("{NEOFORGE_MAVEN}/{version}/neoforge-{version}-installer.jar"), vec!["--installServer"]),
-        ModLoader::Forge(version) => (format!("{FORGE_MAVEN}/{minecraft}-{version}/forge-{minecraft}-{version}-installer.jar"), vec!["--installServer"]),
-        ModLoader::Fabric(version) => (fabric_installer_url().await?, vec!["server", "-mcversion", minecraft, "-loader", version, "-downloadMinecraft", "-dir"]),
+    let (installer_url, args) = match (forge_installer_url(minecraft, &loader), &loader) {
+        (Some(url), _) => (url, vec!["--installServer"]),
+        (None, ModLoader::Fabric(version)) => (stable_fabric_installer().await?.url, vec!["server", "-mcversion", minecraft, "-loader", version, "-downloadMinecraft", "-dir"]),
+        (None, _) => bail!("packraven doesn't know where to download the {} installer", loader.name()),
     };
-    let installer = folder.join(installer_url.rsplit('/').next().context("installer URL has no file name")?);
-    if !installer.exists() {
-        log.info(format!("Downloading the {} installer", loader.name()));
-        http::download(&installer_url, &installer, None).await?;
-    }
+    let installer = download_once(&installer_url, &folder.join(url_file_name(&installer_url)), &format!("the {} installer", loader.name()), log).await?;
     let staging = folder.join(format!("{name}-staging"));
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging)?;
@@ -239,7 +267,7 @@ async fn unpack_vanilla_bundler(dir: &Path, java: &Path, log: &Log) -> Result<()
     Ok(())
 }
 
-pub async fn server_plan(pack: &Pack, sides: &[ModSide], version: &str, java: &Path, data_dir: &Path, log: &Log) -> Result<FilePlan> {
+pub async fn test_server_plan(pack: &Pack, sides: &[ModSide], version: &str, java: &Path, data_dir: &Path, log: &Log) -> Result<FilePlan> {
     let base = loader_server_base(pack, java, data_dir, log).await?;
     let mut plan = FilePlan::new();
     for entry in WalkDir::new(&base) {
@@ -249,7 +277,31 @@ pub async fn server_plan(pack: &Pack, sides: &[ModSide], version: &str, java: &P
             plan.insert(relative, Planned::Copy(entry.into_path()));
         }
     }
+    plan.extend(pack_server_files(pack, sides, version, log).await?);
+    Ok(plan)
+}
 
+// The Minecraft EULA doesn't let us redistribute vanilla's server, so release server packs carry the
+// loader's installer (or Fabric's server launcher) instead, and that downloads it from Mojang on first start.
+async fn release_server_plan(pack: &Pack, sides: &[ModSide], version: &str, data_dir: &Path, log: &Log) -> Result<FilePlan> {
+    let mut plan = pack_server_files(pack, sides, version, log).await?;
+    let loader = pack.lock.mod_loader()?;
+    let folder = data_dir.join(loader.name().to_lowercase());
+    match forge_installer_url(pack.lock.minecraft()?, &loader) {
+        Some(url) => {
+            let name = url_file_name(&url);
+            let installer = download_once(&url, &folder.join(name), &format!("the {} installer", loader.name()), log).await?;
+            plan.insert(name.to_string(), Planned::Copy(installer));
+        }
+        None => {
+            plan.insert(FABRIC_LAUNCHER.into(), Planned::Copy(fabric_server_launcher(pack, &folder, log).await?));
+        }
+    }
+    Ok(plan)
+}
+
+async fn pack_server_files(pack: &Pack, sides: &[ModSide], version: &str, log: &Log) -> Result<FilePlan> {
+    let mut plan = FilePlan::new();
     let client_only: HashSet<&str> = sides.iter().filter(|m| m.side == Side::Client).map(|m| m.path.as_str()).collect();
     let server_files: Vec<&LockEntry> = pack
         .lock
@@ -279,16 +331,25 @@ pub async fn server_plan(pack: &Pack, sides: &[ModSide], version: &str, java: &P
     let motd = fill_motd(properties.get("motd").map_or(DEFAULT_MOTD, String::as_str), &pack.name(), version, pack.lock.minecraft.as_deref().unwrap_or_default());
     properties.insert("motd".into(), motd);
     plan.insert("server.properties".into(), Planned::Write(properties.iter().map(|(k, v)| format!("{k}={}\n", escape_property(v))).collect()));
-    let jvm_args = std::fs::read_to_string(base.join("user_jvm_args.txt")).unwrap_or_default();
-    plan.insert("user_jvm_args.txt".into(), Planned::Write(user_jvm_args(&jvm_args, pack)));
+    plan.insert("user_jvm_args.txt".into(), Planned::Write(user_jvm_args(pack)));
     // We replace the NeoForge and Forge installers' run scripts, which call whatever java is on
     // PATH, and Fabric's installer writes none.
     let graalvm = server_graalvm(pack)?;
     let args = &pack.config.server.args;
-    let run_bat = start_script(RUN_BAT, &loader_launch(pack, true)?, graalvm.as_deref(), &script_args(args, true)).replace('\n', "\r\n");
+    let run_bat = start_script(RUN_BAT, &install_step(pack, true)?, &loader_launch(pack, true)?, graalvm.as_deref(), &script_args(args, true)).replace('\n', "\r\n");
     plan.insert("run.bat".into(), Planned::Write(run_bat));
-    plan.insert("run.sh".into(), Planned::Write(start_script(RUN_SH, &loader_launch(pack, false)?, graalvm.as_deref(), &script_args(args, false))));
+    plan.insert("run.sh".into(), Planned::Write(start_script(RUN_SH, &install_step(pack, false)?, &loader_launch(pack, false)?, graalvm.as_deref(), &script_args(args, false))));
     Ok(plan)
+}
+
+// Fabric's server launcher installs everything itself when it starts, so only NeoForge and Forge need this.
+fn install_step(pack: &Pack, windows: bool) -> Result<String> {
+    let loader = pack.lock.mod_loader()?;
+    let Some(url) = forge_installer_url(pack.lock.minecraft()?, &loader) else { return Ok(String::new()) };
+    let launch = loader_launch(pack, windows)?;
+    let launched = launched_file(&launch);
+    let (template, launched) = if windows { (INSTALL_BAT, launched.replace('/', "\\")) } else { (INSTALL_SH, launched.to_string()) };
+    Ok(template.replace("{{LOADER}}", loader.name()).replace("{{INSTALLER}}", url_file_name(&url)).replace("{{LAUNCHED}}", &launched))
 }
 
 const DEFAULT_MOTD: &str = "{name} {version}";
@@ -303,8 +364,8 @@ fn escape_property(value: &str) -> String {
     value.encode_utf16().map(|unit| if unit < 0x80 { char::from(unit as u8).to_string() } else { format!("\\u{unit:04X}") }).collect()
 }
 
-fn user_jvm_args(installer_args: &str, pack: &Pack) -> String {
-    let mut text = format!("{installer_args}\n-Xmx{}\n", pack.config.server.memory);
+fn user_jvm_args(pack: &Pack) -> String {
+    let mut text = format!("-Xmx{}\n", pack.config.server.memory);
     for flag in pack.config.server.jvm_args.iter().map(|flag| flag.trim()).filter(|flag| !flag.is_empty()) {
         text.push_str(flag);
         text.push('\n');
@@ -337,9 +398,13 @@ pub fn loader_launch(pack: &Pack, windows: bool) -> Result<String> {
     })
 }
 
+fn launched_file(launch: &str) -> &str {
+    launch.trim_start_matches('@').trim_start_matches("-jar ")
+}
+
 pub fn server_args(pack: &Pack, dir: &Path) -> Result<Vec<String>> {
     let launch = loader_launch(pack, cfg!(windows))?;
-    let launched_file = launch.trim_start_matches('@').trim_start_matches("-jar ");
+    let launched_file = launched_file(&launch);
     if !dir.join(launched_file).exists() {
         bail!("the {} installer didn't create {launched_file}, so packraven can't start this server", pack.lock.mod_loader()?.name());
     }
@@ -372,8 +437,9 @@ fn graalvm_url_prefix(version: &str) -> String {
     }
 }
 
-fn start_script(template: &str, launch: &str, graalvm: Option<&str>, args: &str) -> String {
+fn start_script(template: &str, install: &str, launch: &str, graalvm: Option<&str>, args: &str) -> String {
     template
+        .replace("{{INSTALL}}", install)
         .replace("\r\n", "\n")
         .replace("{{GRAALVM}}", graalvm.unwrap_or_default())
         .replace("{{URL_PREFIX}}", &graalvm.map(graalvm_url_prefix).unwrap_or_default())
@@ -381,9 +447,9 @@ fn start_script(template: &str, launch: &str, graalvm: Option<&str>, args: &str)
         .replace("{{ARGS}}", args)
 }
 
-pub async fn server_pack(pack: &Pack, sides: &[ModSide], version: &str, out_dir: &Path, java: &Path, data_dir: &Path, log: &Log) -> Result<PathBuf> {
+pub async fn server_pack(pack: &Pack, sides: &[ModSide], version: &str, out_dir: &Path, data_dir: &Path, log: &Log) -> Result<PathBuf> {
     let dir = out_dir.join("server");
-    let plan = server_plan(pack, sides, version, java, data_dir, log).await?;
+    let plan = release_server_plan(pack, sides, version, data_dir, log).await?;
     log.info(mirror(&dir, &plan, &[], false)?.to_string());
     Ok(dir)
 }
@@ -440,6 +506,27 @@ mod tests {
         assert_eq!(script_args(&args, true), " --world \"My World\" \"100%%\"");
         assert_eq!(script_args(&args, false), " --world 'My World' '100%'");
         assert_eq!(script_args(&["it's".into()], false), " 'it'\\''s'");
+    }
+
+    fn loader_pack(minecraft: &str, loader: &str) -> Pack {
+        Pack { dir: PathBuf::new(), config: Default::default(), lock: crate::pack::Lockfile { minecraft: Some(minecraft.into()), loader: Some(loader.into()), files: Vec::new() } }
+    }
+
+    #[test]
+    fn neoforge_scripts_install_on_first_start() {
+        let pack = loader_pack("1.21.1", "neoforge-21.1.259");
+        let bat = install_step(&pack, true).unwrap();
+        assert!(bat.contains(r#"if exist "libraries\net\neoforged\neoforge\21.1.259\win_args.txt" goto run"#), "{bat}");
+        assert!(bat.contains(r#""%JAVA%" -jar "neoforge-21.1.259-installer.jar" --installServer .install"#), "{bat}");
+        let sh = install_step(&pack, false).unwrap();
+        assert!(sh.contains(r#"if [ ! -f "libraries/net/neoforged/neoforge/21.1.259/unix_args.txt" ]"#), "{sh}");
+        let script = start_script(RUN_SH, &sh, &loader_launch(&pack, false).unwrap(), None, "");
+        assert!(!script.contains("{{"), "{script}");
+    }
+
+    #[test]
+    fn fabric_scripts_have_no_install_step() {
+        assert_eq!(install_step(&loader_pack("1.21.1", "fabric-0.16.14-1.21.1"), true).unwrap(), "");
     }
 
     #[test]

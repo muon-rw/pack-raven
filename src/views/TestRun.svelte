@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
+  import { openUrl } from '@tauri-apps/plugin-opener'
   import Notice from '../components/Notice.svelte'
   import { api, errorText, type Overview } from '../lib/api'
   import { job, serverPack, testOptions, testState } from '../lib/jobs.svelte'
@@ -14,6 +16,18 @@
   let clientJoins = $state(false)
   let command = $state('')
   let error: string | null = $state(null)
+
+  const EULA_URL = 'https://aka.ms/MinecraftEULA'
+  // Until settings load we don't know, so we neither ask nor block; start_test still refuses.
+  let eulaAccepted: boolean | null = $state(null)
+  onMount(() => run(async () => void (eulaAccepted = (await api.getSettings()).minecraftEulaAccepted)))
+
+  function acceptEula() {
+    return run(async () => {
+      await api.acceptMinecraftEula()
+      eulaAccepted = true
+    })
+  }
 
   function startTest(connect: boolean) {
     return run(async () => {
@@ -59,10 +73,11 @@
   )
 
   let serverStarting = $derived(preparing || (serverRunning && !testState.serverReady))
-  let whyNoStart = $derived(serverRunning ? 'The test server is already running' : preparing ? 'packraven is preparing the test server' : null)
+  let whyNoEula = $derived(eulaAccepted === false ? 'Accept the Minecraft EULA first' : null)
+  let whyNoStart = $derived(serverRunning ? 'The test server is already running' : preparing ? 'packraven is preparing the test server' : whyNoEula)
   let whyNoStop = $derived(serverRunning ? null : preparing ? "packraven is preparing the test server; you can stop it once it's running" : "The test server isn't running")
   let whyNoQuick = $derived(
-    serverRunning ? 'The test server is already running. Use Launch client to join it' : clientRunning ? 'The client is already running' : preparing ? 'packraven is preparing the test server' : null,
+    serverRunning ? 'The test server is already running. Use Launch client to join it' : clientRunning ? 'The client is already running' : preparing ? 'packraven is preparing the test server' : whyNoEula,
   )
   let whyNoLaunch = $derived(
     clientRunning
@@ -107,6 +122,15 @@
     </div>
   </div>
 
+  {#if eulaAccepted === false}
+    <Notice tone="warn">
+      <p><strong>Accept the Minecraft EULA to start test servers.</strong> Vanilla's server won't run until you do. packraven remembers your answer on this PC and marks it accepted in each test server it starts. You can still launch the client on its own.</p>
+      <div class="eula-actions">
+        <a href={EULA_URL} onclick={(e) => { e.preventDefault(); openUrl(EULA_URL) }}>Read the Minecraft EULA</a>
+        <button class="primary" onclick={acceptEula}>I accept the EULA</button>
+      </div>
+    </Notice>
+  {/if}
   {#if serverRunning && serverPack.changedSinceTest}
     <Notice tone="warn">
       <p>You changed the server pack after the test server started. Stop it and start it again to use your changes.</p>
@@ -228,6 +252,13 @@
     margin-top: 4px;
   }
 
+  .eula-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+  }
+
   .controls {
     display: flex;
     align-items: start;
@@ -242,7 +273,8 @@
     min-height: 0;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    /* The floor keeps each log's toolbar clear of the console when notices take the space; the view scrolls instead. */
+    grid-template-rows: auto minmax(220px, 1fr) auto auto;
     column-gap: 20px;
   }
 

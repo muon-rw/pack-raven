@@ -19,6 +19,8 @@ use crate::settings::Settings;
 
 // Fabric keeps its remapped mods in .fabric, and rebuilding that cache slows every start.
 const KEPT_ON_RESYNC: [&str; 5] = ["world", "logs", "crash-reports", "usercache.json", ".fabric"];
+// We join by IP rather than "localhost", which can resolve to IPv6 first and miss a server bound to IPv4.
+const TEST_SERVER_IP: &str = "127.0.0.1";
 
 #[derive(Default)]
 pub struct Managed {
@@ -110,9 +112,12 @@ pub fn sync_server_dir(mut plan: FilePlan, pack: &Pack, test_dir: &Path, recopy_
     mirror(test_dir, &plan, &KEPT_ON_RESYNC, recopy_all).context("couldn't update the test server folder. Is a server from an earlier run still open?")
 }
 
+// An offline server lets anyone join under any name, so we only listen on this PC.
 fn test_properties(text: &str, port: u16) -> String {
-    let mut lines: Vec<String> = text.lines().filter(|l| !l.starts_with("online-mode=") && !l.starts_with("server-port=")).map(String::from).collect();
+    let overridden = ["online-mode=", "server-ip=", "server-port="];
+    let mut lines: Vec<String> = text.lines().filter(|l| !overridden.iter().any(|key| l.starts_with(key))).map(String::from).collect();
     lines.push("online-mode=false".into());
+    lines.push(format!("server-ip={TEST_SERVER_IP}"));
     lines.push(format!("server-port={port}"));
     lines.join("\n") + "\n"
 }
@@ -143,7 +148,7 @@ pub async fn run_client(app: AppHandle, run: Arc<TestRun>, settings: &Settings, 
     if run.client.lock().unwrap().is_some() {
         bail!("the client is already running");
     }
-    let address = join.then(|| format!("localhost:{}", pack.config.test.port));
+    let address = join.then(|| format!("{TEST_SERVER_IP}:{}", pack.config.test.port));
     std::fs::create_dir_all(&natives)?;
     let launch = launch::client(settings, pack, &pack.config.test.username, address.as_deref(), &natives)?;
     let target = address.as_deref().map_or_else(|| "to the title screen".to_string(), |a| format!("joining {a}"));
@@ -157,4 +162,15 @@ pub async fn run_client(app: AppHandle, run: Arc<TestRun>, settings: &Settings, 
     let result = supervise(child, managed, &run.client).await;
     emit(&app, "client-stopped", "");
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_server_runs_offline_on_this_pc_only() {
+        let properties = test_properties("motd=Ravens\nonline-mode=true\nserver-ip=0.0.0.0\nserver-port=1\n", 25565);
+        assert_eq!(properties, "motd=Ravens\nonline-mode=false\nserver-ip=127.0.0.1\nserver-port=25565\n");
+    }
 }

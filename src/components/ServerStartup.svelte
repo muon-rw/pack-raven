@@ -193,7 +193,7 @@
         <pre>{[script.java, '@user_jvm_args.txt', script.launch, 'nogui', ...script.args].join(' ')}</pre>
       </figure>
     {/each}
-    <p class="hint">Test runs use the same flags and arguments with this machine's Java, on port {testPort} in offline mode.</p>
+    <p class="hint">Test runs use the same flags and arguments with this machine's Java, on port {testPort} in offline mode, open only to this PC.</p>
   </aside>
 </div>
 

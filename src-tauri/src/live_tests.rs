@@ -111,7 +111,7 @@ async fn boots_with(mut command: Command) -> bool {
     let mut reader = BufReader::new(child.stdout.take().unwrap());
     let started = tokio::time::timeout(Duration::from_secs(900), async {
         while let Some(line) = crate::process::read_line_lossy(&mut reader).await {
-            if line.contains("ERROR") || line.contains("Exception") || line.contains("Done (") || line.contains("GraalVM") || line.contains("Starting the server") {
+            if line.contains("ERROR") || line.contains("Exception") || line.contains("Done (") || line.contains("GraalVM") || line.contains("Installing the") || line.contains("Starting the server") {
                 println!("{line}");
             }
             if line.contains("Done (") {
@@ -141,13 +141,17 @@ async fn server_pack_boots() {
     let mut cache = MetadataCache::load(&scratch().join("metadata-cache.json"));
     let sides = sides::classify(&pack, &mut cache).await.unwrap();
     let out = scratch().join("build");
-    export::server_pack(&pack, &sides, "test", &out, &java, &scratch(), &log).await.unwrap();
+    export::server_pack(&pack, &sides, "test", &out, &scratch(), &log).await.unwrap();
     let zip = export::zip_server_pack(&pack, "test", &out, &log).await.unwrap();
     println!("zip {} ({} MB)", zip.display(), std::fs::metadata(&zip).unwrap().len() / 1_000_000);
 
     let dir = out.join("server");
+    let _ = std::fs::remove_dir_all(dir.join("libraries"));
     std::fs::write(dir.join("eula.txt"), "eula=true\n").unwrap();
-    assert!(boots(&java, &pack, &dir).await, "server did not finish starting");
+    std::fs::write(dir.join("java.txt"), java.to_string_lossy().as_bytes()).unwrap();
+    let mut bat = Command::new("cmd");
+    bat.current_dir(&dir).args(["/c", ".\\run.bat"]);
+    assert!(boots_with(bat).await, "server did not finish starting");
 }
 
 async fn modless_pack(source: &Path) -> PathBuf {
@@ -175,11 +179,11 @@ async fn loader_test_servers_boot() {
         let log = Log::console(name);
         let test_dir = scratch().join(format!("test-server-{name}"));
         let _ = std::fs::remove_dir_all(&test_dir);
-        let plan = export::server_plan(&pack, &[], "test", &java, &scratch(), &log).await.unwrap();
+        let plan = export::test_server_plan(&pack, &[], "test", &java, &scratch(), &log).await.unwrap();
         println!("{name}: {}", crate::testrun::sync_server_dir(plan, &pack, &test_dir, false, &log).unwrap());
         assert!(boots(&java, &pack, &test_dir).await, "{name} server did not finish starting");
 
-        let plan = export::server_plan(&pack, &[], "test", &java, &scratch(), &log).await.unwrap();
+        let plan = export::test_server_plan(&pack, &[], "test", &java, &scratch(), &log).await.unwrap();
         println!("{name} resync: {}", crate::testrun::sync_server_dir(plan, &pack, &test_dir, false, &log).unwrap());
     }
 }
@@ -192,9 +196,8 @@ async fn server_pack_scripts_boot() {
     let name = std::env::var("PACKRAVEN_SCRIPT_INSTANCE").unwrap_or_else(|_| "MMC4Forge".into());
     let source = Settings::default().instances_root().join(&name);
     let pack = Pack::open(&modless_pack(&source).await).unwrap();
-    let java = launch::java(&Settings { instance_dir: source, ..Settings::default() }).unwrap();
     let out = scratch().join(format!("scripts-{name}"));
-    let dir = export::server_pack(&pack, &[], "test", &out, &java, &scratch(), &Log::console(&name)).await.unwrap();
+    let dir = export::server_pack(&pack, &[], "test", &out, &scratch(), &Log::console(&name)).await.unwrap();
     std::fs::write(dir.join("eula.txt"), "eula=true\n").unwrap();
 
     let mut bat = Command::new("cmd");

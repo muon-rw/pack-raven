@@ -7,6 +7,7 @@ export interface Settings {
   javaByMajor: Record<string, string>
   defenderExcluded: string[]
   defenderDismissed: boolean
+  minecraftEulaAccepted: boolean
   editorAskMb: number
   editorMaxMb: number
   gitName: string
@@ -357,6 +358,7 @@ export const api = {
   defenderStatus: () => invoke<DefenderView>('defender_status'),
   defenderExclude: (paths: string[]) => invoke<void>('defender_exclude', { paths }),
   defenderDismiss: (dismissed: boolean) => invoke<void>('defender_dismiss', { dismissed }),
+  acceptMinecraftEula: () => invoke<void>('accept_minecraft_eula'),
   listDir: (path: string) => invoke<DirEntry[]>('list_dir', { path }),
   readFile: (path: string, allowLarge = false) => invoke<FileContent>('read_file', { path, allowLarge }),
   writeFile: (path: string, text: string, crlf: boolean, bom: boolean) => invoke<void>('write_file', { path, text, crlf, bom }),
