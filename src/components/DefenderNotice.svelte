@@ -5,6 +5,7 @@
 
   let status = $state<DefenderView | null>(null)
   let hidden = $state(false)
+  let foldersOpen = $state(false)
   let busy = $state(false)
   let error = $state<string | null>(null)
 
@@ -38,11 +39,13 @@
       <div class="row">
         <div class="text">
           Windows Defender scans every file packraven builds, which slows builds and test runs. Excluding
-          <details>
-            <summary>{status.missing.length === 1 ? 'this folder' : `these ${status.missing.length} folders`}</summary>
-            <ul>{#each status.missing as path (path)}<li class="file">{path}</li>{/each}</ul>
-          </details>
+          <button class="link folders" aria-expanded={foldersOpen} aria-controls="defender-folders" onclick={() => (foldersOpen = !foldersOpen)}>
+            {status.missing.length === 1 ? 'this folder' : `these ${status.missing.length} folders`}
+          </button>
           speeds them up, but Defender stops scanning files in them. Windows asks you to confirm.
+          {#if foldersOpen}
+            <ul id="defender-folders">{#each status.missing as path (path)}<li class="file">{path}</li>{/each}</ul>
+          {/if}
         </div>
         <span class="actions">
           <button onclick={exclude} class:busy disabled={busy}>{busy ? 'Waiting for Windows' : 'Exclude folders'}</button>
@@ -72,15 +75,9 @@
     max-width: 72ch;
   }
 
-  details {
-    display: inline;
-  }
-
-  summary {
-    display: inline;
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 0.18em;
+  /* Chromium lays out <details> as an inline-block even with display: inline, which broke the sentence after the folder link. */
+  .folders {
+    color: inherit;
   }
 
   ul {
