@@ -353,13 +353,19 @@
   let kindsWithUpdates = $derived(new Set([...updates.keys()].map(folder)))
   let kindCounts = $derived(mods.reduce((counts, m) => counts.set(folder(m.path), (counts.get(folder(m.path)) ?? 0) + 1), new Map<Kind, number>()))
 
+  // Locked mods with a newer file sit between the ones you can update and the ones with nothing new.
+  function updateTier(mod: InstalledMod) {
+    if (updates.has(mod.path)) return 0
+    return modUpdates.locked.has(mod.projectId) && newestOnChannel(checkFor(mod)) ? 1 : 2
+  }
+
   // Each column sorts the interesting rows first: updates, locked or disabled mods, and A to Z.
   function compare(a: InstalledMod, b: InstalledMod): number {
     const byName = a.name.localeCompare(b.name)
     const flag = (value: (m: InstalledMod) => boolean) => Number(value(b)) - Number(value(a)) || byName
     switch (sort.key) {
       case 'update':
-        return flag((m) => updates.has(m.path))
+        return updateTier(a) - updateTier(b) || byName
       case 'locked':
         return flag((m) => modUpdates.locked.has(m.projectId))
       case 'enabled':
@@ -870,10 +876,12 @@
     min-width: 0;
   }
 
+  /* The search field keeps room on the right for its clear button, so it needs more width than
+     the placeholder's text alone. */
   .tools input {
-    flex: 1 1 160px;
+    flex: 1 1 240px;
     max-width: 280px;
-    min-width: 0;
+    min-width: min(100%, 15rem);
   }
 
   .log summary {
