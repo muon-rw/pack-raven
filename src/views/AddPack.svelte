@@ -251,7 +251,7 @@
       {#if result?.ok}
         <Notice tone="ok">
           <p>{result.message}</p>
-          <p><button type="button" class="primary" onclick={onadded}>Open Changes</button></p>
+          <p><button type="button" class="primary" onclick={onadded}>Open Mods</button></p>
         </Notice>
       {:else}
         <div class="actions">
@@ -351,7 +351,7 @@
       {#if result?.ok}
         <Notice tone="ok">
           <p>{result.message}</p>
-          <p><button type="button" class="primary" onclick={onadded}>Open Changes</button></p>
+          <p><button type="button" class="primary" onclick={onadded}>Open Mods</button></p>
         </Notice>
       {:else}
         <div class="actions">
