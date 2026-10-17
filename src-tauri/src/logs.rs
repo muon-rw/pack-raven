@@ -3,6 +3,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use chrono::TimeZone;
 use serde::Serialize;
 
 // A modded debug.log can run to hundreds of megabytes, and only its end matters while a game
@@ -67,6 +68,73 @@ fn read_whole(root: &Path, relative: &str) -> Result<LogChunk> {
     Ok(LogChunk { text: String::from_utf8_lossy(&data).into_owned(), offset: 0, reset: true, truncated, followable: false })
 }
 
+// We launch the client with vanilla's launcher log config, which prints each event to stdout as
+// log4j XML for the launcher to parse. We can't drop the config, since for 1.12 to 1.16 it
+// carries Mojang's Log4Shell fix, so we turn each event back into the lines latest.log would hold.
+#[derive(Default)]
+pub struct Log4jXmlDecoder {
+    event: Option<String>,
+}
+
+impl Log4jXmlDecoder {
+    pub fn feed(&mut self, line: &str) -> Vec<String> {
+        match &mut self.event {
+            Some(event) => {
+                event.push('\n');
+                event.push_str(line);
+            }
+            None if line.trim_start().starts_with("<log4j:Event ") => self.event = Some(line.to_string()),
+            None => return vec![line.to_string()],
+        }
+        if !line.trim_end().ends_with("</log4j:Event>") {
+            return Vec::new();
+        }
+        let event = self.event.take().unwrap_or_default();
+        decode_log4j_event(&event).unwrap_or(event).lines().map(String::from).collect()
+    }
+
+    pub fn finish(&mut self) -> Vec<String> {
+        self.event.take().map(|event| event.lines().map(String::from).collect()).unwrap_or_default()
+    }
+}
+
+fn decode_log4j_event(xml: &str) -> Option<String> {
+    let open = &xml[..xml.find('>')?];
+    let attribute = |name: &str| {
+        let start = open.find(&format!(" {name}=\""))? + name.len() + 3;
+        Some(unescape_xml(&open[start..start + open[start..].find('"')?]))
+    };
+    let millis = attribute("timestamp")?.parse().ok()?;
+    let time = chrono::Local.timestamp_millis_opt(millis).single()?.format("%H:%M:%S");
+    let (thread, level, logger) = (attribute("thread")?, attribute("level")?, attribute("logger")?);
+    let mut text = format!("[{time}] [{thread}/{level}] [{logger}]: {}", xml_element_text(xml, "log4j:Message").unwrap_or_default());
+    if let Some(throwable) = xml_element_text(xml, "log4j:Throwable") {
+        text.push('\n');
+        text.push_str(throwable.trim_end());
+    }
+    Some(text)
+}
+
+fn xml_element_text(xml: &str, tag: &str) -> Option<String> {
+    let start = xml.find(&format!("<{tag}>"))? + tag.len() + 2;
+    let mut rest = &xml[start..start + xml[start..].find(&format!("</{tag}>"))?];
+    let mut text = String::new();
+    // log4j splits a CDATA section wherever the message itself contains "]]>".
+    while let Some(open) = rest.find("<![CDATA[") {
+        text.push_str(&unescape_xml(&rest[..open]));
+        let body = &rest[open + 9..];
+        let close = body.find("]]>").unwrap_or(body.len());
+        text.push_str(&body[..close]);
+        rest = &body[(close + 3).min(body.len())..];
+    }
+    text.push_str(&unescape_xml(rest));
+    Some(text)
+}
+
+fn unescape_xml(text: &str) -> String {
+    text.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,5 +175,43 @@ mod tests {
         let chunk = read(&root, "old.log.gz", 0).unwrap();
         assert_eq!(chunk.text, "a\nb\n");
         assert!(!chunk.followable && !chunk.truncated);
+    }
+
+    #[test]
+    fn decodes_log4j_xml_events_into_log_lines() {
+        let stdout = [
+            "Plain line before log4j starts",
+            r#"  <log4j:Event logger="Sodium-Workarounds" timestamp="1792257521618" level="WARN" thread="Render &quot;thread&quot;">"#,
+            "    <log4j:Message><![CDATA[Applied workarounds: [NVIDIA]]]></log4j:Message>",
+            "  </log4j:Event>",
+            r#"  <log4j:Event logger="Minecraft" timestamp="1792257521618" level="ERROR" thread="main">"#,
+            "    <log4j:Message><![CDATA[Two",
+            "lines with ]]]]><![CDATA[> & <tags>]]></log4j:Message>",
+            "    <log4j:Throwable><![CDATA[java.lang.Exception: boom",
+            "\tat Foo.bar(Foo.java:1)",
+            "]]></log4j:Throwable>",
+            "  </log4j:Event>",
+        ];
+        let mut decoder = Log4jXmlDecoder::default();
+        let lines: Vec<String> = stdout.iter().flat_map(|line| decoder.feed(line)).collect();
+        let time = chrono::Local.timestamp_millis_opt(1792257521618).unwrap().format("%H:%M:%S");
+        assert_eq!(
+            lines,
+            [
+                "Plain line before log4j starts".to_string(),
+                format!(r#"[{time}] [Render "thread"/WARN] [Sodium-Workarounds]: Applied workarounds: [NVIDIA]"#),
+                format!("[{time}] [main/ERROR] [Minecraft]: Two"),
+                "lines with ]]> & <tags>".to_string(),
+                "java.lang.Exception: boom".to_string(),
+                "\tat Foo.bar(Foo.java:1)".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn flushes_an_unfinished_log4j_event_as_is() {
+        let mut decoder = Log4jXmlDecoder::default();
+        assert!(decoder.feed(r#"<log4j:Event logger="a" timestamp="1" level="INFO" thread="main">"#).is_empty());
+        assert_eq!(decoder.finish(), [r#"<log4j:Event logger="a" timestamp="1" level="INFO" thread="main">"#]);
     }
 }

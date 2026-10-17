@@ -8,8 +8,18 @@
   import JobLog from '../components/JobLog.svelte'
   import Tip from '../components/Tip.svelte'
   import LinkedText from '../components/LinkedText.svelte'
+  import Splitter from '../components/Splitter.svelte'
+  import { StoredSplit, clamp } from '../lib/storedSplit.svelte'
 
   let { overview, onserver, onappsettings }: { overview: Overview | null; onserver: () => void; onappsettings: () => void } = $props()
+
+  // The logs are peers, so we keep their ratio rather than a width as the window resizes.
+  const LOGS_GAP = 20
+  const logSplit = new StoredSplit('packraven.testLogRatio')
+  let logsWidth = $state(0)
+  let splitTotal = $derived(logsWidth - LOGS_GAP)
+  let logMin = $derived(Math.min(220, splitTotal * 0.4))
+  let serverWidth = $derived(clamp(splitTotal * (logSplit.value ?? 0.5), logMin, splitTotal - logMin))
 
   let join = $state(true)
   let clientJoins = $state(false)
@@ -183,8 +193,8 @@
   {#if job('test').phase === 'failed'}<Notice tone="error"><p><LinkedText text={job('test').message ?? ''} /></p></Notice>{/if}
   {#if job('client').phase === 'failed'}<Notice tone="error"><p>Couldn't launch the client: <LinkedText text={job('client').message ?? ''} /></p></Notice>{/if}
 
-  <div class="logs">
-    <div class="pane">
+  <div class="logs" bind:clientWidth={logsWidth} style:grid-template-columns={logsWidth ? `${serverWidth}px ${LOGS_GAP}px minmax(0, 1fr)` : null}>
+    <div class="pane" id="server-pane">
       <div class="pane-head">
         <h3>Server</h3>
         <div class="buttons">
@@ -217,6 +227,8 @@
         Server crashing due to a mod? <button class="link" onclick={() => ((serverView.tab = 'mods'), onserver())}>Leave it off the server</button>.
       </p>
     </div>
+
+    <Splitter value={serverWidth} min={logMin} max={splitTotal - logMin} total={splitTotal} label="Resize the server and client logs" controls="server-pane" onresize={(px) => logSplit.set(px / splitTotal)} onreset={() => logSplit.reset()} />
 
     <div class="pane">
       <div class="pane-head">
@@ -320,16 +332,16 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr);
     /* The floor keeps each log's toolbar clear of the console when notices take the space; the view scrolls instead. */
     grid-template-rows: auto minmax(220px, 1fr) auto auto;
-    column-gap: 20px;
   }
 
   .pane {
     display: grid;
     grid-row: span 4;
     grid-template-rows: subgrid;
+    grid-template-columns: minmax(0, 1fr);
     row-gap: 10px;
     min-height: 0;
   }

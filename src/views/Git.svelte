@@ -16,6 +16,8 @@
   import Notice from '../components/Notice.svelte'
   import LogView from '../components/LogView.svelte'
   import LinkedText from '../components/LinkedText.svelte'
+  import Splitter from '../components/Splitter.svelte'
+  import { StoredSplit, clamp } from '../lib/storedSplit.svelte'
 
   let { onchange }: { onchange: () => void } = $props()
 
@@ -80,6 +82,15 @@
     if (document.hidden || loading) return
     load().then(() => selected && loadDiff(selected, false))
   }
+
+  const SIDE_GAP = 24
+  const SIDE_MIN = 260
+  const DIFF_MIN = 360
+  const sideSplit = new StoredSplit('packraven.gitSideWidth')
+  let workWidth = $state(0)
+  let splitTotal = $derived(workWidth - SIDE_GAP)
+  let sideMax = $derived(splitTotal - DIFF_MIN)
+  let sideWidth = $derived(clamp(sideSplit.value ?? splitTotal * 0.34, SIDE_MIN, sideMax))
 
   function storedLayout(): Layout {
     try {
@@ -541,8 +552,8 @@
     </Notice>
   {/if}
 
-  <div class="work">
-  <div class="side">
+  <div class="work" bind:clientWidth={workWidth} style:grid-template-columns={workWidth ? `${sideWidth}px ${SIDE_GAP}px minmax(0, 1fr)` : null}>
+  <div class="side" id="git-side">
 
     <form class="commit" onsubmit={(e) => { e.preventDefault(); commit() }}>
       <label for="commit-message" class="visually-hidden">Commit message</label>
@@ -628,6 +639,8 @@
       {/if}
     </section>
   </div>
+
+  <Splitter value={sideWidth} min={SIDE_MIN} max={sideMax} total={splitTotal} label="Resize the changes list" controls="git-side" onresize={(px) => sideSplit.set(px)} onreset={() => sideSplit.reset()} />
 
   <section class="diff" aria-label="Diff">
     {#if !selected && keys.size}
@@ -747,8 +760,7 @@
   .work {
     flex: 1;
     display: grid;
-    grid-template-columns: minmax(260px, 34%) minmax(0, 1fr);
-    gap: 24px;
+    grid-template-columns: minmax(260px, 34%) 24px minmax(0, 1fr);
     min-height: 0;
   }
 

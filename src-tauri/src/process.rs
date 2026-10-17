@@ -6,6 +6,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
 use crate::jobs::Log;
+use crate::logs::Log4jXmlDecoder;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -81,12 +82,17 @@ fn pipe_lines<R: tokio::io::AsyncRead + Unpin + Send + 'static>(reader: Option<R
     let Some(reader) = reader else { return };
     tokio::spawn(async move {
         let mut reader = BufReader::new(reader);
-        while let Some(line) = read_line_lossy(&mut reader).await {
+        let mut decoder = Log4jXmlDecoder::default();
+        let emit = |line: String| {
             if let Some(hook) = &hook {
                 hook(&line);
             }
             log.stream(stream, &line);
+        };
+        while let Some(line) = read_line_lossy(&mut reader).await {
+            decoder.feed(&line).into_iter().for_each(emit);
         }
+        decoder.finish().into_iter().for_each(emit);
     });
 }
 

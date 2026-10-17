@@ -22,6 +22,8 @@
   import ContextMenu from '../components/ContextMenu.svelte'
   import type { MenuItem } from '../lib/menu'
   import Notice from '../components/Notice.svelte'
+  import Splitter from '../components/Splitter.svelte'
+  import { StoredSplit, clamp } from '../lib/storedSplit.svelte'
 
   let { pack }: { pack: string | null } = $props()
 
@@ -435,6 +437,14 @@
   const PREVIEW_DELAY_MS = 200
 
   let editorWidth = $state(0)
+  let filesWidth = $state(0)
+  const TREE_GAP = 20
+  const TREE_MIN = 160
+  const EDITOR_MIN = 360
+  const treeSplit = new StoredSplit('packraven.fileTreeWidth')
+  let splitTotal = $derived(filesWidth - TREE_GAP)
+  let treeMax = $derived(Math.min(splitTotal / 2, splitTotal - EDITOR_MIN))
+  let treeWidth = $derived(clamp(treeSplit.value ?? Math.max(200, Math.min(300, splitTotal * 0.3)), TREE_MIN, treeMax))
   let preview: MarkdownPreview | undefined = $state()
   let previewDoc = $state<{ path: string; text: string } | null>(null)
   let editorScrollIgnoredUntil = 0
@@ -451,6 +461,13 @@
       return null
     }
   }
+
+  // We settle a tab's default mode when it first shows, so resizing the tree or the window later
+  // doesn't flip it between Split and Code.
+  $effect(() => {
+    if (!isMarkdown || !current || readOnly || rememberedMode || !editorWidth || tabModes.has(current.path)) return
+    tabModes.set(current.path, editorWidth >= SPLIT_MIN_WIDTH ? 'split' : 'code')
+  })
 
   function setMarkdownMode(mode: MarkdownMode) {
     if (!current) return
@@ -523,8 +540,8 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="files">
-  <aside class="browser">
+<div class="files" bind:clientWidth={filesWidth} style:grid-template-columns={filesWidth ? `${treeWidth}px ${TREE_GAP}px minmax(0, 1fr)` : null}>
+  <aside class="browser" id="file-browser">
     <div class="browser-head">
       <h2>Files</h2>
       <span class="search">
@@ -569,6 +586,8 @@
     {/if}
     <FileTree bind:this={tree} hidden={searching} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} onremoved={closeRemoved} ongitchange={loadChanges} />
   </aside>
+
+  <Splitter value={treeWidth} min={TREE_MIN} max={treeMax} total={splitTotal} label="Resize the file browser" controls="file-browser" onresize={(px) => treeSplit.set(px)} onreset={() => treeSplit.reset()} />
 
   <section class="editor" bind:clientWidth={editorWidth}>
     {#if workspace.tabs.length}
@@ -728,8 +747,7 @@
 <style>
   .files {
     display: grid;
-    grid-template-columns: minmax(200px, min(300px, 30%)) minmax(0, 1fr);
-    gap: 20px;
+    grid-template-columns: minmax(200px, min(300px, 30%)) 20px minmax(0, 1fr);
     flex: 1;
     min-height: 360px;
   }
