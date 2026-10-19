@@ -8,7 +8,7 @@ use tokio::io::AsyncWriteExt;
 
 pub static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
-        .user_agent(concat!("muon-rw/packraven/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("muon-rw/pack-raven/", env!("CARGO_PKG_VERSION")))
         .build()
         .expect("http client")
 });
