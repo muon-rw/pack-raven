@@ -16,11 +16,20 @@ const args = process.argv.slice(2)
 const dryRun = args.includes('--dry-run')
 const [givenVersion] = args.filter((arg) => arg !== '--dry-run')
 
-const git = (...gitArgs) => execFileSync('git', gitArgs, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+const git = (...gitArgs) => {
+  try {
+    return execFileSync('git', gitArgs, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  } catch (error) {
+    throw new Error(`git ${gitArgs[0]} failed: ${error.stderr?.trim() || error.message}`)
+  }
+}
 const fail = (text) => {
   console.error(text)
   process.exit(1)
 }
+// Git and file errors end the run with their message alone, since a stack trace adds nothing for you.
+process.on('uncaughtException', (error) => fail(error.message))
+process.on('unhandledRejection', (error) => fail(error instanceof Error ? error.message : String(error)))
 
 const changelog = readFileSync(CHANGELOG, 'utf8').replace(/\r\n/g, '\n')
 const lines = changelog.split('\n')
