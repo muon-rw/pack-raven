@@ -19,6 +19,7 @@
   import PackSettings from './views/PackSettings.svelte'
   const loadFiles = () => import('./views/Files.svelte')
   import { dirtyCount, startWatching } from './lib/workspace.svelte'
+  import { refreshSelfUpdate, selfUpdate, startSelfUpdates, updateWaiting } from './lib/selfUpdate.svelte'
   import DefenderNotice from './components/DefenderNotice.svelte'
   import GitNotice from './components/GitNotice.svelte'
   import IgnoreDialog from './components/IgnoreDialog.svelte'
@@ -66,7 +67,7 @@
   async function refresh() {
     refreshing = true
     try {
-      await load()
+      await Promise.all([load(), refreshSelfUpdate()])
     } finally {
       refreshing = false
     }
@@ -93,12 +94,14 @@
     startListening()
     startWatching()
     refreshAccount()
+    const stopSelfUpdates = startSelfUpdates()
     const timer = setInterval(poll, 5000)
     const unlisten = listen<{ kind: string }>('test-event', ({ payload }) => {
       if (payload.kind.endsWith('-started') || payload.kind.endsWith('-stopped')) refresh()
     })
     const unlistenModList = listen('mod-list-changed', poll)
     return () => {
+      stopSelfUpdates()
       clearInterval(timer)
       unlisten.then((stop) => stop())
       unlistenModList.then((stop) => stop())
@@ -368,11 +371,17 @@
 
     <button
       class="item app-settings"
-      aria-describedby={account !== undefined ? 'rail-player' : undefined}
+      aria-describedby={[updateWaiting(selfUpdate.view) && 'rail-update', account !== undefined && 'rail-player'].filter(Boolean).join(' ') || undefined}
       class:current={view === 'settings'} aria-current={view === 'settings' ? 'page' : undefined} aria-keyshortcuts="Control+," onclick={() => (view = 'settings')}>
       <span class="label">App settings</span>
+      {#if updateWaiting(selfUpdate.view)}
+        <span class="chip ok" id="rail-update" title="packraven {selfUpdate.view.status.version} is {selfUpdate.view.status.phase}">
+          update<span class="visually-hidden">{` to packraven ${selfUpdate.view.status.version} ${selfUpdate.view.status.phase}`}</span>
+        </span>
+      {/if}
       {#if account !== undefined}
-        <span class="who" class:signed-out={!account} id="rail-player">
+        <!-- The rail has no room for both, so the update chip takes the name's place until you update. -->
+        <span class="who" class:signed-out={!account} class:visually-hidden={updateWaiting(selfUpdate.view)} id="rail-player">
           <span class="visually-hidden">{'Minecraft: '}</span>{account ? account.name : 'Signed out'}
         </span>
       {/if}
@@ -751,6 +760,11 @@
     margin-top: auto;
     color: var(--rail-muted);
   }
+
+  .app-settings .chip {
+    margin-left: auto;
+  }
+
 
   /* We show who you play as in the App settings row, so it costs the rail no height; the shortcut hint covers it on hover. */
   .app-settings .who {

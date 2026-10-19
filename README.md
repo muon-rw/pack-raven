@@ -1,8 +1,8 @@
 # packraven
 
-A desktop app for developing and publishing modpacks. Track a CurseForge instance in git without committing mod jars, share it across machines or with collaborators, test it on a local server, and publish the client and server files to CurseForge. 
+A desktop app for developing and publishing modpacks. Track a CurseForge instance in git without committing mod jars, share it across machines or with collaborators, edit files in the app, test everything on a local server, and publish the client and server files to CurseForge. 
 
-packraven runs on Windows and macOS. Linux is not yet supported.
+packraven runs on Windows and macOS. Linux is not yet officially supported.
 
 ## What it does
 
@@ -14,8 +14,6 @@ packraven runs on Windows and macOS. Linux is not yet supported.
 - **Announces.** Follow the status of your CurseForge review automatically, then announce the release on Discord via a webhook. Discohook support is built in.
 - **Manages mods.** Search CurseForge, add and update mods, see file changelogs, and disable any pack file, in fewer clicks. 
 - **Edit Files.** Browse files in your pack, and edit them right in the app. We validate most file formats (json, toml, etc.), can view images and play media. 
-
-packraven sits in the tray and can start when you sign in.
 
 ## Getting started
 
@@ -32,7 +30,7 @@ Publishing needs a CurseForge upload token, and pushing over HTTPS to GitHub nee
 
 ### Pack settings
 
-Each pack's settings live in `packraven.toml` at the root of the pack repo, so collaborators share them. Edit them under **Pack settings**: the CurseForge project and release type, files to leave out of the client and server exports, client-only and keep-on-server overrides, server memory and properties, the test server port and username, Discord announcement text, and the update channel.
+Each pack's settings can be found in a `packraven.toml` at the root of the pack repo, so collaborators share them. Edit these under **Pack settings**: the CurseForge project and release type, files to leave out of the client and server exports, client-only and keep-on-server overrides, server memory and properties, the test server port and username, Discord announcement text, and the update channel.
 
 Release notes go in `changelog.md`. When you publish, we archive them to a file for that version and clear the working notes. We store the pack version in the Better Compatibility Checker config.
 
@@ -51,7 +49,8 @@ For a release build, set `PACKRAVEN_CF_API_KEY` to packraven's CurseForge for St
 PACKRAVEN_CF_API_KEY=... npm run tauri build
 ```
 
-We embed the key in the binary (masked) at build time, so it never goes in the repo. Without it, packraven can't look up or recognize mods on CurseForge.
+This key is masked and embedded in the binary at build time; it's not in this repo. Without one, packraven won't be able to use many of its Curseforge integrations.
+If you create a fork and publish it, do not unmask and embed packraven's API key. You must use your own. 
 
 ## Development
 
@@ -71,3 +70,21 @@ Run `npm run dev` and open the printed URL to work on the UI in a browser agains
 | `npm run shots` | Screenshots every view, scenario, width and theme into `shots/`. |
 | `cargo test --manifest-path src-tauri/Cargo.toml` | Backend tests. |
 | `npm run test:live` | Backend tests that call CurseForge. These need `PACKRAVEN_CF_API_KEY` set at build time. |
+
+## Releasing
+
+Add each change under `## [Unreleased]` in `CHANGELOG.md` as you make it, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). To release, move those notes into a section like `## [0.2.0]` (today's date will be added if you leave it off), commit, and run `npm run release -- 0.2.0` (or the **Release** run configuration, which asks for the version) on an up-to-date, clean `master`. We check that the section exists, has notes, is the newest release in the file, and is newer than the last release tag. Then we update the changelog's compare links, bump the version in `src-tauri/Cargo.toml`, commit, tag `v0.2.0` with that section's notes, and push. 
+
+Add `--dry-run` to commit and tag without pushing.
+
+The tag starts `.github/workflows/release.yml`, which builds the Windows installer and a universal macOS app into a draft GitHub release with the tag's notes, signs the update bundles, and publishes the release once both platforms are in `latest.json`. Installed copies of packraven check that file in the newest release for updates.
+
+The workflow needs these repository secrets:
+
+| Secret | What it holds |
+| --- | --- |
+| `PACKRAVEN_CF_API_KEY` | packraven's CurseForge for Studios API key. |
+| `TAURI_SIGNING_PRIVATE_KEY` | The contents of the updater signing key from `npx tauri signer generate`. Its public half goes in `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`. |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | That key's password. |
+
+Keep a backup of the signing key. If you lose it, installed copies can't verify any later update, and their users have to reinstall by hand.

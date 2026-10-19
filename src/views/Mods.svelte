@@ -573,7 +573,7 @@
     <Notice tone="warn">
       <p>
         {duplicates.length === 1 ? `The mods folder has two versions of ${duplicates[0][0].name}` : `The mods folder has two versions of ${list(duplicates.map((group) => group[0].name))}`},
-        and Minecraft won't load {duplicates.length === 1 ? 'it' : 'them'} that way. Remove the one you don't want. packraven won't publish until you do.
+        and CurseForge will deny a pack uploaded with {duplicates.length === 1 ? 'it' : 'them'}. Remove the one you don't want. packraven won't publish until you do.
       </p>
       <p><button onclick={() => { browse.tab = 'installed'; kindFilter = 'mods'; search = duplicates[0][0].name }}>Show {duplicates.length === 1 ? 'them' : `${duplicates[0][0].name}`}</button></p>
     </Notice>

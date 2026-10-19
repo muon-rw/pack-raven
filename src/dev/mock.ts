@@ -434,6 +434,10 @@ let serverIcon: string | null = scenario === 'empty' ? null : 'pending'
 let eulaAccepted = scenario !== 'empty'
 let minecraftAccount: { name: string; uuid: string } | null = scenario === 'empty' ? null : { name: 'muonr', uuid: '0f6c1e5a2b3d4c5e8f9a0b1c2d3e4f50' }
 let onlineMode = true
+let autoUpdate = true
+// The dirty scenario has an update waiting, so screenshots cover the rail's restart button.
+let updatePhase: Record<string, unknown> = scenario === 'dirty' ? { phase: 'ready', version: '0.2.0' } : { phase: 'upToDate' }
+const updateView = () => ({ current: '0.1.0', auto: autoUpdate, supported: true, blocked: null, status: updatePhase })
 let cancelSignIn = () => {}
 
 function mockImage(path: string) {
@@ -562,7 +566,22 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   set_minecraft_online_mode: ({ online }) => {
     onlineMode = online as boolean
   },
-  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: {}, defenderExcluded: [], defenderDismissed: false, minecraftEulaAccepted: eulaAccepted, minecraftOnlineMode: onlineMode, editorAskMb: 50, editorMaxMb: 100, gitName: '', gitEmail: '' }),
+  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: {}, defenderExcluded: [], defenderDismissed: false, minecraftEulaAccepted: eulaAccepted, minecraftOnlineMode: onlineMode, editorAskMb: 50, editorMaxMb: 100, gitName: '', gitEmail: '', autoUpdate }),
+  update_status: () => updateView(),
+  check_for_update: () => updateView(),
+  install_update: () => {
+    // We play a short download so you can see the progress bar, then act as if the restart finished.
+    for (let percent = 0; percent <= 100; percent += 10) {
+      setTimeout(() => {
+        updatePhase = percent < 100 ? { phase: 'downloading', version: '0.2.0', percent } : { phase: 'upToDate' }
+        emit('self-update-changed', updateView())
+      }, percent * 30)
+    }
+  },
+  set_auto_update: ({ enabled }) => {
+    autoUpdate = enabled as boolean
+    emit('self-update-changed', updateView())
+  },
   github_identity: () => ({ name: 'Muon', email: '1234567+muon-rw@users.noreply.github.com' }),
   git_pull_preview: () => ({
     incoming: { added: 1, updated: 3, removed: 0 },

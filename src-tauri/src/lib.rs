@@ -38,6 +38,7 @@ mod pack_commands;
 mod process;
 mod publish;
 mod remote;
+mod self_update;
 mod server_icon;
 mod settings;
 mod setup;
@@ -52,7 +53,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 
 use commands::AppState;
 use settings::Settings;
@@ -112,6 +113,7 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![STARTED_HIDDEN_ARG])))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let settings_path = config_dir.join("settings.json");
@@ -129,6 +131,8 @@ pub fn run() {
             });
             app.state::<AppState>().rewatch(app.handle());
             announcer::start(app.handle().clone());
+            app.manage(self_update::SelfUpdate::default());
+            self_update::start(app.handle().clone());
 
             let show = MenuItem::with_id(app, "show", "Show packraven", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -274,6 +278,10 @@ pub fn run() {
             system_commands::github_identity,
             system_commands::env_var_names,
             system_commands::set_icon_theme,
+            system_commands::update_status,
+            system_commands::check_for_update,
+            system_commands::install_update,
+            system_commands::set_auto_update,
             discord_commands::get_webhook,
             discord_commands::set_webhook,
             discord_commands::discord_test,
@@ -281,6 +289,11 @@ pub fn run() {
             discord_commands::discohook_link,
             discord_commands::discohook_preview,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running packraven");
+        .build(tauri::generate_context!())
+        .expect("error while building packraven")
+        .run(|app, event| {
+            if let RunEvent::ExitRequested { .. } = event {
+                self_update::install_on_exit(app);
+            }
+        });
 }

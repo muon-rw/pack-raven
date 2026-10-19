@@ -227,7 +227,7 @@ async fn minecraft_session(microsoft_token: &str) -> Result<Session> {
 
     let response = CLIENT.post(MINECRAFT_LOGIN_URL).json(&json!({ "identityToken": format!("XBL3.0 x={user_hash};{xsts_token}") })).send().await?;
     if response.status() == reqwest::StatusCode::FORBIDDEN {
-        bail!("Minecraft refused packraven's sign-in. Mojang has to approve packraven's Microsoft app before anyone can sign in through it.");
+        bail!("Minecraft refused packraven's sign-in. We're still waiting on approval from Mojang for our Microsoft app, so this isn't working yet.");
     }
     let login: Value = response.error_for_status().context("Minecraft didn't accept the Xbox Live sign-in")?.json().await?;
     let access_token = login["access_token"].as_str().context("Minecraft sent no access token")?.to_string();

@@ -1,0 +1,78 @@
+# Run `npm run release -- <version>` to push a v<version> tag, which starts this workflow. We build
+# into a draft release and only publish it once every platform is in latest.json, since installed
+# copies of packraven read latest.json from the newest published release to find updates.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    outputs:
+      release-id: ${{ steps.create.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      # actions/checkout fetches the tag as a plain commit ref, without the annotation we use as release notes.
+      - run: git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+      - id: create
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > notes.md
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "packraven ${GITHUB_REF_NAME#v}" --notes-file notes.md
+          echo "id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id")" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: draft
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: windows-latest
+            args: ''
+            rust-targets: ''
+          - os: macos-latest
+            args: --target universal-apple-darwin
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PACKRAVEN_CF_API_KEY: ${{ secrets.PACKRAVEN_CF_API_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.draft.outputs.release-id }}
+          args: ${{ matrix.args }}
+
+  publish:
+    needs: [draft, build]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # Both build jobs merge their platform into latest.json, so if they finish together one can
+      # overwrite the other's entry. We'd rather fail here than publish an update one platform can't see.
+      - run: |
+          gh release download "$GITHUB_REF_NAME" --pattern latest.json
+          jq -e '.platforms | has("windows-x86_64") and has("darwin-aarch64") and has("darwin-x86_64")' latest.json
+      - run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest

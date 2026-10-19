@@ -139,3 +139,26 @@ pub fn set_icon_theme(app: AppHandle, dark: bool) -> CmdResult<()> {
     }
     Ok(())
 }
+
+#[tauri::command]
+pub fn update_status(app: AppHandle) -> crate::self_update::UpdateView {
+    crate::self_update::view(&app)
+}
+
+#[tauri::command]
+pub async fn check_for_update(app: AppHandle) -> CmdResult<crate::self_update::UpdateView> {
+    crate::self_update::check(&app).await.map_err(|e| format!("{e:#}"))?;
+    Ok(crate::self_update::view(&app))
+}
+
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> CmdResult<()> {
+    crate::self_update::install(&app).await.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn set_auto_update(app: AppHandle, state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    state.update_settings(|s| s.auto_update = enabled).map_err(|e| format!("{e:#}"))?;
+    crate::self_update::auto_update_changed(&app, enabled);
+    Ok(())
+}

@@ -5,7 +5,8 @@
   import { open } from '@tauri-apps/plugin-dialog'
   import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
   import { openUrl } from '@tauri-apps/plugin-opener'
-  import { api, errorText, type CredentialsView, type DefenderView, type MinecraftAccount, type Settings } from '../lib/api'
+  import { api, errorText, type CredentialsView, type DefenderView, type MinecraftAccount, type Settings, type UpdateView } from '../lib/api'
+  import { installNow, selfUpdate, updateWaiting } from '../lib/selfUpdate.svelte'
 
   let { onchange, onaccount }: { onchange: () => void; onaccount: () => void } = $props()
 
@@ -186,6 +187,59 @@
     }
   }
 
+  const RELEASES_PAGE = 'https://github.com/muon-rw/pack-raven/releases'
+
+  let autoUpdateError: string | null = $state(null)
+  let checkingUpdate = $state(false)
+
+  async function toggleAutoUpdate() {
+    if (!settings) return
+    const wanted = !settings.autoUpdate
+    settings.autoUpdate = wanted
+    try {
+      autoUpdateError = null
+      await api.setAutoUpdate(wanted)
+    } catch (error) {
+      settings.autoUpdate = !wanted
+      autoUpdateError = `Couldn't change the update setting: ${errorText(error)}`
+    }
+  }
+
+  async function checkForUpdate() {
+    checkingUpdate = true
+    try {
+      selfUpdate.view = await api.checkForUpdate()
+    } catch {
+      // The backend reports the failure as the update status too, so the status line shows it.
+    } finally {
+      checkingUpdate = false
+    }
+  }
+
+  function updateStatusText(view: UpdateView): string {
+    if (!view.supported) return `This is a development build of packraven ${view.current}, so we don't update it.`
+    switch (view.status.phase) {
+      case 'unchecked':
+        return `You have packraven ${view.current}.`
+      case 'checking':
+        return 'Checking for updates.'
+      case 'upToDate':
+        return `packraven ${view.current} is the latest version.`
+      case 'available':
+        return `packraven ${view.status.version} is available. You have ${view.current}.`
+      case 'downloading':
+        return `Downloading packraven ${view.status.version}.`
+      case 'ready':
+        return view.auto
+          ? `packraven ${view.status.version} is ready. We'll install it when you quit packraven, or you can restart now.`
+          : `packraven ${view.status.version} is ready. Restart packraven to install it.`
+      case 'failed':
+        if (view.status.stage === 'install') return "Couldn't install the update."
+        // Background checks fail whenever you're offline, so we keep these calm and retry later.
+        return `Couldn't ${view.status.stage === 'check' ? 'check for updates' : 'download the update'}, so we'll try again later. You have packraven ${view.current}.`
+    }
+  }
+
   let defender = $state<DefenderView | null>(null)
   let defenderBusy = $state(false)
   let defenderMessage = $state<string | null>(null)
@@ -288,6 +342,7 @@
     <p class="muted hint">packraven is not an official Minecraft product, and is not approved by or associated with Mojang or Microsoft.</p>
   </section>
 
+  <div class="app-switches">
   <div class="switch-row">
     <div>
       <div id="autostart-label">Start in the tray when I sign in to this computer</div>
@@ -303,6 +358,49 @@
       aria-describedby="autostart-hint"
       onclick={toggleAutostart}
     ><span></span></button>
+  </div>
+
+  <div class="switch-row" id="updates">
+    <div class="updates">
+      <div id="auto-update-label">Keep packraven up to date automatically</div>
+      {#if autoUpdateError}<p class="failed" role="alert">{autoUpdateError}</p>{/if}
+      {#if selfUpdate.view}
+        {@const view = selfUpdate.view}
+        {@const installFailed = view.status.phase === 'failed' && view.status.stage === 'install'}
+        <p class:muted={!installFailed} class:failed={installFailed} role="status">{updateStatusText(view)}</p>
+        {#if view.status.phase === 'failed'}
+          <details class="update-error">
+            <summary>Details</summary>
+            <p class="file">{view.status.error}</p>
+          </details>
+        {/if}
+        {#if view.status.phase === 'downloading'}
+          <progress max="100" value={view.status.percent ?? undefined} aria-labelledby="auto-update-label"></progress>
+        {:else if view.supported}
+          <div class="identity-row">
+            {#if updateWaiting(view)}
+              <button type="button" class="primary" disabled={!!view.blocked} aria-describedby={view.blocked ? 'update-blocked' : undefined} onclick={installNow}>
+                {view.status.phase === 'available' ? 'Update and restart' : view.auto ? 'Restart now' : 'Restart to update'}
+              </button>
+              <a href="{RELEASES_PAGE}/tag/v{view.status.version}" onclick={(e) => { e.preventDefault(); openUrl(e.currentTarget.href) }}>What's new</a>
+            {:else}
+              {@const busy = checkingUpdate || view.status.phase === 'checking'}
+              <button type="button" class:busy disabled={busy} onclick={checkForUpdate}>Check for updates</button>
+            {/if}
+          </div>
+          {#if updateWaiting(view) && view.blocked}<p class="muted hint" id="update-blocked">{view.blocked}</p>{/if}
+        {/if}
+      {/if}
+    </div>
+    <button
+      type="button"
+      role="switch"
+      class="switch"
+      aria-checked={settings.autoUpdate}
+      aria-labelledby="auto-update-label"
+      onclick={toggleAutoUpdate}
+    ><span></span></button>
+  </div>
   </div>
 
   <form class="form" onsubmit={(e) => { e.preventDefault(); save() }} oninput={() => !messageFailed && (message = null)}>
@@ -485,13 +583,54 @@
     padding-top: 4px;
   }
 
+  .app-switches {
+    display: grid;
+    gap: 24px;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+  }
+
   .switch-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 24px;
-    padding-bottom: 28px;
-    border-bottom: 1px solid var(--line);
+  }
+
+  /* The status and buttons below the label would otherwise pull the switch down, away from it. */
+  #updates {
+    align-items: start;
+  }
+
+  .updates {
+    display: grid;
+    gap: 8px;
+  }
+
+  .updates p {
+    margin: 0;
+  }
+
+  .updates .hint {
+    margin-top: 0;
+  }
+
+  .updates progress {
+    width: min(320px, 100%);
+    accent-color: var(--forest);
+  }
+
+  .update-error summary {
+    width: fit-content;
+    color: var(--muted);
+    font-size: var(--step--1);
+    cursor: pointer;
+  }
+
+  .update-error p {
+    margin-top: 4px;
+    font-size: var(--step--1);
+    overflow-wrap: anywhere;
   }
 
   .switch {

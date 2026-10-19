@@ -13,6 +13,21 @@ export interface Settings {
   editorMaxMb: number
   gitName: string
   gitEmail: string
+  autoUpdate: boolean
+}
+
+export type UpdatePhase =
+  | { phase: 'unchecked' | 'checking' | 'upToDate' }
+  | { phase: 'available' | 'ready'; version: string }
+  | { phase: 'downloading'; version: string; percent: number | null }
+  | { phase: 'failed'; stage: 'check' | 'download' | 'install'; error: string }
+
+export interface UpdateView {
+  current: string
+  auto: boolean
+  supported: boolean
+  blocked: string | null
+  status: UpdatePhase
 }
 
 export interface MinecraftAccount {
@@ -421,6 +436,10 @@ export const api = {
   updateHooks: () => invoke<void>('update_hooks'),
   getSettings: () => invoke<Settings>('get_settings'),
   saveSettings: (settings: Settings) => invoke<void>('save_settings', { settings }),
+  updateStatus: () => invoke<UpdateView>('update_status'),
+  checkForUpdate: () => invoke<UpdateView>('check_for_update'),
+  installUpdate: () => invoke<void>('install_update'),
+  setAutoUpdate: (enabled: boolean) => invoke<void>('set_auto_update', { enabled }),
   overview: () => invoke<Overview>('overview'),
   getPackConfig: () => invoke<PackConfig>('get_pack_config'),
   savePackConfig: (config: PackConfig) => invoke<void>('save_pack_config', { config }),
