@@ -16,16 +16,18 @@ jobs:
     outputs:
       release-id: ${{ steps.create.outputs.id }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # actions/checkout fetches the tag as a plain commit ref, without the annotation we use as release notes.
       - run: git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
       - id: create
         env:
           GH_TOKEN: ${{ github.token }}
+        # We take the ID from the create response, since GitHub's release list can leave out a draft
+        # for a moment after we create it.
         run: |
           git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > notes.md
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "packraven ${GITHUB_REF_NAME#v}" --notes-file notes.md
-          echo "id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id")" >> "$GITHUB_OUTPUT"
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$GITHUB_REF_NAME" -f name="packraven ${GITHUB_REF_NAME#v}" -F body=@notes.md -F draft=true --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
 
   build:
     needs: draft
@@ -41,8 +43,8 @@ jobs:
             rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
