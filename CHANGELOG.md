@@ -2,7 +2,7 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.2]
 ### Added
 - Improved search within log view, adding jump-to and surrounding lines.
 - Java settings list the Javas packraven finds on this computer (CurseForge, JAVA_HOME, PATH, installed JDKs, IntelliJ, Gradle, Prism and Modrinth), so you pick one instead of typing a path
