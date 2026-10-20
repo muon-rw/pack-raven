@@ -2,6 +2,24 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Mod updates and installs can be queued while others download
+- Queued mod changes can be cancelled (cancelling one row cancels everything you started with it)
+- Mods can be added while the test client runs, and load on its next launch
+
+### Changed
+- Join server is now unticked by default, and saves your choice when you leave Test
+- The previous run's logs are cleared when you start a test server or client
+- Test start buttons wait for mod changes to finish
+- Unavailable mod controls now say why on hover
+
+### Fixed
+- Launching a client without Join server showed the box ticked
+- Mods list missed changes from outside packraven (CurseForge app, git pull), hiding update flags. Check for updates now reloads it too
+- Rail showed a spinner next to the status dot of a busy view
+
 ## [0.1.0] - 2026-10-19
 
 ### Added
@@ -28,5 +46,6 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 - Mod updates skip jars Minecraft is currently holding open instead of stopping partway
 - Failed downloads will retry up to three times
 
-[Unreleased]: https://github.com/muon-rw/pack-raven/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/muon-rw/pack-raven/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/muon-rw/pack-raven/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/muon-rw/pack-raven/releases/tag/v0.1.0
