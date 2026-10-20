@@ -88,15 +88,16 @@
   $effect(() => {
     const path = workspace.active
     void activeHasText
-    const current = untrack(() => workspace.tabs.find((t) => t.path === path))
+    // Typing replaces the tab's state on every keystroke, so we read it untracked. Rerunning
+    // setState on each keystroke rebuilds the view and throws off its scroll position.
+    const state = untrack(() => workspace.tabs.find((t) => t.path === path)?.state)
     if (!host) return
-    if (!current?.state) {
+    if (!state) {
       bindView(null, null)
       view?.destroy()
       view = null
       return
     }
-    const state = untrack(() => current.state!)
     if (view) view.setState(state)
     else {
       view = new EditorView({ state, parent: host })

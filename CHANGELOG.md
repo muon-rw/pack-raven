@@ -2,6 +2,10 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3]
+### Fixed
+- File editor's view pane jumping around to incorrect locations when typing at certain window sizes
+
 ## [0.1.2] - 2026-10-20
 ### Added
 - Improved search within log view, adding jump-to and surrounding lines.
