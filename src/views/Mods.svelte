@@ -3,19 +3,21 @@
   import JobLog from '../components/JobLog.svelte'
   import ModBrowser from '../components/ModBrowser.svelte'
   import ContextMenu from '../components/ContextMenu.svelte'
+  import Tip from '../components/Tip.svelte'
   import DisableDialog, { type Dependent } from '../components/DisableDialog.svelte'
   import UpdateReview, { type PendingUpdate } from '../components/UpdateReview.svelte'
   import { onMount, untrack } from 'svelte'
   import { openUrl } from '@tauri-apps/plugin-opener'
+  import { listen } from '@tauri-apps/api/event'
   import { ask } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type InstalledMod, type ModCheck, type ModFile, type ReleaseType, type ModRequest } from '../lib/api'
   import { job, onJobEnd, serverPack } from '../lib/jobs.svelte'
-  import { availableUpdate, browse, modUpdates, newestOnChannel } from '../lib/modUpdates.svelte'
+  import { availableUpdate, browse, cancelChange, cancelMenuLabel, changeFor, changeQueued, downloadingCount, dropChange, modUpdates, newestOnChannel, point, projectKey, queuedButton, startChange } from '../lib/modUpdates.svelte'
   import { sanitizeRemoteHtml } from '../lib/markdown'
   import type { MenuItem } from '../lib/menu'
   import { commandKey, shortcut, trashName } from '../lib/platform'
 
-  let { pack, game, clientRunning }: { pack: string | null; game: string; clientRunning: boolean } = $props()
+  let { pack, game, clientRunning, ontest }: { pack: string | null; game: string; clientRunning: boolean; ontest: () => void } = $props()
 
   type Kind = 'mods' | 'resourcepacks' | 'shaderpacks' | 'datapacks'
   type SortKey = 'enabled' | 'name' | 'author' | 'update' | 'locked'
@@ -51,9 +53,17 @@
 
   let updating = $derived(job('mods').phase === 'running')
   let blocked = $derived(updating || clientRunning)
+  let whyNoUpdate = $derived(clientRunning ? 'Close the test client first; it has these files open' : null)
+  let whyNoChange = $derived(whyNoUpdate ?? (updating ? 'Wait for the downloads to finish' : null))
+  let showLog = $state(false)
+  // The Update button you just pressed turns into Cancel, so we hold back its red focus style
+  // until focus leaves it and comes back.
+  let pressed: string | null = $state(null)
 
   // App remounts this view when you switch packs, so we only compare the pack once.
   untrack(() => {
+    // A refusal only makes sense next to the run it happened in.
+    if (job('mods').phase !== 'running') modUpdates.cancelNotes = []
     if (modUpdates.pack === pack) return
     modUpdates.pack = pack
     modUpdates.checks = null
@@ -97,14 +107,39 @@
     if (mods.length && (unchecked || Date.now() - modUpdates.checkedAt > CHECK_MAX_AGE_MS)) await check()
   })
 
+  // The backend's file watcher updates mods.lock.json when something else changes the folder,
+  // like the CurseForge app or a pull. Checks are keyed by path, so a list we didn't reload would
+  // lose its update flags. A run reloads the list when it ends, so we leave its own changes to it.
+  onMount(() => {
+    const unlisten = listen('mod-list-changed', () => {
+      if (!updating) reload()
+    })
+    return () => {
+      unlisten.then((stop) => stop())
+    }
+  })
+
+  async function reload() {
+    await load()
+    if (mods.some((m) => !modUpdates.checks?.has(m.path))) await check()
+  }
+
+  async function checkAgain() {
+    await load()
+    await check()
+  }
+
   onJobEnd('mods', async (phase) => {
     finishedHere = true
-    if (phase === 'done') {
+    const before = mods.map((m) => m.path).join('\n')
+    await load()
+    if (expanded && !mods.some((m) => m.path === expanded)) expanded = null
+    // One failed change doesn't undo the others in its run, so we compare the list itself. A run
+    // you cancelled every change in finishes with no message.
+    if ((phase === 'done' && job('mods').message) || mods.map((m) => m.path).join('\n') !== before) {
       serverPack.changedSinceBuild = true
       serverPack.changedSinceTest = true
     }
-    expanded = null
-    await load()
     await check()
   })
 
@@ -210,7 +245,7 @@
   }
 
   function pendingFor(targets: InstalledMod[]): PendingUpdate[] {
-    return targets.filter((m) => updates.has(m.path)).map((m) => ({ mod: m, file: updates.get(m.path)!, kind: isMod(m) ? null : kindLabels[folder(m.path)] }))
+    return targets.filter((m) => updates.has(m.path) && !changeFor(m.path)).map((m) => ({ mod: m, file: updates.get(m.path)!, kind: isMod(m) ? null : kindLabels[folder(m.path)] }))
   }
 
   function confirmUpdates(chosen: PendingUpdate[]) {
@@ -235,13 +270,19 @@
     region?.focus()
   }
 
-  async function update(requests: ModRequest[]) {
+  // Installs come from Browse, which names the mod you chose and the dependencies it brings.
+  async function update(requests: ModRequest[], projects: number[] = [], installNames: string[] = []) {
     actionError = null
     finishedHere = false
+    const replaced = requests.flatMap((r) => (r.replaces ? [r.replaces] : []))
+    const names = [...replaced.map((path) => mods.find((m) => m.path === path)?.name ?? fileName(path)), ...installNames]
+    const serial = startChange([...replaced, ...projects.map(projectKey)], names, replaced.length ? 'update' : 'install')
     try {
-      await api.changeMods(requests)
-      if (browse.tab === 'installed') tableRegion?.focus()
+      changeQueued(serial, await api.changeMods(requests))
+      // The review dialog closes once you confirm, which leaves focus nowhere.
+      if (browse.tab === 'installed' && document.activeElement === document.body) tableRegion?.focus()
     } catch (error) {
+      dropChange(serial)
       actionError = `Couldn't start the update: ${errorText(error)}`
     }
   }
@@ -325,19 +366,25 @@
     const keyboard = !event.clientX && !event.clientY
     const lockedHere = modUpdates.locked.has(mod.projectId)
     const disabled = mod.path.endsWith('.disabled')
+    const change = changeFor(mod.path)
     menu = {
       x: keyboard ? rect.left + 24 : event.clientX,
       y: keyboard ? rect.bottom : event.clientY,
       label: `${mod.name} actions`,
       items: [
-        ...(updates.has(mod.path) ? [{ label: `Update to ${updates.get(mod.path)!.fileName}`, disabled: blocked, run: () => update([{ fileId: updates.get(mod.path)!.fileId, replaces: mod.path }]) }, 'separator' as const] : []),
+        ...(change
+          ? [change.stage === 'queued' ? { label: cancelMenuLabel(change), run: () => cancelChange(mod.path, mod.name) } : { label: queuedButton(change, mod.name).label, disabled: true, run: () => {} }, 'separator' as const]
+          : updates.has(mod.path)
+            ? [{ label: `Update to ${updates.get(mod.path)!.fileName}`, disabled: clientRunning, run: () => update([{ fileId: updates.get(mod.path)!.fileId, replaces: mod.path }]) }, 'separator' as const]
+            : []),
         { label: 'Show versions', run: () => expand(mod, 'versions') },
         { label: 'Show description', run: () => expand(mod, 'description') },
         'separator',
         { label: 'Open on CurseForge', disabled: !mod.url, run: () => mod.url && openUrl(mod.url) },
         { label: 'Copy link', disabled: !mod.url, run: () => mod.url && navigator.clipboard.writeText(mod.url) },
         'separator',
-        { label: lockedHere ? 'Unlock' : 'Lock to this version', run: () => setLocked(mod, !lockedHere) },
+        // While a change runs, the version you'd lock to is about to change.
+        { label: lockedHere ? 'Unlock' : 'Lock to this version', disabled: !!change, run: () => setLocked(mod, !lockedHere) },
         { label: disabled ? 'Enable' : 'Disable', disabled: blocked, run: () => setEnabled([mod], disabled) },
         'separator',
         { label: `Move to ${trashName}`, danger: true, disabled: blocked, run: () => remove([mod]) },
@@ -382,6 +429,7 @@
   const kindLabels: Record<Kind, string> = { mods: 'Mods', resourcepacks: 'Resource packs', shaderpacks: 'Shaders', datapacks: 'Data packs' }
 
   let updates = $derived(new Map(mods.map((m) => [m.path, availableUpdate(modUpdates.checks?.get(m.path))] as const).filter(([, file]) => file)) as Map<string, ModFile>)
+  let updatable = $derived([...updates.keys()].filter((path) => !changeFor(path)).length)
   let duplicates = $derived.by(() => {
     const byProject = new Map<number, InstalledMod[]>()
     for (const mod of mods.filter((m) => isMod(m) && !m.path.endsWith('.disabled'))) byProject.set(mod.projectId, [...(byProject.get(mod.projectId) ?? []), mod])
@@ -415,6 +463,10 @@
     }
   }
 
+  function sorted(a: InstalledMod, b: InstalledMod) {
+    return sort.reversed ? -compare(a, b) : compare(a, b)
+  }
+
   function matches(mod: InstalledMod) {
     const query = search.trim().toLowerCase()
     return !query || mod.name.toLowerCase().includes(query) || mod.path.toLowerCase().includes(query) || mod.authors.some((a) => a.toLowerCase().includes(query))
@@ -422,7 +474,7 @@
 
   // While you search, each type tab counts its matches, so a match on another tab isn't missed.
   let matchCounts = $derived(mods.filter(matches).reduce((counts, m) => counts.set(folder(m.path), (counts.get(folder(m.path)) ?? 0) + 1), new Map<Kind, number>()))
-  let visible = $derived(mods.filter((m) => folder(m.path) === kindFilter && matches(m)).sort((a, b) => (sort.reversed ? -compare(a, b) : compare(a, b))))
+  let visible = $derived(mods.filter((m) => folder(m.path) === kindFilter && matches(m)).sort(sorted))
   let selectedMods = $derived(mods.filter((m) => selected.has(m.path)))
   let allVisibleSelected = $derived(visible.length > 0 && visible.every((m) => selected.has(m.path)))
 
@@ -453,8 +505,15 @@
   let summary = $derived.by(() => {
     if (checking) return 'Checking CurseForge for updates.'
     if (!modUpdates.checks) return null
-    if (!updates.size) return 'Everything is up to date.'
-    return `${updates.size} ${updates.size === 1 ? 'has an update' : 'have updates'}.`
+    if (updatable) return `${updatable} ${updatable === 1 ? 'has an update' : 'have updates'}.`
+    return updates.size ? null : 'Everything is up to date.'
+  })
+
+  let runStatus = $derived.by(() => {
+    const notes = modUpdates.cancelNotes
+    const downloading = downloadingCount()
+    if (updating) return [downloading ? `Downloading ${downloading} ${downloading === 1 ? 'file' : 'files'}.` : 'Changing mods.', ...notes].join(' ')
+    return [finishedHere && job('mods').phase === 'done' ? job('mods').message : null, ...notes].filter(Boolean).join(' ')
   })
 
   let installedIds = $derived(new Set(mods.map((m) => m.projectId)))
@@ -532,10 +591,14 @@
     </div>
     {#if browse.tab === 'installed'}
       <div class="actions">
-        <button onclick={check} disabled={checking || updating || !mods.length} class:busy={checking}>{checking ? 'Checking' : 'Check for updates'}</button>
-        <button class="primary" class:busy={updating} disabled={!updates.size || blocked} onclick={updateAll}>
-          {updating ? 'Updating' : updates.size ? `Update all (${updates.size})` : 'Update all'}
-        </button>
+        <button onclick={checkAgain} disabled={checking || updating || !mods.length} class:busy={checking}>{checking ? 'Checking' : 'Check for updates'}</button>
+        <Tip tip={updatable ? whyNoUpdate : null}>
+          {#snippet children(why)}
+            <button class="primary" class:busy={updating && !updatable} disabled={!updatable} aria-disabled={!!whyNoUpdate} aria-describedby={why} onclick={() => !whyNoUpdate && updateAll()}>
+              {updatable ? `Update all (${updatable})` : updating ? 'Updating' : 'Update all'}
+            </button>
+          {/snippet}
+        </Tip>
       </div>
     {/if}
   </header>
@@ -549,6 +612,12 @@
         </button>
       {/each}
     </div>
+    <!-- A run reports here, in this row's spare room, rather than in a notice above the list, so
+         queueing more changes doesn't move the rows you're clicking. -->
+    <p class="run-status muted">
+      <span role="status" title={runStatus}>{runStatus}</span>
+      {#if updating}<button class="link" aria-expanded={showLog} aria-controls="mods-log" onclick={() => (showLog = !showLog)}>{showLog ? 'Hide log' : 'Show log'}</button>{/if}
+    </p>
     {#if browse.tab === 'installed'}
       <input type="search" class="find" bind:this={searchField} bind:value={search} placeholder="Find a mod or author" aria-label="Find a mod or author" title="Find a mod or author ({shortcut('Ctrl+F')})" />
     {/if}
@@ -567,7 +636,10 @@
     </Notice>
   {/if}
   {#if clientRunning}
-    <Notice tone="warn"><p>The test client has this pack's mods open, so packraven won't change them until you close it.</p></Notice>
+    <Notice tone="warn">
+      <p>Close the test client to update, disable or remove mods, since it has their files open. You can still add mods, and the client will load them when you restart it.</p>
+      <p><button onclick={ontest}>Open Test</button></p>
+    </Notice>
   {/if}
   {#if duplicates.length}
     <Notice tone="warn">
@@ -580,29 +652,32 @@
   {/if}
   {#if undo}
     <Notice tone="ok">
-      <p>{undo.message} <button class="link" onclick={undoDisable} disabled={blocked}>Undo</button></p>
+      <p>
+        {undo.message}
+        <Tip tip={whyNoChange}>
+          {#snippet children(why)}<button class="link" onclick={() => !whyNoChange && undoDisable()} aria-disabled={!!whyNoChange} aria-describedby={why}>Undo</button>{/snippet}
+        </Tip>
+      </p>
     </Notice>
   {/if}
   {#if actionError}
     <Notice tone="error"><p>{actionError}</p></Notice>
   {/if}
-  {#if finishedHere && job('mods').phase === 'done' && job('mods').message}
-    <Notice tone="ok"><p>{job('mods').message}</p></Notice>
+  {#if updating && showLog}
+    <div class="log" id="mods-log"><JobLog lines={job('mods').lines} label="Mod changes log" /></div>
   {:else if job('mods').phase === 'failed'}
     <Notice tone="error">
       <p>Couldn't finish changing mods: {job('mods').message}</p>
     </Notice>
-  {/if}
-  {#if updating || job('mods').phase === 'failed'}
-    <details class="log" open={job('mods').phase === 'failed'}>
-      <summary>{updating ? 'Downloading mods' : 'Log'}</summary>
+    <details class="log" open>
+      <summary>Log</summary>
       <JobLog lines={job('mods').lines} label="Mod changes log" />
     </details>
   {/if}
 
   <div class="panel" id="mods-panel" role="tabpanel" aria-labelledby="mods-tab-{browse.tab}">
     {#if browse.tab === 'browse'}
-      <ModBrowser bind:this={browser} {installedIds} {blocked} {game} install={update} />
+      <ModBrowser bind:this={browser} {installedIds} {game} install={update} />
     {:else}
       <div class="tools">
         <div class="filters" role="group" aria-label="Show">
@@ -619,12 +694,20 @@
         {@const pending = pendingFor(selectedMods)}
         <div class="bulk" role="toolbar" aria-label="Selected files">
           <span class="bulk-count">{selected.size} selected</span>
-          <button onclick={() => setEnabled(selectedMods, true)} disabled={blocked || !selectedMods.some((m) => m.path.endsWith('.disabled'))}>Enable</button>
-          <button onclick={() => setEnabled(selectedMods, false)} disabled={blocked || selectedMods.every((m) => m.path.endsWith('.disabled'))}>Disable</button>
+          <Tip tip={whyNoChange}>
+            {#snippet children(why)}<button onclick={() => !whyNoChange && setEnabled(selectedMods, true)} disabled={!selectedMods.some((m) => m.path.endsWith('.disabled'))} aria-disabled={!!whyNoChange} aria-describedby={why}>Enable</button>{/snippet}
+          </Tip>
+          <Tip tip={whyNoChange}>
+            {#snippet children(why)}<button onclick={() => !whyNoChange && setEnabled(selectedMods, false)} disabled={selectedMods.every((m) => m.path.endsWith('.disabled'))} aria-disabled={!!whyNoChange} aria-describedby={why}>Disable</button>{/snippet}
+          </Tip>
           <button onclick={() => setManyLocked(selectedMods, true)} disabled={selectedMods.every((m) => modUpdates.locked.has(m.projectId))}>Lock</button>
           <button onclick={() => setManyLocked(selectedMods, false)} disabled={!selectedMods.some((m) => modUpdates.locked.has(m.projectId))}>Unlock</button>
-          <button onclick={() => (reviewing = pending)} disabled={blocked || !pending.length}>{pending.length ? `Update (${pending.length})` : 'Update'}</button>
-          <button class="danger-quiet" onclick={() => remove(selectedMods)} disabled={blocked}>Remove</button>
+          <Tip tip={pending.length ? whyNoUpdate : null}>
+            {#snippet children(why)}<button onclick={() => !whyNoUpdate && (reviewing = pending)} disabled={!pending.length} aria-disabled={!!whyNoUpdate} aria-describedby={why}>{pending.length ? `Update (${pending.length})` : 'Update'}</button>{/snippet}
+          </Tip>
+          <Tip tip={whyNoChange}>
+            {#snippet children(why)}<button class="danger-quiet" onclick={() => !whyNoChange && remove(selectedMods)} aria-disabled={!!whyNoChange} aria-describedby={why}>Remove</button>{/snippet}
+          </Tip>
           <button class="link clear" onclick={() => (selected = new Set())}>Clear selection</button>
         </div>
       {/if}
@@ -666,22 +749,28 @@
                 {@const lockedHere = modUpdates.locked.has(mod.projectId)}
                 {@const held = newestOnChannel(status)}
                 {@const disabled = mod.path.endsWith('.disabled')}
+                {@const change = changeFor(mod.path)}
                 {@const logo = mod.logo ?? status?.logo}
                 <tr class="row" class:open={expanded === mod.path} class:off={disabled} class:picked={selected.has(mod.path)} onclick={(e) => onRowClick(e, mod)} oncontextmenu={(e) => openMenu(e, mod)}>
                   <td class="select">
                     <input type="checkbox" checked={selected.has(mod.path)} onchange={(e) => select(mod, e.currentTarget.checked)} aria-label="Select {mod.name}" />
                   </td>
                   <td class="enabled">
-                    <button
-                      class="switch"
-                      role="switch"
-                      aria-checked={!disabled}
-                      aria-label="Enable {mod.name}"
-                      title={disabled ? 'Disabled. We won\'t include it in exports.' : 'Enabled'}
-                      disabled={blocked}
-                      aria-busy={toggling === mod.path}
-                      onclick={() => setEnabled([mod], disabled)}
-                    ></button>
+                    <Tip tip={whyNoChange}>
+                      {#snippet children(why)}
+                        <button
+                          class="switch"
+                          role="switch"
+                          aria-checked={!disabled}
+                          aria-label="Enable {mod.name}"
+                          title={whyNoChange ? undefined : disabled ? 'Disabled. We won\'t include it in exports.' : 'Enabled'}
+                          aria-disabled={!!whyNoChange}
+                          aria-describedby={why}
+                          aria-busy={toggling === mod.path}
+                          onclick={() => !whyNoChange && setEnabled([mod], disabled)}
+                        ></button>
+                      {/snippet}
+                    </Tip>
                   </td>
                   <td class="name">
                     <div class="identity">
@@ -712,8 +801,36 @@
                   </td>
                   <td class="author muted">{mod.authors.join(', ')}</td>
                   <td class="update">
-                    {#if next}
-                      <button onclick={() => update([{ fileId: next.fileId, replaces: mod.path }])} disabled={blocked} aria-label="Update {mod.name}">Update</button>
+                    {#if next || change}
+                      <!-- One button carries every state, so it keeps keyboard focus while you work down the list. -->
+                      <Tip tip={change ? null : whyNoUpdate}>
+                        {#snippet children(why)}
+                          {@const shown = change && queuedButton(change, mod.name)}
+                          <button
+                            class:busy={shown?.busy}
+                            class:cancels={shown?.cancels}
+                            class:pressed={pressed === mod.path}
+                            class:pointed={shown?.cancels && modUpdates.pointing === change?.serial}
+                            aria-disabled={shown ? !shown.cancels : !!whyNoUpdate}
+                            aria-describedby={why}
+                            aria-label={shown?.ariaLabel ?? `Update ${mod.name}`}
+                            title={shown?.title}
+                            onpointerenter={() => point(change, true)}
+                            onpointerleave={() => point(change, false)}
+                            onfocus={(e) => pressed !== mod.path && e.currentTarget.matches(':focus-visible') && point(change, true)}
+                            onblur={() => {
+                              point(change, false)
+                              if (pressed === mod.path) pressed = null
+                            }}
+                            onclick={() => {
+                              if (change) return cancelChange(mod.path, mod.name)
+                              if (whyNoUpdate || !next) return
+                              pressed = mod.path
+                              update([{ fileId: next.fileId, replaces: mod.path }])
+                            }}
+                          >{#if shown?.cancels}<span class="swap"><span>{shown.label}</span><span aria-hidden="true">Cancel</span></span>{:else}{shown?.label ?? 'Update'}{/if}</button>
+                        {/snippet}
+                      </Tip>
                     {:else if lockedHere && held}
                       <!-- aria-disabled keeps the button hoverable, so its title can say why it's off. -->
                       <button aria-disabled="true" aria-label="Update {mod.name}, locked" title="Unlock {mod.name} to update it">Update</button>
@@ -734,9 +851,13 @@
                     </button>
                   </td>
                   <td class="trash">
-                    <button class="ghost icon remove" onclick={() => remove([mod])} disabled={blocked || removing === mod.path} aria-label="Remove {mod.name}" title="Move to the {trashName}">
-                      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M7 7v4M9 7v4" /></svg>
-                    </button>
+                    <Tip tip={whyNoChange}>
+                      {#snippet children(why)}
+                        <button class="ghost icon remove" onclick={() => !whyNoChange && remove([mod])} disabled={removing === mod.path} aria-disabled={!!whyNoChange} aria-describedby={why} aria-label="Remove {mod.name}" title={whyNoChange ? undefined : `Move to the ${trashName}`}>
+                          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M7 7v4M9 7v4" /></svg>
+                        </button>
+                      {/snippet}
+                    </Tip>
                   </td>
                 </tr>
                 {#if expanded === mod.path}
@@ -771,7 +892,7 @@
                                 {#if file.fileId === mod.fileId}
                                   <span class="muted current">Installed</span>
                                 {:else}
-                                  <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={blocked} aria-label="{file.fileId > mod.fileId ? 'Update to' : 'Roll back to'} {file.fileName}">{file.fileId > mod.fileId ? 'Update to this' : 'Roll back'}</button>
+                                  <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={whyNoUpdate !== null || !!changeFor(mod.path)} title={whyNoUpdate ?? (changeFor(mod.path) ? 'Wait for this change to finish' : undefined)} aria-label="{file.fileId > mod.fileId ? 'Update to' : 'Roll back to'} {file.fileName}">{file.fileId > mod.fileId ? 'Update to this' : 'Roll back'}</button>
                                 {/if}
                               </li>
                               {#if openChangelog === file.fileId}
@@ -851,9 +972,28 @@
     gap: 12px 24px;
   }
 
+  /* The title takes the room the actions leave and wraps its own text, so a longer summary doesn't
+     push the actions onto a row of their own. */
   .title {
+    flex: 1 1 20rem;
+    min-width: 0;
     display: grid;
     gap: 4px;
+  }
+
+  .run-status {
+    flex: 1 1 0;
+    min-width: 0;
+    align-self: center;
+    display: flex;
+    justify-content: end;
+    gap: 8px;
+    white-space: nowrap;
+  }
+
+  .run-status span {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .head p {
@@ -1031,7 +1171,7 @@
     margin-left: auto;
   }
 
-  .danger-quiet:hover:not(:disabled) {
+  .danger-quiet:hover:not(:disabled, [aria-disabled='true']) {
     color: var(--fail);
   }
 
@@ -1343,6 +1483,14 @@
   .update {
     text-align: right;
     white-space: nowrap;
+  }
+
+  /* Wide enough for the busy label, so queueing an update doesn't shift the columns. A zoomed-in
+     minimum window has no room to spare for it. */
+  @media (min-width: 800px) {
+    td.update button {
+      min-width: 8.5em;
+    }
   }
 
   button.icon {

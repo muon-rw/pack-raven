@@ -66,12 +66,14 @@ pub async fn mod_categories(kind: AddonKind) -> CmdResult<Vec<Category>> {
 pub struct ModPreview {
     dependencies: Vec<String>,
     unavailable: Vec<String>,
+    projects: Vec<u64>,
 }
 
 #[tauri::command]
 pub async fn preview_mods(state: State<'_, AppState>, requests: Vec<ModRequest>) -> CmdResult<ModPreview> {
     let plan = mod_updates::plan(&state.pack().map_err(err)?, &requests).await.map_err(err)?;
-    Ok(ModPreview { dependencies: plan.dependencies, unavailable: plan.unavailable })
+    let projects = plan.placements.iter().map(|p| p.entry.project_id).collect();
+    Ok(ModPreview { dependencies: plan.dependencies, unavailable: plan.unavailable, projects })
 }
 
 #[tauri::command]
@@ -130,9 +132,15 @@ pub async fn set_mods_enabled(state: State<'_, AppState>, paths: Vec<String>, en
     Ok(renamed_paths)
 }
 
+pub struct ModChange {
+    requests: Vec<ModRequest>,
+    updated: Vec<String>,
+}
+
 #[tauri::command]
-pub fn change_mods(app: AppHandle, state: State<'_, AppState>, requests: Vec<ModRequest>) -> CmdResult<()> {
-    if client_running(&state) {
+pub fn change_mods(app: AppHandle, state: State<'_, AppState>, requests: Vec<ModRequest>) -> CmdResult<u64> {
+    // The client holds the jars it loaded open, so we can add files while it runs but not replace them.
+    if client_running(&state) && requests.iter().any(|r| r.replaces.is_some()) {
         return Err(CLIENT_HAS_MODS_OPEN.into());
     }
     let pack = state.pack().map_err(err)?;
@@ -145,7 +153,22 @@ pub fn change_mods(app: AppHandle, state: State<'_, AppState>, requests: Vec<Mod
             project.and_then(|id| cache.known_name(id)).map_or_else(|| path.rsplit('/').next().unwrap_or(path).to_string(), |n| n.name.clone())
         })
         .collect();
-    state.jobs.start(&app, "mods", move |log| async move { apply_mod_requests(&pack, &requests, &updated, &log).await })
+    let dir = pack.dir;
+    state.jobs.enqueue(&app, "mods", &state.mod_changes, ModChange { requests, updated }, move |change, log| {
+        let dir = dir.clone();
+        async move {
+            // An earlier change in the same run may have added files, so we read the pack again.
+            let pack = Pack::open(&dir)?;
+            apply_mod_requests(&pack, &change.requests, &change.updated, &log).await
+        }
+    })
+}
+
+// Once a change starts, stopping it partway could leave two versions of a mod in the folder, so
+// you can only cancel the ones still waiting.
+#[tauri::command]
+pub fn cancel_mod_change(state: State<'_, AppState>, id: u64) -> bool {
+    state.mod_changes.lock().unwrap().cancel(id)
 }
 
 async fn apply_mod_requests(pack: &Pack, requests: &[ModRequest], updated: &[String], log: &Log) -> anyhow::Result<String> {

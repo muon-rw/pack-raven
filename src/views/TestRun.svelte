@@ -3,7 +3,7 @@
   import { openUrl } from '@tauri-apps/plugin-opener'
   import Notice from '../components/Notice.svelte'
   import { api, errorText, type MinecraftAccount, type Overview } from '../lib/api'
-  import { job, serverPack, testOptions, testState } from '../lib/jobs.svelte'
+  import { clearLog, job, serverPack, testOptions, testState } from '../lib/jobs.svelte'
   import { serverView } from '../lib/nav.svelte'
   import JobLog from '../components/JobLog.svelte'
   import Tip from '../components/Tip.svelte'
@@ -21,11 +21,10 @@
   let logMin = $derived(Math.min(220, splitTotal * 0.4))
   let serverWidth = $derived(clamp(splitTotal * (logSplit.value ?? 0.5), logMin, splitTotal - logMin))
 
-  let join = $state(true)
-  let clientJoins = $state(false)
   let command = $state('')
   let error: string | null = $state(null)
 
+  const WAIT_FOR_MODS = 'Wait for packraven to finish changing mods'
   const EULA_URL = 'https://aka.ms/MinecraftEULA'
   // Until settings load we don't know, so we neither ask nor block; start_test still refuses.
   let eulaAccepted: boolean | null = $state(null)
@@ -51,7 +50,10 @@
     })
   }
 
+  // The server log shows the test job's lines before the server's, and the backend only clears a
+  // job's lines once that job starts, so the last run's server log would sit under this one's.
   function startTest(connect: boolean) {
+    clearLog('test', 'server', ...(connect ? (['client'] as const) : []))
     return run(async () => {
       await api.startTest(testOptions.recopyAll, connect)
       serverPack.changedSinceTest = false
@@ -98,7 +100,7 @@
     testState.players.length
       ? `${testState.players.join(', ')} joined the server.`
       : clientRunning
-        ? clientJoins
+        ? testState.clientJoins
           ? 'The client is launching and will join when it reaches the title screen.'
           : 'The client is running.'
         : testState.serverReady
@@ -110,21 +112,24 @@
               : 'Start a test server or client on this computer.',
   )
 
+  let modsChanging = $derived(job('mods').phase === 'running')
   let serverStarting = $derived(preparing || (serverRunning && !testState.serverReady))
   let whyNoEula = $derived(eulaAccepted === false ? 'Accept the Minecraft EULA first' : null)
-  let whyNoStart = $derived(serverRunning ? 'The test server is already running' : preparing ? 'packraven is preparing the test server' : whyNoEula)
+  let whyNoStart = $derived(serverRunning ? 'The test server is already running' : preparing ? 'packraven is preparing the test server' : modsChanging ? WAIT_FOR_MODS : whyNoEula)
   let whyNoStop = $derived(serverRunning ? null : preparing ? "packraven is preparing the test server; you can stop it once it's running" : "The test server isn't running")
   let whyNoQuick = $derived(
-    serverRunning ? 'The test server is already running. Use Launch client to join it' : clientRunning ? 'The client is already running' : preparing ? 'packraven is preparing the test server' : whyNoEula,
+    serverRunning ? 'The test server is already running. Use Launch client to join it' : clientRunning ? 'The client is already running' : preparing ? 'packraven is preparing the test server' : modsChanging ? WAIT_FOR_MODS : whyNoEula,
   )
   let whyNoLaunch = $derived(
     clientRunning
       ? 'The client is already running'
-      : join && !testState.serverReady
-        ? serverStarting
-          ? 'Waiting for the test server to finish starting, or untick auto-join'
-          : 'Start the test server first, or untick auto-join'
-        : null,
+      : modsChanging
+        ? WAIT_FOR_MODS
+        : testOptions.joinServer && !testState.serverReady
+          ? serverStarting
+            ? 'Waiting for the test server to finish starting, or untick Join server'
+            : 'Start the test server first, or untick Join server'
+          : null,
   )
   let whyNoSend = $derived(!serverRunning ? "The test server isn't running" : !command.trim() ? 'Type a command first' : null)
 </script>
@@ -157,7 +162,7 @@
             aria-disabled={!!whyNoQuick}
             aria-describedby={why}
             title={whyNoQuick ? undefined : 'Start the server, then launch the client and join it'}
-            onclick={() => !whyNoQuick && ((clientJoins = true), startTest(true))}
+            onclick={() => !whyNoQuick && ((testState.clientJoins = true), startTest(true))}
           >
             {preparing ? 'Starting' : 'Quick test'}
           </button>
@@ -235,11 +240,12 @@
         <h3>Client</h3>
         <div class="buttons">
           <label class="check join">
-            <input type="checkbox" bind:checked={join} disabled={clientRunning} aria-describedby="client-hint" /> Join server
+            <!-- Quick test always joins, so while the client runs we show what that run did. -->
+            <input type="checkbox" checked={clientRunning ? testState.clientJoins : testOptions.joinServer} onchange={(e) => (testOptions.joinServer = e.currentTarget.checked)} disabled={clientRunning} aria-describedby="client-hint" /> Join server
           </label>
           <Tip tip={whyNoLaunch}>
             {#snippet children(why)}
-              <button aria-disabled={!!whyNoLaunch} aria-describedby={why} onclick={() => !whyNoLaunch && run(() => ((clientJoins = join), api.startClient(join)))}>Launch client</button>
+              <button aria-disabled={!!whyNoLaunch} aria-describedby={why} onclick={() => !whyNoLaunch && (clearLog('client'), run(() => ((testState.clientJoins = testOptions.joinServer), api.startClient(testOptions.joinServer))))}>Launch client</button>
             {/snippet}
           </Tip>
           <Tip tip={clientRunning ? 'End the client process at once' : "The client isn't running"}>
@@ -252,8 +258,8 @@
       <JobLog lines={job('client').lines} label="Client log" empty="The client log will appear here after you launch it." />
       <p class="hint muted" id="client-hint">
         {clientRunning
-          ? `Running ${playing}. You can't change Join server while the client runs.`
-          : !join
+          ? `Running ${playing}${testState.clientJoins ? ' and joining the test server' : ', without joining the test server'}.`
+          : !testOptions.joinServer
             ? `Launch this instance ${playing} to the title screen.`
             : testState.serverReady
               ? `Launch this instance ${playing} and join the test server.`

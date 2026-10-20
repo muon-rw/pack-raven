@@ -417,6 +417,47 @@ button.busy::before {
   animation: spin 0.8s linear infinite;
 }
 
+/* A queued change's button cancels it. Both labels share one grid cell and the cross takes the
+   spinner's place, so the button keeps its width when the label swaps. Pointing at one row's
+   Cancel marks every row of that change, since they all go back together. We hold back the focus
+   style on the button you just pressed, so it doesn't turn red the moment you queue the change. */
+.swap {
+  display: inline-grid;
+}
+
+.swap > * {
+  grid-area: 1 / 1;
+  justify-self: center;
+}
+
+.swap > :last-child {
+  justify-self: start;
+}
+
+.swap > :last-child,
+button.cancels:is(:hover, .pointed, :focus-visible:not(.pressed)) .swap > :first-child {
+  visibility: hidden;
+}
+
+button.cancels:is(:hover, .pointed, :focus-visible:not(.pressed)) .swap > :last-child {
+  visibility: visible;
+}
+
+button.cancels:is(:hover, .pointed, :focus-visible:not(.pressed)) {
+  color: var(--fail);
+  background: var(--fail-fill);
+  border-color: var(--fail-border);
+  outline-color: var(--fail);
+}
+
+button.busy.cancels:is(:hover, .pointed, :focus-visible:not(.pressed))::before {
+  border-color: transparent;
+  border-radius: 0;
+  background: currentColor;
+  mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M2.5 2.5l7 7M9.5 2.5l-7 7' stroke='black' stroke-width='2' stroke-linecap='round'/></svg>") center / contain no-repeat;
+  animation: none;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

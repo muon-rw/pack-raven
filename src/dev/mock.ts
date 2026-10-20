@@ -185,6 +185,44 @@ function mockJob(job: string, lines: string[], message: string, change: () => vo
   }, 150 * (lines.length + 2))
 }
 
+// Mirrors Jobs::enqueue: a change you ask for mid-run joins the run, which ends once none are left.
+const modChanges: { id: number; lines: string[]; message: string; change: () => void }[] = []
+let modsRunning = false
+let nextChangeId = 1
+
+function queueModChange(lines: string[], message: string, change: () => void): number {
+  const id = nextChangeId++
+  modChanges.push({ id, lines, message, change })
+  if (modsRunning) return id
+  modsRunning = true
+  emit('job-state', { job: 'mods', state: 'running', message: null })
+  const messages: string[] = []
+  const next = () => {
+    const item = modChanges.shift()
+    if (!item) {
+      modsRunning = false
+      emit('job-state', { job: 'mods', state: 'done', message: messages.join(' ') })
+      return
+    }
+    emit('job-item', { job: 'mods', id: item.id, state: 'started' })
+    item.lines.forEach((text, i) => setTimeout(() => emit('job-log', { job: 'mods', stream: 'info', text }), 150 * (i + 1)))
+    setTimeout(() => {
+      item.change()
+      emit('job-item', { job: 'mods', id: item.id, state: 'finished' })
+      if (item.message) messages.push(item.message)
+      next()
+    }, 150 * (item.lines.length + 2))
+  }
+  next()
+  return id
+}
+
+function cancelModChange(id: number): boolean {
+  const index = modChanges.findIndex((c) => c.id === id)
+  if (index >= 0) modChanges.splice(index, 1)
+  return index >= 0
+}
+
 type MockProject = { projectId: number; name: string; summary: string; authors: string[]; downloads: number; updated: string; kind: string; fileName: string | null; releaseType?: string; requires?: number[] }
 // prettier-ignore
 const catalog: MockProject[] = [
@@ -242,16 +280,16 @@ function installPlan(fileIds: number[]) {
 
 const names = (projects: MockProject[]) => projects.map((p) => p.name).join(', ').replace(/, ([^,]*)$/, ' and $1')
 
-function changeMods(requests: { fileId: number; replaces: string | null }[]) {
+function changeMods(requests: { fileId: number; replaces: string | null }[]): number {
   const installs = installPlan(requests.filter((r) => !r.replaces).map((r) => r.fileId))
   const added = [...installs.wanted, ...installs.dependencies]
   const message = [
     installs.wanted.length ? `Installed ${names(installs.wanted)}.` : '',
     installs.dependencies.length ? `Added ${names(installs.dependencies)} as required.` : '',
   ]
-  updateMods(
+  return updateMods(
     requests.filter((r) => r.replaces).map((r) => ({ path: r.replaces!, fileId: r.fileId })),
-    added.map((p) => `Placed ${p.kind}/${p.fileName}`),
+    added.flatMap((p) => [`Downloading ${p.kind}/${p.fileName}`, `Placed ${p.kind}/${p.fileName}`]),
     message,
     () => {
       for (const p of added) {
@@ -262,14 +300,13 @@ function changeMods(requests: { fileId: number; replaces: string | null }[]) {
   )
 }
 
-function updateMods(requests: { path: string; fileId: number }[], extraLines: string[] = [], extraMessage: string[] = [], extraChange = () => {}) {
+function updateMods(requests: { path: string; fileId: number }[], extraLines: string[] = [], extraMessage: string[] = [], extraChange = () => {}): number {
   const files = requests.map((r) => {
     const mod = installedMods.find((m) => m.path === r.path)!
     const file = mod.newer.find((f) => f.fileId === r.fileId) ?? { fileId: r.fileId, fileName: `${mod.name.replace(/\W+/g, '')}-${r.fileId}.jar` }
     return { mod, file }
   })
-  mockJob(
-    'mods',
+  return queueModChange(
     [...files.flatMap(({ mod, file }) => [`Downloading ${mod.path.slice(0, mod.path.indexOf('/'))}/${file.fileName}`, `Removed ${mod.path}`, `Placed ${file.fileName}`]), ...extraLines],
     [files.length ? (files.length <= 4 ? `Updated ${names(files.map(({ mod }) => ({ name: mod.name }) as MockProject))}.` : `Updated ${files[0].mod.name}, ${files[1].mod.name} and ${files.length - 2} more.`) : '', ...extraMessage].filter(Boolean).join(' '),
     () => {
@@ -546,6 +583,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     clientRunning: false,
     hooks: 'current',
   }),
+  // The mock has no server or client to run, so a start only shows the preparing step's log.
+  start_test: () => mockJob('test', ['Syncing changed files to the test server folder'], 'Server starting', () => {}),
+  start_client: () => mockJob('client', ['Launching the client'], '', () => {}),
   accept_minecraft_eula: () => {
     eulaAccepted = true
   },
@@ -762,11 +802,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     })
   },
   change_mods: (a) => changeMods(a.requests as { fileId: number; replaces: string | null }[]),
+  cancel_mod_change: (a) => cancelModChange(a.id as number),
   search_mods: (a) => searchMods(a.request as Parameters<typeof searchMods>[0]),
   mod_categories: (a) => (a.kind === 'mods' ? ['Adventure and RPG', 'Magic', 'Storage', 'Technology', 'World Gen'] : ['16x', 'Animated']).map((name, id) => ({ id, name })),
   preview_mods: (a) => {
-    const { dependencies } = installPlan((a.requests as { fileId: number }[]).map((r) => r.fileId))
-    return new Promise((resolve) => setTimeout(() => resolve({ dependencies: dependencies.map((p) => p.name), unavailable: [] }), 300))
+    const { wanted, dependencies } = installPlan((a.requests as { fileId: number }[]).map((r) => r.fileId))
+    const projects = [...wanted, ...dependencies].map((p) => p.projectId)
+    return new Promise((resolve) => setTimeout(() => resolve({ dependencies: dependencies.map((p) => p.name), unavailable: [], projects }), 300))
   },
   remove_mods: (a) => (installedMods = installedMods.filter((m) => !(a.paths as string[]).includes(m.path))),
   // Shows the browser's confirm in place of the native dialog, and answers with the label of the button you chose.

@@ -30,6 +30,15 @@ export function onJobEnd(name: JobName, run: (phase: JobPhase) => void) {
   })
 }
 
+export type JobItemState = 'started' | 'finished' | 'failed'
+type JobItemListener = (job: string, id: number, state: JobItemState) => void
+const itemListeners: JobItemListener[] = []
+
+// Queued jobs report each item as it starts and ends, keyed by the id their command returned.
+export function onJobItem(listener: JobItemListener) {
+  itemListeners.push(listener)
+}
+
 const MAX_LINES = 4000
 const FLUSH_MS = 50
 let nextId = 0
@@ -43,9 +52,9 @@ export interface ResolvedPlayer {
   renewalFailure: string | null
 }
 
-export const testState = $state({ serverReady: false, players: [] as string[], player: null as ResolvedPlayer | null })
+export const testState = $state({ serverReady: false, players: [] as string[], player: null as ResolvedPlayer | null, clientJoins: false })
 export const serverPack = $state({ changedSinceBuild: false, changedSinceTest: false })
-export const testOptions = $state({ recopyAll: false })
+export const testOptions = $state({ recopyAll: false, joinServer: false })
 
 const idle = new JobRecord()
 const pending = new Map<string, LogLine[]>()
@@ -58,6 +67,13 @@ function record(job: string): JobRecord {
 
 export function job(name: JobName): JobRecord {
   return jobs[name] ?? idle
+}
+
+export function clearLog(...names: JobName[]) {
+  for (const name of names) {
+    pending.delete(name)
+    if (jobs[name]) jobs[name].lines = []
+  }
 }
 
 function flushLogs() {
@@ -109,6 +125,9 @@ function register(): Promise<UnlistenFn[]> {
     entry.phase = payload.state
     entry.message = payload.message
     if (payload.state !== 'running') entry.finishedRuns++
+  }),
+  listen<{ job: string; id: number; state: JobItemState }>('job-item', ({ payload }) => {
+    for (const listener of itemListeners) listener(payload.job, payload.id, payload.state)
   }),
   listen<{ kind: string; detail: string }>('test-event', ({ payload }) => {
     if (payload.kind === 'server-started') {

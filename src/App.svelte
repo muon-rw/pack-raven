@@ -342,7 +342,7 @@
               {#each group.items as item (item.id)}
                 <li>
                   <button
-                    class="item {item.tone ?? 'idle'}"
+                    class="item tone-{item.tone ?? 'idle'}"
                     class:current={view === item.id}
                     aria-current={view === item.id ? 'page' : undefined}
                     aria-keyshortcuts={item.key ? `Control+${item.key}` : undefined}
@@ -425,7 +425,7 @@
         {:else if view === 'changes'}
           <Changes {overview} onchange={refresh} />
         {:else if view === 'mods'}
-          <Mods pack={packs?.active ?? null} game={overview ? `${overview.minecraft} ${loaderName(overview.loader).split(' ')[0]}` : 'this pack'} clientRunning={!!overview?.clientRunning} />
+          <Mods pack={packs?.active ?? null} game={overview ? `${overview.minecraft} ${loaderName(overview.loader).split(' ')[0]}` : 'this pack'} clientRunning={!!overview?.clientRunning} ontest={() => (view = 'test')} />
         {:else if view === 'server'}
           <Server {overview} />
         {:else if view === 'test'}
@@ -733,19 +733,20 @@
     border-radius: 50%;
   }
 
-  .ok .dot {
+  .tone-ok .dot {
     background: var(--rail-ok);
   }
 
-  .warn .dot {
+  .tone-warn .dot {
     background: var(--rail-warn);
   }
 
-  .bad .dot {
+  .tone-bad .dot {
     background: var(--rail-fail);
   }
 
-  .busy .dot {
+  /* The tone goes in a prefixed class, since app.css draws a spinner on any button.busy. */
+  .tone-busy .dot {
     box-shadow: inset 0 0 0 2px var(--rail-muted);
     animation: rail-pulse 1.2s ease-in-out infinite;
   }

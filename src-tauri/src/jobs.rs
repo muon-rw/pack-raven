@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
@@ -25,6 +25,13 @@ struct LogLine<'a> {
     job: &'a str,
     stream: &'a str,
     text: &'a str,
+}
+
+#[derive(Serialize, Clone)]
+struct JobItem<'a> {
+    job: &'a str,
+    id: u64,
+    state: &'a str,
 }
 
 #[derive(Serialize, Clone)]
@@ -64,6 +71,13 @@ impl Log {
         }
     }
 
+    // Reports one queued item's progress, so the UI knows when it can no longer be cancelled.
+    fn item(&self, id: u64, state: &str) {
+        if let Sink::App(app) = &self.sink {
+            let _ = app.emit("job-item", JobItem { job: &self.job, id, state });
+        }
+    }
+
     pub fn state(&self, state: &'static str, message: Option<String>) {
         if let Sink::App(app) = &self.sink {
             let _ = app.emit("job-state", JobState { job: self.job.clone(), state, message });
@@ -74,6 +88,27 @@ impl Log {
 #[derive(Default, Clone)]
 pub struct Jobs {
     running: Arc<Mutex<HashSet<String>>>,
+}
+
+pub struct JobQueue<T> {
+    items: VecDeque<(u64, T)>,
+    draining: bool,
+    next_id: u64,
+}
+
+impl<T> Default for JobQueue<T> {
+    fn default() -> Self {
+        Self { items: VecDeque::new(), draining: false, next_id: 0 }
+    }
+}
+
+impl<T> JobQueue<T> {
+    // Only items that haven't started yet can be cancelled.
+    pub fn cancel(&mut self, id: u64) -> bool {
+        let Some(index) = self.items.iter().position(|(queued, _)| *queued == id) else { return false };
+        self.items.remove(index);
+        true
+    }
 }
 
 impl Jobs {
@@ -105,5 +140,91 @@ impl Jobs {
             }
         });
         Ok(())
+    }
+
+    // Work you add while a queued job runs joins that run. We end the run while holding the queue's
+    // lock, after its final state goes out, so an item added at that moment starts a fresh run
+    // instead of waiting in a queue nothing drains. Pass the returned id to JobQueue::cancel.
+    pub fn enqueue<T, F, Fut>(&self, app: &AppHandle, job: &str, queue: &Arc<Mutex<JobQueue<T>>>, item: T, work: F) -> Result<u64, String>
+    where
+        T: Send + 'static,
+        F: Fn(T, Log) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<String>> + Send + 'static,
+    {
+        let mut pending = queue.lock().unwrap();
+        let id = pending.next_id;
+        if pending.draining {
+            pending.next_id += 1;
+            pending.items.push_back((id, item));
+            return Ok(id);
+        }
+        if !self.running.lock().unwrap().insert(job.to_string()) {
+            return Err(format!("{job} is already running"));
+        }
+        pending.next_id += 1;
+        pending.items.push_back((id, item));
+        pending.draining = true;
+        drop(pending);
+        let log = Log::new(app, job);
+        let running = self.running.clone();
+        let name = job.to_string();
+        let queue = queue.clone();
+        tauri::async_runtime::spawn(async move {
+            log.state("running", None);
+            let mut messages = Vec::new();
+            let mut failures = Vec::new();
+            loop {
+                let (id, item) = {
+                    let mut pending = queue.lock().unwrap();
+                    match pending.items.pop_front() {
+                        Some((id, item)) => {
+                            log.item(id, "started");
+                            (id, item)
+                        }
+                        None => {
+                            pending.draining = false;
+                            if failures.is_empty() {
+                                log.state("done", Some(messages.join(" ")));
+                            } else {
+                                // The changes that worked are still on disk, so we report them too.
+                                log.state("failed", Some(failures.into_iter().chain(messages).collect::<Vec<_>>().join(" ")));
+                            }
+                            running.lock().unwrap().remove(&name);
+                            break;
+                        }
+                    }
+                };
+                match work(item, log.clone()).await {
+                    Ok(message) => {
+                        log.item(id, "finished");
+                        if !message.is_empty() {
+                            log.info(&message);
+                            messages.push(message);
+                        }
+                    }
+                    Err(error) => {
+                        log.item(id, "failed");
+                        let error = format!("{error:#}");
+                        log.stream("err", &error);
+                        failures.push(error);
+                    }
+                }
+            }
+        });
+        Ok(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancelling_a_queued_item_drops_only_that_item() {
+        let mut queue = JobQueue::default();
+        queue.items.extend([(0, "a"), (1, "b")]);
+        assert!(queue.cancel(0));
+        assert!(!queue.cancel(5));
+        assert_eq!(queue.items.iter().map(|(_, item)| *item).collect::<Vec<_>>(), ["b"]);
     }
 }

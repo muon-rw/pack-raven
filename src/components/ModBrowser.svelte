@@ -3,9 +3,9 @@
   import { openUrl } from '@tauri-apps/plugin-opener'
   import Notice from './Notice.svelte'
   import { api, errorText, type AddonKind, type ModPreview, type ModRequest, type SearchResult, type SearchSort } from '../lib/api'
-  import { browse } from '../lib/modUpdates.svelte'
+  import { browse, cancelChange, changeFor, modUpdates, point, projectKey, queuedButton } from '../lib/modUpdates.svelte'
 
-  let { installedIds, blocked, game, install }: { installedIds: Set<number>; blocked: boolean; game: string; install: (requests: ModRequest[]) => Promise<void> } = $props()
+  let { installedIds, game, install }: { installedIds: Set<number>; game: string; install: (requests: ModRequest[], projects: number[], names: string[]) => Promise<void> } = $props()
 
   // We wait for a pause in typing, so each keystroke doesn't spend a CurseForge request.
   const SEARCH_DELAY_MS = 350
@@ -15,8 +15,11 @@
   let searching = $state(false)
   let searchError: string | null = $state(null)
   let categories: { id: number; name: string }[] = $state([])
-  let resolving: number | null = $state(null)
+  let resolving = $state(new Set<number>())
   let confirming: { result: SearchResult; preview: ModPreview } | null = $state(null)
+  // The Install button you just pressed turns into Cancel, so we hold back its red focus style
+  // until focus leaves it and comes back.
+  let pressed: number | null = $state(null)
   let previewError: { projectId: number; text: string } | null = $state(null)
 
   let searchField: HTMLInputElement
@@ -72,28 +75,34 @@
 
   async function startInstall(result: SearchResult) {
     const requests = [{ fileId: result.file.fileId, replaces: null }]
-    resolving = result.projectId
+    resolving = new Set(resolving).add(result.projectId)
     previewError = null
     try {
       const preview = await api.previewMods(requests)
       if (preview.dependencies.length || preview.unavailable.length) confirming = { result, preview }
       else {
-        await install(requests)
-        resultsRegion.focus()
+        await install(requests, preview.projects, [result.name])
+        recoverFocus()
       }
     } catch (error) {
       previewError = { projectId: result.projectId, text: errorText(error) }
     } finally {
-      resolving = null
+      resolving = new Set([...resolving].filter((id) => id !== result.projectId))
     }
   }
 
   async function confirmInstall() {
     if (!confirming) return
-    const fileId = confirming.result.file.fileId
+    const { result, preview } = confirming
     confirming = null
-    await install([{ fileId, replaces: null }])
-    resultsRegion.focus()
+    await install([{ fileId: result.file.fileId, replaces: null }], preview.projects, [result.name, ...preview.dependencies])
+    recoverFocus()
+  }
+
+  // Cancelling or confirming the dependency prompt removes the button you used, so focus falls to
+  // the page. You may have moved on to another result by then, so we leave focus alone in that case.
+  function recoverFocus() {
+    if (document.activeElement === document.body) resultsRegion.focus()
   }
 
   function list(names: string[]) {
@@ -166,6 +175,11 @@
     <ul class:stale={searching && results.length}>
       {#each results as result (result.projectId)}
         {@const installed = installedIds.has(result.projectId)}
+        {@const key = projectKey(result.projectId)}
+        {@const change = changeFor(key)}
+        {@const shown = change && queuedButton(change, result.name)}
+        {@const checking = resolving.has(result.projectId)}
+        {@const unavailable = !!change || checking || confirming?.result.projectId === result.projectId}
         <li>
           {#if result.logo}<img src={result.logo} alt="" width="44" height="44" loading="lazy" />{:else}<span class="logo" aria-hidden="true"></span>{/if}
           <div class="about">
@@ -187,7 +201,7 @@
                   <p class="failed">It also requires {list(confirming.preview.unavailable)}, which CurseForge has no file of for {game}.</p>
                 {/if}
                 <p class="confirm-actions">
-                  <button class="primary" onclick={confirmInstall} disabled={blocked}>
+                  <button class="primary" onclick={confirmInstall}>
                     {confirming.preview.dependencies.length ? `Install all ${confirming.preview.dependencies.length + 1}` : 'Install anyway'}
                   </button>
                   <button class="quiet" onclick={() => { confirming = null; resultsRegion.focus() }}>Cancel</button>
@@ -200,14 +214,31 @@
             {#if installed}
               <span class="chip ok">Installed</span>
             {:else}
-              {#if result.file.releaseType !== 'release'}<span class="chip pending">{typeLabels[result.file.releaseType]}</span>{/if}
+              {#if result.file.releaseType !== 'release' && !change}<span class="chip pending">{typeLabels[result.file.releaseType]}</span>{/if}
+              <!-- One button carries every state, so it keeps keyboard focus while you work down the results. -->
               <button
-                class:busy={resolving === result.projectId}
-                disabled={blocked || resolving !== null || confirming?.result.projectId === result.projectId}
-                onclick={() => startInstall(result)}
-                aria-label="Install {result.name}"
+                class:busy={shown?.busy || checking}
+                class:cancels={shown?.cancels}
+                class:pressed={pressed === result.projectId}
+                class:pointed={shown?.cancels && modUpdates.pointing === change?.serial}
+                aria-disabled={shown ? !shown.cancels : unavailable}
+                onpointerenter={() => point(change, true)}
+                onpointerleave={() => point(change, false)}
+                onfocus={(e) => pressed !== result.projectId && e.currentTarget.matches(':focus-visible') && point(change, true)}
+                onblur={() => {
+                  point(change, false)
+                  if (pressed === result.projectId) pressed = null
+                }}
+                onclick={() => {
+                  if (change) return cancelChange(key, result.name)
+                  if (unavailable) return
+                  pressed = result.projectId
+                  startInstall(result)
+                }}
+                aria-label={shown?.ariaLabel ?? `Install ${result.name}`}
+                title={shown?.title}
               >
-                {resolving === result.projectId ? 'Checking' : 'Install'}
+                {#if shown?.cancels}<span class="swap"><span>{shown.label}</span><span aria-hidden="true">Cancel</span></span>{:else}{shown?.label ?? (checking ? 'Checking' : 'Install')}{/if}
               </button>
             {/if}
           </div>

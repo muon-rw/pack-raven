@@ -120,10 +120,75 @@ test('mods can be found on CurseForge and installed with their dependencies', as
   await page.getByRole('button', { name: "Install Create: Steam 'n' Rails" }).click()
   await expect(page.getByRole('group', { name: "Install Create: Steam 'n' Rails" })).toContainText('requires Create and Flywheel')
   await page.getByRole('button', { name: 'Install all 3' }).click()
+  await expect(page.getByRole('button', { name: /installing Create: Steam 'n' Rails/i })).toContainText('Installing')
 
   await expect(page.getByRole('status').filter({ hasText: "Installed Create: Steam 'n' Rails. Added Create and Flywheel as required." })).toBeVisible()
   await expect(page.getByRole('button', { name: /^Install / })).toHaveCount(0)
   await expect(page.getByRole('tab', { name: 'Installed' })).toContainText('13')
+})
+
+test('updates you click during a download join it', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  await page.getByRole('button', { name: 'Update Apotheosis', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Updating Apotheosis' })).toHaveAttribute('aria-disabled', 'true')
+  await expect(page.getByRole('button', { name: 'Updating Apotheosis' })).toBeFocused()
+  await expect(page.getByRole('status').filter({ hasText: 'Downloading 1 file.' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Update all (4)' })).toBeEnabled()
+
+  await page.getByRole('button', { name: 'Update Sodium', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Cancel updating Sodium' })).toBeVisible()
+
+  await expect(page.getByRole('status').filter({ hasText: 'Updated Apotheosis. Updated Sodium.' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Update all (3)' })).toBeEnabled()
+})
+
+test('updated mods leave the top of the Update sort when the run ends', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  const firstRow = page.locator('tbody > tr.row .expand').first()
+  await expect(firstRow).toHaveText('Apotheosis')
+  await page.getByRole('button', { name: 'Update Apotheosis', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Updated Apotheosis.' })).toBeVisible()
+  await expect(firstRow).not.toHaveText('Apotheosis')
+})
+
+test('a queued update can be cancelled before it starts', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  await page.getByRole('button', { name: 'Update Apotheosis', exact: true }).click()
+  await page.getByRole('button', { name: 'Update Sodium', exact: true }).click()
+  await page.getByRole('button', { name: 'Cancel updating Sodium' }).click()
+  await expect(page.getByRole('button', { name: 'Update Sodium', exact: true })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Updated Apotheosis. Cancelled updating Sodium.' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Update Sodium', exact: true })).toBeVisible()
+})
+
+test("a change can't be cancelled once it starts", async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  await page.getByRole('button', { name: 'Update Apotheosis', exact: true }).click()
+  await page.getByRole('button', { name: 'Update Sodium', exact: true }).click()
+  const running = page.getByRole('button', { name: 'Updating Apotheosis' })
+  await expect(running).toHaveAttribute('aria-disabled', 'true')
+  await running.click({ force: true })
+  // We only reload the list when the run ends, so until then the row says what happened.
+  const updated = page.getByRole('button', { name: 'Updated Apotheosis' })
+  await expect(updated).toHaveAttribute('aria-disabled', 'true')
+  await expect(page.getByRole('status').filter({ hasText: 'Updated Apotheosis. Updated Sodium.' })).toBeVisible()
+})
+
+test('cancelling one mod of a queued batch cancels the batch', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  await page.getByRole('button', { name: 'Update Apotheosis', exact: true }).click()
+  await page.getByRole('button', { name: 'Update all (4)' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: /^Update \d+ files$/ }).click()
+  const cancel = page.getByRole('button', { name: 'Cancel updating Sodium' })
+  await expect(cancel).toHaveAttribute('title', /^Cancel this update\. It also cancels /)
+  // Pointing at one row's Cancel marks every row it would cancel.
+  await cancel.hover()
+  await expect(page.getByRole('button', { name: "Cancel updating Iron's Spells 'n Spellbooks" })).toHaveClass(/pointed/)
+  await cancel.click()
+  await expect(page.getByRole('button', { name: 'Update Sodium', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: "Update Iron's Spells 'n Spellbooks", exact: true })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: /Updated Apotheosis\. Cancelled updating Sodium and \d+ other mods?\./ })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Update all (4)' })).toBeEnabled()
 })
 
 test('a locked mod stays out of Update all', async ({ page }) => {
@@ -192,7 +257,7 @@ test('test servers wait until you accept the Minecraft EULA', async ({ page }) =
   for (const name of ['Quick test', 'Start server']) {
     await expect(page.getByRole('button', { name, exact: true })).toHaveAttribute('aria-disabled', 'true')
   }
-  await page.getByLabel('Join server').uncheck()
+  await expect(page.getByLabel('Join server')).not.toBeChecked()
   await expect(page.getByRole('button', { name: 'Launch client' })).toHaveAttribute('aria-disabled', 'false')
 
   await consent.getByRole('button', { name: 'I accept the EULA' }).click()
@@ -200,6 +265,30 @@ test('test servers wait until you accept the Minecraft EULA', async ({ page }) =
   for (const name of ['Quick test', 'Start server']) {
     await expect(page.getByRole('button', { name, exact: true })).toHaveAttribute('aria-disabled', 'false')
   }
+})
+
+test('Join server stays as you left it when you come back to Test', async ({ page }) => {
+  await openApp(page, 'test', 'ready')
+  await page.getByLabel('Join server').check()
+  const nav = page.getByRole('navigation', { name: 'Pack' })
+  await nav.getByRole('button', { name: /^Mods/ }).click()
+  await nav.getByRole('button', { name: /^Test/ }).click()
+  await expect(page.getByLabel('Join server')).toBeChecked()
+})
+
+test("starting a test clears the last run's logs", async ({ page }) => {
+  await openApp(page, 'test', 'ready')
+  await page.evaluate(() => {
+    const emit = (globalThis as unknown as { __mockEmit: (event: string, payload: unknown) => void }).__mockEmit
+    emit('job-log', { job: 'server', stream: 'info', text: 'Old server line' })
+    emit('job-log', { job: 'client', stream: 'info', text: 'Old client line' })
+  })
+  await expect(page.getByText('Old server line')).toBeVisible()
+  await expect(page.getByText('Old client line')).toBeVisible()
+  await page.getByRole('button', { name: 'Quick test' }).click()
+  await expect(page.getByText('Syncing changed files to the test server folder')).toBeVisible()
+  await expect(page.getByText('Old server line')).toHaveCount(0)
+  await expect(page.getByText('Old client line')).toHaveCount(0)
 })
 
 test('you can sign in to Minecraft and out again', async ({ page }) => {
@@ -253,4 +342,13 @@ test('server properties and startup save as you change them', async ({ page }) =
   await page.getByRole('textbox', { name: 'Server arguments' }).blur()
   await expect(page.getByRole('complementary', { name: 'What hosts run' })).toContainText('nogui --world "My World"')
   expect(problems).toEqual([])
+})
+
+test("installing a mod marks the dependencies it brings as installing", async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  await page.getByRole('tab', { name: 'Browse' }).click()
+  await page.getByRole('searchbox', { name: 'Search CurseForge' }).fill('create')
+  await page.getByRole('button', { name: "Install Create: Steam 'n' Rails" }).click()
+  await page.getByRole('button', { name: /^Install all/ }).click()
+  await expect(page.getByRole('button', { name: /^(Cancel installing|Installing) Create$/ })).toContainText('Installing')
 })

@@ -118,6 +118,8 @@ export interface SearchResult {
 export interface ModPreview {
   dependencies: string[]
   unavailable: string[]
+  // Every project the install would add, its dependencies included.
+  projects: number[]
 }
 
 export interface Overview {
@@ -459,7 +461,8 @@ export const api = {
   searchMods: (request: SearchRequest) => invoke<{ results: SearchResult[]; nextIndex: number | null }>('search_mods', { request }),
   modCategories: (kind: AddonKind) => invoke<{ id: number; name: string }[]>('mod_categories', { kind }),
   previewMods: (requests: ModRequest[]) => invoke<ModPreview>('preview_mods', { requests }),
-  changeMods: (requests: ModRequest[]) => invoke<void>('change_mods', { requests }),
+  changeMods: (requests: ModRequest[]) => invoke<number>('change_mods', { requests }),
+  cancelModChange: (id: number) => invoke<boolean>('cancel_mod_change', { id }),
   setVersion: (version: string) => invoke<void>('set_version', { version }),
   versionProblem: (version: string) => invoke<string | null>('version_problem', { version }),
   setUpVersionChecker: (version: string) => invoke<void>('set_up_version_checker', { version }),

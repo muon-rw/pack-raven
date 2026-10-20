@@ -10,7 +10,7 @@ use crate::changelog::{self, ModDiff};
 use crate::curseforge;
 use crate::export;
 use crate::git;
-use crate::jobs::Jobs;
+use crate::jobs::{JobQueue, Jobs};
 use crate::launch;
 use crate::pack::{Pack, PackConfig};
 use crate::publish::{self, PublishContext, PublishOptions};
@@ -24,6 +24,7 @@ pub struct AppState {
     pub settings_path: PathBuf,
     pub data_dir: PathBuf,
     pub jobs: Jobs,
+    pub mod_changes: Arc<Mutex<JobQueue<crate::mod_commands::ModChange>>>,
     pub test: Arc<TestRun>,
     pub watcher: Mutex<Option<crate::watcher::PackWatcher>>,
     pub history: Mutex<crate::history::History>,
