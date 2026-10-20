@@ -220,7 +220,7 @@
         },
         {
           id: 'test',
-          title: 'Test',
+          title: 'Run',
           key: '4',
           status: testStatus,
           tone: overview?.serverRunning && !testState.serverReady ? 'busy' : testStatus ? 'ok' : 'idle',
@@ -821,7 +821,7 @@
     outline-color: var(--rail-text);
   }
 
-  /* We use a flex column so full-height views (Test, Files, Git) fill the space below any banners. */
+  /* We use a flex column so full-height views (Run, Files, Git) fill the space below any banners. */
   .view {
     flex: 1;
     display: flex;

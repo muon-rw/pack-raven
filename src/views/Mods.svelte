@@ -4,6 +4,7 @@
   import ModBrowser from '../components/ModBrowser.svelte'
   import ContextMenu from '../components/ContextMenu.svelte'
   import Tip from '../components/Tip.svelte'
+  import ClientLaunch from '../components/ClientLaunch.svelte'
   import DisableDialog, { type Dependent } from '../components/DisableDialog.svelte'
   import UpdateReview, { type PendingUpdate } from '../components/UpdateReview.svelte'
   import { onMount, untrack } from 'svelte'
@@ -589,18 +590,22 @@
         </label>
       {/if}
     </div>
-    {#if browse.tab === 'installed'}
-      <div class="actions">
-        <button onclick={checkAgain} disabled={checking || updating || !mods.length} class:busy={checking}>{checking ? 'Checking' : 'Check for updates'}</button>
-        <Tip tip={updatable ? whyNoUpdate : null}>
-          {#snippet children(why)}
-            <button class="primary" class:busy={updating && !updatable} disabled={!updatable} aria-disabled={!!whyNoUpdate} aria-describedby={why} onclick={() => !whyNoUpdate && updateAll()}>
-              {updatable ? `Update all (${updatable})` : updating ? 'Updating' : 'Update all'}
-            </button>
-          {/snippet}
-        </Tip>
-      </div>
-    {/if}
+    <div class="actions">
+      <!-- You often relaunch the client between mod changes, so we offer it here as well as in Run. -->
+      <ClientLaunch running={clientRunning} />
+      {#if browse.tab === 'installed'}
+        <div class="update-actions">
+          <button onclick={checkAgain} disabled={checking || updating || !mods.length} class:busy={checking}>{checking ? 'Checking' : 'Check for updates'}</button>
+          <Tip tip={updatable ? whyNoUpdate : null}>
+            {#snippet children(why)}
+              <button class="primary" class:busy={updating && !updatable} disabled={!updatable} aria-disabled={!!whyNoUpdate} aria-describedby={why} onclick={() => !whyNoUpdate && updateAll()}>
+                {updatable ? `Update all (${updatable})` : updating ? 'Updating' : 'Update all'}
+              </button>
+            {/snippet}
+          </Tip>
+        </div>
+      {/if}
+    </div>
   </header>
 
   <!-- The tab row has room to spare, so the Installed search lives there and the type tabs keep a row to themselves. -->
@@ -637,8 +642,8 @@
   {/if}
   {#if clientRunning}
     <Notice tone="warn">
-      <p>Close the test client to update, disable or remove mods, since it has their files open. You can still add mods, and the client will load them when you restart it.</p>
-      <p><button onclick={ontest}>Open Test</button></p>
+      <p>Close or kill the test client to update, disable or remove mods, since it has their files open. You can still add mods, and the client will load them when you restart it.</p>
+      <p><button onclick={ontest}>Show the client log</button></p>
     </Notice>
   {/if}
   {#if duplicates.length}
@@ -1072,10 +1077,18 @@
     gap: 12px 16px;
   }
 
+  /* The launch and update groups wrap as units, and the wider gap between them keeps running the
+     game apart from changing mods. */
   .actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
+    justify-content: end;
+    gap: 8px 20px;
+  }
+
+  .update-actions {
+    display: flex;
     gap: 8px;
   }
 

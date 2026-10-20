@@ -267,13 +267,73 @@ test('test servers wait until you accept the Minecraft EULA', async ({ page }) =
   }
 })
 
-test('Join server stays as you left it when you come back to Test', async ({ page }) => {
+test('Join server stays as you left it when you come back to Run', async ({ page }) => {
   await openApp(page, 'test', 'ready')
   await page.getByLabel('Join server').check()
   const nav = page.getByRole('navigation', { name: 'Pack' })
   await nav.getByRole('button', { name: /^Mods/ }).click()
-  await nav.getByRole('button', { name: /^Test/ }).click()
+  await nav.getByRole('button', { name: /^Run/ }).click()
   await expect(page.getByLabel('Join server')).toBeChecked()
+})
+
+test('you can launch and kill the client from Mods', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  const launch = page.getByRole('button', { name: /^Launch/ })
+  await launch.click()
+  // Kill appears beside Launch, which keeps focus while the client runs.
+  await page.getByRole('button', { name: 'Kill client' }).waitFor()
+  await expect(launch).toBeFocused()
+  await expect(launch).toHaveAttribute('aria-disabled', 'true')
+  await page.getByRole('button', { name: 'Kill client' }).click()
+  await expect(launch).toHaveAttribute('aria-disabled', 'false')
+})
+
+test('you can start, restart and stop the test server from Server', async ({ page }) => {
+  await openApp(page, 'server', 'ready')
+  const start = page.getByRole('button', { name: 'Start server' })
+  await start.click()
+  const status = page.locator('.launch .status')
+  await expect(status).toHaveText('The test server is up.')
+  const restart = page.getByRole('button', { name: 'Restart server' })
+  await expect(restart).toBeFocused()
+  await expect(restart).not.toHaveClass(/primary/)
+
+  // An override change only reaches the test server once it restarts, so we promote Restart.
+  await page.getByLabel(/^Override for /).first().selectOption('keep')
+  await expect(restart).toHaveClass(/primary/)
+  await expect(status).toContainText('Restart it to use your changes.')
+  await restart.click()
+  await expect(page.getByRole('button', { name: 'Restarting' })).toBeFocused()
+  await expect(restart).not.toHaveClass(/primary/)
+  await expect(status).toHaveText('The test server is up.')
+
+  await page.getByRole('button', { name: 'Stop server' }).click()
+  await expect(start).toBeVisible()
+  await expect(status).toHaveText('')
+})
+
+test('stopping during a restart cancels it', async ({ page }) => {
+  await openApp(page, 'server', 'ready')
+  await page.getByRole('button', { name: 'Start server' }).click()
+  await page.getByRole('button', { name: 'Restart server' }).click()
+  await page.getByRole('button', { name: 'Stop server' }).click()
+  await expect(page.getByRole('button', { name: 'Start server' })).toBeVisible()
+  await page.waitForTimeout(1000)
+  await expect(page.getByRole('button', { name: 'Start server' })).toBeVisible()
+})
+
+test('Server and Run report a test server that stops on its own', async ({ page }) => {
+  await openApp(page, 'server', 'ready')
+  await page.getByRole('button', { name: 'Start server' }).click()
+  await expect(page.locator('.launch .status')).toHaveText('The test server is up.')
+  // Calling the backend directly skips the UI's stop, as a crash would.
+  await page.evaluate(() => {
+    const tauri = (globalThis as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__
+    return tauri.invoke('kill_process', { which: 'server' })
+  })
+  await expect(page.locator('.launch .status')).toContainText('The test server stopped on its own')
+  await page.getByRole('button', { name: 'See the log in Run' }).click()
+  await expect(page.getByText(/The test server stopped on its own/)).toBeVisible()
 })
 
 test("starting a test clears the last run's logs", async ({ page }) => {

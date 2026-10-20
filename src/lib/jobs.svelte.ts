@@ -56,6 +56,12 @@ export const testState = $state({ serverReady: false, players: [] as string[], p
 export const serverPack = $state({ changedSinceBuild: false, changedSinceTest: false })
 export const testOptions = $state({ recopyAll: false, joinServer: false })
 
+const serverStopListeners: (() => void)[] = []
+
+export function onServerStopped(listener: () => void) {
+  serverStopListeners.push(listener)
+}
+
 const idle = new JobRecord()
 const pending = new Map<string, LogLine[]>()
 let flushTimer: ReturnType<typeof setTimeout> | null = null
@@ -138,6 +144,7 @@ function register(): Promise<UnlistenFn[]> {
     } else if (payload.kind === 'server-stopped') {
       testState.serverReady = false
       testState.players = []
+      for (const listener of serverStopListeners) listener()
     } else if (payload.kind === 'player-resolved') {
       const resolved: ResolvedPlayer = JSON.parse(payload.detail)
       // A client-only launch keeps the mode the running server was started with.

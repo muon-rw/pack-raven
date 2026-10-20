@@ -3,7 +3,8 @@
   import { openUrl } from '@tauri-apps/plugin-opener'
   import Notice from '../components/Notice.svelte'
   import { api, errorText, type MinecraftAccount, type Overview } from '../lib/api'
-  import { clearLog, job, serverPack, testOptions, testState } from '../lib/jobs.svelte'
+  import { job, serverPack, testOptions, testState } from '../lib/jobs.svelte'
+  import { killServer, launch, launchClient, restartServer, startServer, stopServer } from '../lib/launch.svelte'
   import { serverView } from '../lib/nav.svelte'
   import JobLog from '../components/JobLog.svelte'
   import Tip from '../components/Tip.svelte'
@@ -50,16 +51,6 @@
     })
   }
 
-  // The server log shows the test job's lines before the server's, and the backend only clears a
-  // job's lines once that job starts, so the last run's server log would sit under this one's.
-  function startTest(connect: boolean) {
-    clearLog('test', 'server', ...(connect ? (['client'] as const) : []))
-    return run(async () => {
-      await api.startTest(testOptions.recopyAll, connect)
-      serverPack.changedSinceTest = false
-    })
-  }
-
   async function run(action: () => Promise<void>) {
     try {
       error = null
@@ -72,7 +63,7 @@
   async function sendCommand() {
     const line = command.trim()
     if (!line || whyNoSend) return
-    await run(() => api.serverCommand(line))
+    await run(() => (line === 'stop' ? stopServer() : api.serverCommand(line)))
     command = ''
   }
 
@@ -137,7 +128,7 @@
 <div class="test">
   <div class="head">
     <div>
-      <h2>Test</h2>
+      <h2>Run</h2>
       <p class="muted" role="status">{status}</p>
       <p class="muted mode">
         {modeLine}
@@ -162,7 +153,7 @@
             aria-disabled={!!whyNoQuick}
             aria-describedby={why}
             title={whyNoQuick ? undefined : 'Start the server, then launch the client and join it'}
-            onclick={() => !whyNoQuick && ((testState.clientJoins = true), startTest(true))}
+            onclick={() => !whyNoQuick && run(() => startServer(true))}
           >
             {preparing ? 'Starting' : 'Quick test'}
           </button>
@@ -189,12 +180,22 @@
       <p class="muted">{confirmed.renewalFailure}</p>
     </Notice>
   {/if}
-  {#if serverRunning && serverPack.changedSinceTest}
+  {#if serverRunning && serverPack.changedSinceTest && !launch.restarting}
     <Notice tone="warn">
-      <p>You changed the server pack after the test server started. Stop it and start it again to use your changes.</p>
+      <p>You changed the server pack after the test server started. Restart it to use your changes.</p>
+      <p><button onclick={() => run(restartServer)}>Restart server</button></p>
+    </Notice>
+  {/if}
+  {#if launch.exitedOnItsOwn && !serverRunning && !preparing && job('test').phase !== 'failed'}
+    <Notice tone="error">
+      <p>
+        The test server stopped on its own{job('server').message ? ` (${job('server').message?.replace(/^Exited/, 'exited')})` : ''}. Its log is below.
+        If a mod crashed it, <button class="link" onclick={() => ((serverView.tab = 'mods'), onserver())}>leave it off the server</button>.
+      </p>
     </Notice>
   {/if}
   {#if error}<Notice tone="error"><p><LinkedText text={error} /></p></Notice>{/if}
+  {#if launch.restartError}<Notice tone="error"><p>Couldn't restart the test server: <LinkedText text={launch.restartError} /></p></Notice>{/if}
   {#if job('test').phase === 'failed'}<Notice tone="error"><p><LinkedText text={job('test').message ?? ''} /></p></Notice>{/if}
   {#if job('client').phase === 'failed'}<Notice tone="error"><p>Couldn't launch the client: <LinkedText text={job('client').message ?? ''} /></p></Notice>{/if}
 
@@ -205,17 +206,17 @@
         <div class="buttons">
           <Tip tip={whyNoStart}>
             {#snippet children(why)}
-              <button aria-disabled={!!whyNoStart} aria-describedby={why} onclick={() => !whyNoStart && startTest(false)}>Start server</button>
+              <button aria-disabled={!!whyNoStart} aria-describedby={why} onclick={() => !whyNoStart && run(() => startServer(false))}>Start server</button>
             {/snippet}
           </Tip>
           <Tip tip={whyNoStop ?? 'Save the world and shut down the server'}>
             {#snippet children(why)}
-              <button aria-disabled={!!whyNoStop} aria-describedby={why} onclick={() => !whyNoStop && run(() => api.serverCommand('stop'))}>Stop</button>
+              <button aria-disabled={!!whyNoStop} aria-describedby={why} onclick={() => !whyNoStop && run(stopServer)}>Stop</button>
             {/snippet}
           </Tip>
           <Tip tip={whyNoStop ?? 'End the process at once without saving'}>
             {#snippet children(why)}
-              <button class="danger" aria-disabled={!!whyNoStop} aria-describedby={why} onclick={() => !whyNoStop && run(() => api.killProcess('server'))}>Kill</button>
+              <button class="danger" aria-disabled={!!whyNoStop} aria-describedby={why} onclick={() => !whyNoStop && run(killServer)}>Kill</button>
             {/snippet}
           </Tip>
         </div>
@@ -245,7 +246,7 @@
           </label>
           <Tip tip={whyNoLaunch}>
             {#snippet children(why)}
-              <button aria-disabled={!!whyNoLaunch} aria-describedby={why} onclick={() => !whyNoLaunch && (clearLog('client'), run(() => ((testState.clientJoins = testOptions.joinServer), api.startClient(testOptions.joinServer))))}>Launch client</button>
+              <button aria-disabled={!!whyNoLaunch} aria-describedby={why} onclick={() => !whyNoLaunch && run(() => launchClient(testOptions.joinServer))}>Launch client</button>
             {/snippet}
           </Tip>
           <Tip tip={clientRunning ? 'End the client process at once' : "The client isn't running"}>

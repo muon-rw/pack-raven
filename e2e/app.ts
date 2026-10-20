@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test'
 // Keep these in sync with the `views` list in App.svelte and `scenarios` in src/dev/mock.ts.
 export const headings = {
   changes: 'Changes',
-  test: 'Test',
+  test: 'Run',
   mods: 'Mods',
   server: 'Server',
   files: 'Files',

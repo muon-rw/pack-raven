@@ -2,10 +2,12 @@
   import Notice from '../components/Notice.svelte'
   import ServerProperties from '../components/ServerProperties.svelte'
   import ServerStartup from '../components/ServerStartup.svelte'
+  import ServerLaunch from '../components/ServerLaunch.svelte'
   import { onMount } from 'svelte'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { api, errorText, type ModSide, type Overview, type Override, type PackConfig } from '../lib/api'
   import { serverPack } from '../lib/jobs.svelte'
+  import { trackSave } from '../lib/launch.svelte'
   import { serverView } from '../lib/nav.svelte'
   import { commandKey, shortcut } from '../lib/platform'
 
@@ -77,7 +79,7 @@
     if (!settings) return
     Object.assign(settings, changes)
     saveState = 'saving'
-    saving = saving.then(async () => {
+    saving = trackSave(saving.then(async () => {
       try {
         const config = await api.getPackConfig()
         Object.assign(config.server, changes)
@@ -88,7 +90,7 @@
         saveError = errorText(error)
         saveState = 'failed'
       }
-    })
+    }))
   }
 
   function onTabKey(event: KeyboardEvent) {
@@ -104,7 +106,7 @@
   async function setOverride(mod: ModSide, select: HTMLSelectElement) {
     const mode = select.value as Override
     try {
-      await api.setSideOverride(mod.projectId, mode)
+      await trackSave(api.setSideOverride(mod.projectId, mode))
       markChanged()
     } catch (error) {
       select.value = mod.override
@@ -146,7 +148,7 @@
       <h2>Server</h2>
       <p class="muted">
         {#if serverView.tab === 'properties'}
-          Written to <span class="file">server.properties</span> in every server pack and test run. All other values falls back to vanilla or modded defaults.
+          Written to <span class="file">server.properties</span> in every server pack and test run. All other values fall back to vanilla or modded defaults.
         {:else if serverView.tab === 'startup'}
           Startup settings for the published server pack. We'll write these into the pack's <span class="file">user_jvm_args.txt</span> and run scripts.
         {:else if loading && !mods.length}
@@ -155,15 +157,12 @@
           This pack has no mods yet.
         {:else}
           {mods.length} {mods.length === 1 ? 'mod' : 'mods'}. {excludedCount || 'none'} excluded from the server as client-only, based on their
-          CurseForge and Modrinth tags. Override that here; these choices will be used in Test and Publish to make server packs.
+          CurseForge and Modrinth tags. Override that here; these choices will be used in test runs and Publish to make server packs.
         {/if}
       </p>
     </div>
-    {#if serverView.tab !== 'mods'}
-      <p class="save" class:failed={saveState === 'failed'} role="status">
-        {#if saveState === 'saving'}Saving{:else if saveState === 'saved'}Saved to <span class="file">packraven.toml</span>{:else if saveState === 'failed'}Couldn't save: {saveError}{/if}
-      </p>
-    {/if}
+    <!-- You often restart the test server between override changes, so we offer it here as well as in Run. -->
+    <ServerLaunch running={overview?.serverRunning ?? false} />
   </header>
 
   <div class="tab-row">
@@ -174,7 +173,12 @@
         </button>
       {/each}
     </div>
-    {#if serverView.tab === 'mods'}
+    {#if serverView.tab !== 'mods'}
+      <!-- The save status sits in the tab row so it can't reflow the header and move the fields you're editing. -->
+      <p class="save" class:failed={saveState === 'failed'} role="status">
+        {#if saveState === 'saving'}Saving{:else if saveState === 'saved'}Saved to <span class="file">packraven.toml</span>{:else if saveState === 'failed'}Couldn't save: {saveError}{/if}
+      </p>
+    {:else}
       <input type="search" class="find" bind:this={searchField} bind:value={search} placeholder="Find a mod" aria-label="Find a mod" title="Find a mod ({shortcut('Ctrl+F')})" />
     {/if}
   </div>
@@ -294,12 +298,14 @@
   .head {
     display: flex;
     flex-wrap: wrap;
-    align-items: end;
+    align-items: start;
     justify-content: space-between;
     gap: 8px 24px;
   }
 
   .title {
+    flex: 1 1 20rem;
+    min-width: 0;
     display: grid;
     gap: 4px;
   }
@@ -309,6 +315,7 @@
   }
 
   .save {
+    align-self: center;
     color: var(--muted);
     font-size: var(--step--1);
   }

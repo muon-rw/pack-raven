@@ -8,6 +8,12 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 - Java settings list the Javas packraven finds on this computer (CurseForge, JAVA_HOME, PATH, installed JDKs, IntelliJ, Gradle, Prism and Modrinth), so you pick one instead of typing a path
 - When no Java of a version a pack needs is installed, packraven offers to download Oracle GraalVM for it
 - Test runs fall back to any installed Java of the right version when CurseForge hasn't installed one or it wasn't detected
+- You can launch and kill the test client from Mods, and start, restart and stop the test server from Server
+- Server and Run tell you when the test server stops on its own, such as when a mod crashes it
+- If the test server takes too long to stop, Stop server in the Server view turns into Kill server
+
+### Changed
+- Renamed the Test view to Run
 
 ### Fixed
 - Mod version locks set in packraven now properly lock in Curseforge

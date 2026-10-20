@@ -569,6 +569,29 @@ function emit(event: string, payload: unknown) {
   for (const l of listeners.filter((l) => l.event === event)) callbacks.get(l.handler)?.({ event, id: l.handler, payload })
 }
 
+// The mock's server and client stand in for processes: they run until you stop or kill them.
+let serverRunning = false
+let clientRunning = false
+
+function startMockServer() {
+  serverRunning = true
+  emit('test-event', { kind: 'server-started', detail: '' })
+  setTimeout(() => {
+    emit('job-log', { job: 'server', stream: 'info', text: 'Done (4.213s)! For help, type "help"' })
+    emit('test-event', { kind: 'server-ready', detail: '' })
+  }, 400)
+}
+
+function stopMockServer() {
+  serverRunning = false
+  emit('test-event', { kind: 'server-stopped', detail: '' })
+}
+
+function startMockClient() {
+  clientRunning = true
+  emit('test-event', { kind: 'client-started', detail: '' })
+}
+
 const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   list_packs: () => (scenario === 'nopack' ? { active: null, packs: [], instancesRoot: 'C:/Instances' } : { active: pack.dir, packs: [pack], instancesRoot: 'C:/Instances' }),
   overview: () => ({
@@ -591,13 +614,27 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     unpublishableJars: [],
     projectId: config.curseforge.project_id,
     runningJobs: [],
-    serverRunning: false,
-    clientRunning: false,
+    serverRunning,
+    clientRunning,
     hooks: 'current',
   }),
-  // The mock has no server or client to run, so a start only shows the preparing step's log.
-  start_test: () => mockJob('test', ['Syncing changed files to the test server folder'], 'Server starting', () => {}),
-  start_client: () => mockJob('client', ['Launching the client'], '', () => {}),
+  start_test: ({ connect }) =>
+    mockJob('test', ['Syncing changed files to the test server folder'], 'Server starting', () => {
+      startMockServer()
+      if (connect) startMockClient()
+    }),
+  start_client: () => mockJob('client', ['Launching the client'], '', startMockClient),
+  server_command: ({ line }) => {
+    emit('job-log', { job: 'server', stream: 'info', text: `> ${line}` })
+    if (line === 'stop') setTimeout(stopMockServer, 300)
+  },
+  kill_process: ({ which }) => {
+    if (which === 'server') stopMockServer()
+    else {
+      clientRunning = false
+      emit('test-event', { kind: 'client-stopped', detail: '' })
+    }
+  },
   accept_minecraft_eula: () => {
     eulaAccepted = true
   },

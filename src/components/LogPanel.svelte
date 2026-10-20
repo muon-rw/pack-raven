@@ -912,7 +912,7 @@
     color: var(--forest);
   }
 
-  /* A narrow pane, like the Test view's side-by-side logs, keeps its width for the message. */
+  /* A narrow pane, like the Run view's side-by-side logs, keeps its width for the message. */
   @container (max-width: 760px) {
     .thread,
     .logger {
