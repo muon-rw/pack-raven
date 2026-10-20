@@ -1,8 +1,10 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
+  import JavaPicker from '../components/JavaPicker.svelte'
   import { onMount } from 'svelte'
-  import { ask, open } from '@tauri-apps/plugin-dialog'
-  import { api, errorText, type PackConfig } from '../lib/api'
+  import { ask } from '@tauri-apps/plugin-dialog'
+  import { api, errorText, type PackConfig, type PackJavaDefault } from '../lib/api'
+  import { scanJava } from '../lib/java.svelte'
   import { serverView } from '../lib/nav.svelte'
 
   let {
@@ -18,6 +20,7 @@
   let configError: string | null = $state(null)
   let webhook = $state('')
   let packJava = $state('')
+  let javaDefault = $state<PackJavaDefault | null>(null)
   let message: string | null = $state(null)
   let messageFailed = $state(false)
   let discordMessage = $state<string | null>(null)
@@ -34,13 +37,21 @@
       webhook = (await api.getWebhook()) ?? ''
       packJava = (await api.getPackJava()) ?? ''
       configError = null
+      await loadJavaDefault()
     } catch (error) {
       config = null
       configError = errorText(error)
     }
   }
 
-  onMount(load)
+  async function loadJavaDefault() {
+    javaDefault = await api.packJavaDefault().catch(() => null)
+  }
+
+  onMount(() => {
+    scanJava()
+    load()
+  })
 
   async function save() {
     if (!config) return
@@ -71,11 +82,6 @@
     } finally {
       saving = false
     }
-  }
-
-  async function pickJava() {
-    const chosen = await open({ title: `Choose a Java executable for ${name}`, defaultPath: packJava || undefined })
-    if (typeof chosen === 'string') packJava = chosen
   }
 
   async function testWebhook() {
@@ -161,14 +167,22 @@
           While you're signed out of Minecraft, test runs are offline and the client joins under the offline username.
           <button type="button" class="link" onclick={onappsettings}>Sign in under App settings</button> to play as yourself.
         </p>
-        <div class="field">
-          <label for="pack-java">Java on this machine</label>
-          <div class="inline">
-            <input id="pack-java" bind:value={packJava} placeholder="The Java from App settings" aria-describedby="pack-java-hint" />
-            <button type="button" onclick={pickJava}>Choose</button>
-          </div>
-          <p class="hint" id="pack-java-hint">packraven uses this instead of the Java under App settings for this pack's test runs and server builds. packraven saves it only on this machine, never in the pack repo.</p>
-        </div>
+        {#if javaDefault}
+          <JavaPicker
+            id="pack-java"
+            label="Java on this machine (this pack needs Java {javaDefault.major})"
+            major={javaDefault.major}
+            bind:value={packJava}
+            defaultName="Same as App settings"
+            defaultPath={javaDefault.path}
+            needed
+            hint="pack-java-hint"
+            ondownload={loadJavaDefault}
+          />
+          <p class="hint" id="pack-java-hint">
+            packraven uses this Java for the pack's test runs and server builds, and saves your choice only on this machine, never in the pack repo. To choose a Java for every pack, open <button type="button" class="link" onclick={onappsettings}>App settings</button>.
+          </p>
+        {/if}
       </section>
 
       <section>

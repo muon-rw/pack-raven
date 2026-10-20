@@ -352,3 +352,13 @@ test("installing a mod marks the dependencies it brings as installing", async ({
   await page.getByRole('button', { name: /^Install all/ }).click()
   await expect(page.getByRole('button', { name: /^(Cancel installing|Installing) Create$/ })).toContainText('Installing')
 })
+
+test('downloading GraalVM fills a Java version nobody has installed', async ({ page }) => {
+  await openApp(page, 'settings', 'dirty')
+  const slot = page.locator('.java', { has: page.locator('#java-25') })
+  await expect(page.locator('#java-25 option:checked')).toHaveText('Automatic: no Java 25 found')
+  await expect(slot).toContainText('None of your packs need it yet.')
+  await slot.getByRole('button', { name: 'Download GraalVM 25' }).click()
+  await expect(slot.getByRole('status')).toHaveText('Downloaded GraalVM 25.0.4. packraven now uses it for Java 25.')
+  await expect(page.locator('#java-25 option:checked')).toHaveText('Automatic: GraalVM 25.0.4 · downloaded by packraven')
+})

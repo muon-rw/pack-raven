@@ -28,7 +28,7 @@ fn client_running(state: &AppState) -> bool {
 #[tauri::command]
 pub async fn installed_mods(state: State<'_, AppState>) -> CmdResult<InstalledMods> {
     let mut pack = state.pack().map_err(err)?;
-    crate::instance_locks::sync(&mut pack, &state.curseforge_locks_path()).map_err(err)?;
+    sync_locks(&state, &mut pack).map_err(err)?;
     let mut cache = MetadataCache::load(&state.cache_path());
     let mods = mod_updates::installed(&pack, &mut cache).await;
     cache.save(&state.cache_path()).map_err(err)?;
@@ -76,7 +76,11 @@ pub async fn preview_mods(state: State<'_, AppState>, requests: Vec<ModRequest>)
     Ok(ModPreview { dependencies: plan.dependencies, unavailable: plan.unavailable, projects })
 }
 
-#[tauri::command]
+fn sync_locks(state: &AppState, pack: &mut Pack) -> anyhow::Result<()> {
+    crate::instance_locks::sync(pack, &state.curseforge_locks_path(), &crate::instance_locks::CurseForgeApp::detect())
+}
+
+#[tauri::command(async)]
 pub fn set_mod_locked(state: State<'_, AppState>, project_id: u64, locked: bool) -> CmdResult<()> {
     let mut pack = state.pack().map_err(err)?;
     let list = &mut pack.config.updates.locked;
@@ -86,7 +90,7 @@ pub fn set_mod_locked(state: State<'_, AppState>, project_id: u64, locked: bool)
         list.sort_unstable();
     }
     pack.save_config().map_err(err)?;
-    crate::instance_locks::sync(&mut pack, &state.curseforge_locks_path()).map_err(err)
+    sync_locks(&state, &mut pack).map_err(err)
 }
 
 #[tauri::command]

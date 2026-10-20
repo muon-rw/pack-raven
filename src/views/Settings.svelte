@@ -1,12 +1,14 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
   import CredentialField from '../components/CredentialField.svelte'
+  import JavaPicker from '../components/JavaPicker.svelte'
   import { onMount, tick } from 'svelte'
   import { open } from '@tauri-apps/plugin-dialog'
   import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { api, errorText, type CredentialsView, type DefenderView, type MinecraftAccount, type Settings, type UpdateView } from '../lib/api'
   import { installNow, selfUpdate, updateWaiting } from '../lib/selfUpdate.svelte'
+  import { javas, scanJava } from '../lib/java.svelte'
 
   let { onchange, onaccount }: { onchange: () => void; onaccount: () => void } = $props()
 
@@ -132,6 +134,7 @@
   }
 
   onMount(async () => {
+    scanJava()
     await load()
     autostart = await isEnabled().catch(() => false)
   })
@@ -147,11 +150,6 @@
     { major: '25', versions: 'Minecraft 26.1 and later (Java 25)' },
   ]
 
-  async function pickJava(major: string) {
-    const chosen = await open({ title: `Choose a Java ${major} executable`, defaultPath: settings?.javaByMajor[major] || undefined })
-    if (typeof chosen === 'string' && settings) settings.javaByMajor[major] = chosen
-  }
-
   async function save() {
     if (!settings) return
     saving = true
@@ -162,6 +160,7 @@
       const javaByMajor = Object.fromEntries(Object.entries(settings.javaByMajor).map(([major, java]) => [major, java.trim()]).filter(([, java]) => java))
       await api.saveSettings({ ...settings, javaByMajor, editorAskMb, editorMaxMb })
       await load()
+      scanJava()
       onchange()
       messageFailed = false
       identityMessage = null
@@ -433,22 +432,32 @@
     <section>
       <h3>Java</h3>
       <p class="muted">
-        Default: Use CurseForge's Java version for your pack. You can pick a different Java than Minecraft officially
-        supports, like Java 25 for every version, but some mods may not work. Also overrideable in Pack settings.
+        On Automatic, we use CurseForge's Java for each version, or another Java of that version on this computer. A newer Java runs most packs from
+        Minecraft 1.18 on, though some mods may break. To use a different Java for one pack, choose it in Pack settings.
       </p>
       {#each JAVA_SLOTS as slot (slot.major)}
-        <div class="path">
-          <label>
-            {slot.versions}
-            <input
-              value={settings.javaByMajor[slot.major] ?? ''}
-              oninput={(e) => (settings!.javaByMajor[slot.major] = e.currentTarget.value)}
-              placeholder="CurseForge's Java {slot.major}"
-            />
-          </label>
-          <button type="button" onclick={() => pickJava(slot.major)}>Choose</button>
-        </div>
+        <JavaPicker
+          id="java-{slot.major}"
+          label={slot.versions}
+          major={Number(slot.major)}
+          bind:value={() => settings!.javaByMajor[slot.major] ?? '', (path) => (settings!.javaByMajor[slot.major] = path)}
+          defaultName="Automatic"
+          defaultPath={javas.scan?.automatic[slot.major] ?? null}
+          needed={javas.scan?.needed.includes(Number(slot.major)) ?? false}
+          ondownload={(java) => {
+            // The backend only chooses a download for a slot when Automatic wouldn't pick it, like GraalVM 21 for Java 17.
+            if (java.major !== Number(slot.major)) settings!.javaByMajor[slot.major] = java.path
+          }}
+        />
       {/each}
+      <p class="muted hint java-scan" role="status">
+        {#if javas.error}
+          <span class="failed">Couldn't look for Java: {javas.error}</span>
+        {:else if javas.scan}
+          {javas.scan.installs.length === 1 ? '1 Java install' : `${javas.scan.installs.length} Java installs`} found on this computer.
+        {/if}
+        <button type="button" class="link" disabled={javas.scanning} onclick={scanJava}>{javas.scanning ? 'Looking' : 'Look again'}</button>
+      </p>
     </section>
 
     <section>

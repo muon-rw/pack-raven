@@ -257,6 +257,28 @@ async fn git_installer_download_matches_checksum() {
     std::fs::remove_file(installer).unwrap();
 }
 
+#[test]
+#[ignore]
+fn detects_java_on_this_computer() {
+    for java in crate::java::detect(&Settings::default().install_dir) {
+        println!("{:>2} {:<10} {:<18} {:?} {}", java.major, java.version, java.distribution, java.source, java.path.display());
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn downloads_graalvm() {
+    let dir = scratch().join("java");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = crate::java::DOWNLOAD_DIR.set(dir.clone());
+    let java = crate::java::download_graalvm(25, |received, total| println!("{received} of {total:?}")).await.unwrap();
+    println!("{java:?}");
+    assert_eq!(java.major, 25);
+    assert!(java.path.starts_with(&dir));
+    let output = std::process::Command::new(&java.path).arg("-version").output().unwrap();
+    assert!(output.status.success());
+}
+
 // Installs an older Apotheosis into a fresh repo, then updates it, which also pulls in its
 // required dependencies.
 #[tokio::test]

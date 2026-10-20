@@ -415,12 +415,7 @@ pub fn server_args(pack: &Pack, dir: &Path) -> Result<Vec<String>> {
 fn server_graalvm(pack: &Pack) -> Result<Option<String>> {
     let configured = pack.config.server.graalvm.trim();
     if configured.is_empty() {
-        // GraalVM 21 runs everything that needs Java 17, and faster than Java 17 does.
-        return Ok(match crate::launch::java_for_minecraft(pack.lock.minecraft()?).1 {
-            17 | 21 => Some("21".into()),
-            25 => Some("25".into()),
-            _ => None,
-        });
+        return Ok(crate::java::graalvm_for(crate::launch::java_for_minecraft(pack.lock.minecraft()?).1).map(|major| major.to_string()));
     }
     let parts: Vec<&str> = configured.split('.').collect();
     let valid = parts.len() <= 3 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) && parts[0].parse::<u32>().is_ok_and(|major| major >= 17);

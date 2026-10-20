@@ -2,6 +2,17 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- Improved search within log view, adding jump-to and surrounding lines.
+- Java settings list the Javas packraven finds on this computer (CurseForge, JAVA_HOME, PATH, installed JDKs, IntelliJ, Gradle, Prism and Modrinth), so you pick one instead of typing a path
+- When no Java of a version a pack needs is installed, packraven offers to download Oracle GraalVM for it
+- Test runs fall back to any installed Java of the right version when CurseForge hasn't installed one or it wasn't detected
+
+### Fixed
+- Mod version locks set in packraven now properly lock in Curseforge
+- Opening or refreshing an instance in CurseForge no longer clears locks you only set in packraven
+
 ## [0.1.1] - 2026-10-20
 
 ### Added

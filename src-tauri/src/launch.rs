@@ -142,9 +142,14 @@ fn console_java(path: PathBuf) -> PathBuf {
 }
 
 pub fn java(settings: &Settings) -> Result<PathBuf> {
-    if let Some(java) = settings.pack_java(&settings.instance_dir) {
-        return Ok(java.clone());
+    match settings.pack_java(&settings.instance_dir) {
+        Some(java) => Ok(java.clone()),
+        None => app_java(settings),
     }
+}
+
+/// Returns the Java the selected pack runs on when Pack settings doesn't choose one.
+pub fn app_java(settings: &Settings) -> Result<PathBuf> {
     let (component, major) = required_java(settings);
     if let Some(java) = settings.java_by_major.get(&major) {
         return Ok(java.clone());
@@ -167,10 +172,13 @@ pub fn java(settings: &Settings) -> Result<PathBuf> {
             return Ok(java);
         }
     }
-    anyhow::bail!("CurseForge hasn't installed Java {major} for this pack yet. Launch the pack once from CurseForge, or choose a Java {major} in App settings or a Java for this pack in Pack settings.")
+    if let Some(java) = crate::java::automatic(&crate::java::detect(&settings.install_dir), major) {
+        return Ok(java.path.clone());
+    }
+    anyhow::bail!("This pack needs Java {major}, and packraven didn't find one on this computer. Download or choose a Java {major} under App settings, or launch the pack once from CurseForge so it installs one.")
 }
 
-fn required_java(settings: &Settings) -> (String, u32) {
+pub fn required_java(settings: &Settings) -> (String, u32) {
     let minecraft = std::fs::read_to_string(settings.instance_dir.join("minecraftinstance.json"))
         .ok()
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())

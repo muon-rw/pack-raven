@@ -16,6 +16,33 @@ export interface Settings {
   autoUpdate: boolean
 }
 
+export type JavaSource = 'curseForge' | 'packraven' | 'javaHome' | 'path' | 'system' | 'intelliJ' | 'gradle' | 'prism' | 'modrinth'
+
+export interface JavaInstall {
+  path: string
+  major: number
+  version: string
+  distribution: string
+  source: JavaSource
+  foreignArch: string | null
+}
+
+export interface JavaScan {
+  installs: JavaInstall[]
+  // The Java packraven picks for each Java version you haven't chosen one for, keyed by major version.
+  automatic: Record<string, string>
+  // The GraalVM version packraven can download for each Java version.
+  downloads: Record<string, number>
+  // The Java versions the packs you added need.
+  needed: number[]
+}
+
+export interface PackJavaDefault {
+  major: number
+  path: string | null
+  error: string | null
+}
+
 export type UpdatePhase =
   | { phase: 'unchecked' | 'checking' | 'upToDate' }
   | { phase: 'available' | 'ready'; version: string }
@@ -367,6 +394,10 @@ export const api = {
   setIconTheme: (dark: boolean) => invoke<void>('set_icon_theme', { dark }),
   getPackJava: () => invoke<string | null>('get_pack_java'),
   setPackJava: (java: string | null) => invoke<void>('set_pack_java', { java }),
+  packJavaDefault: () => invoke<PackJavaDefault>('pack_java_default'),
+  scanJava: () => invoke<JavaScan>('scan_java'),
+  downloadJava: (major: number) => invoke<JavaInstall>('download_java', { major }),
+  cancelJavaDownload: (graalvm: number) => invoke<void>('cancel_java_download', { graalvm }),
   getServerIcon: () => invoke<string | null>('get_server_icon'),
   setServerIcon: (image: string) => invoke<string | null>('set_server_icon', { image }),
   useProjectLogoAsServerIcon: () => invoke<string | null>('use_project_logo_as_server_icon'),

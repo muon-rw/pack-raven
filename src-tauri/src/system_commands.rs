@@ -1,8 +1,9 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use serde::Serialize;
 use tauri::image::Image;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::AppState;
 use crate::credentials::{self, Credential, CredentialStatus};
@@ -72,6 +73,86 @@ pub fn git_version() -> Option<String> {
 #[tauri::command]
 pub async fn install_git() -> CmdResult<String> {
     crate::git_install::install().await.map_err(|e| format!("{e:#}"))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JavaScan {
+    installs: Vec<crate::java::JavaInstall>,
+    automatic: BTreeMap<u32, PathBuf>,
+    downloads: BTreeMap<u32, u32>,
+    needed: BTreeSet<u32>,
+}
+
+#[tauri::command]
+pub async fn scan_java(state: State<'_, AppState>) -> CmdResult<JavaScan> {
+    let settings = state.settings();
+    tauri::async_runtime::spawn_blocking(move || {
+        let installs = crate::java::detect(&settings.install_dir);
+        let automatic = installs.iter().filter_map(|java| Some((java.major, crate::java::automatic(&installs, java.major)?.path.clone()))).collect();
+        let needed = settings
+            .packs
+            .iter()
+            .map(|pack| crate::launch::required_java(&crate::settings::Settings { instance_dir: pack.clone(), ..settings.clone() }).1)
+            .collect();
+        JavaScan { installs, automatic, downloads: crate::java::downloads(), needed }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct JavaDownloadProgress {
+    graalvm: u32,
+    received: u64,
+    total: Option<u64>,
+}
+
+#[tauri::command]
+pub async fn download_java(app: AppHandle, state: State<'_, AppState>, major: u32) -> CmdResult<crate::java::JavaInstall> {
+    let graalvm = crate::java::graalvm_for(major).unwrap_or(major);
+    let progress = |received, total| {
+        let _ = app.emit("java-download", JavaDownloadProgress { graalvm, received, total });
+    };
+    let java = crate::java::download_graalvm(major, progress).await.map_err(|e| format!("{e:#}"))?;
+    // Automatic picks up a download of the same version. Java 17 gets GraalVM 21, which Automatic
+    // won't choose for Java 17 packs, so we choose it for that version under App settings.
+    if java.major != major {
+        state
+            .update_settings(|s| {
+                s.java_by_major.insert(major, java.path.clone());
+            })
+            .map_err(|e| format!("{e:#}"))?;
+    }
+    Ok(java)
+}
+
+#[tauri::command]
+pub fn cancel_java_download(graalvm: u32) {
+    crate::java::cancel_download(graalvm);
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackJavaDefault {
+    major: u32,
+    path: Option<PathBuf>,
+    error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn pack_java_default(state: State<'_, AppState>) -> CmdResult<PackJavaDefault> {
+    let settings = state.settings();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_, major) = crate::launch::required_java(&settings);
+        match crate::launch::app_java(&settings) {
+            Ok(path) => PackJavaDefault { major, path: Some(path), error: None },
+            Err(error) => PackJavaDefault { major, path: None, error: Some(format!("{error:#}")) },
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]

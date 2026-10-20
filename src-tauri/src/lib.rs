@@ -15,6 +15,7 @@ mod files;
 mod git;
 mod git_commands;
 mod git_install;
+mod java;
 mod history;
 mod gitops;
 mod http;
@@ -117,6 +118,7 @@ pub fn run() {
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let settings_path = config_dir.join("settings.json");
+            let _ = java::DOWNLOAD_DIR.set(app.path().app_data_dir()?.join("java"));
             app.manage(AppState {
                 settings: Mutex::new(Settings::load(&settings_path)),
                 settings_path,
@@ -273,6 +275,10 @@ pub fn run() {
             minecraft_commands::set_minecraft_online_mode,
             system_commands::git_version,
             system_commands::install_git,
+            system_commands::scan_java,
+            system_commands::download_java,
+            system_commands::cancel_java_download,
+            system_commands::pack_java_default,
             system_commands::credentials_status,
             system_commands::credential_store,
             system_commands::credential_use_env,

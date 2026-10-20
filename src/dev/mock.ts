@@ -469,6 +469,18 @@ function mockServerIcon() {
 let serverIcon: string | null = scenario === 'empty' ? null : 'pending'
 // A fresh setup hasn't accepted the Minecraft EULA or signed in to Minecraft yet.
 let eulaAccepted = scenario !== 'empty'
+const javaByMajor: Record<string, string> = {}
+let javaDownloadCancelled = false
+// A machine with CurseForge's Java 17 and 21, a few JDKs of its own, and no Java 25.
+const mockJavas = [
+  { path: 'C:/curseforge/minecraft/Install/java/java-runtime-delta/bin/java.exe', major: 21, version: '21.0.8', distribution: 'Temurin', source: 'curseForge', foreignArch: null },
+  { path: 'C:/Program Files/Java/graalvm-jdk-21.0.7+8.1/bin/java.exe', major: 21, version: '21.0.7', distribution: 'GraalVM', source: 'path', foreignArch: null },
+  { path: 'C:/Program Files/Eclipse Adoptium/jdk-21.0.1.12-hotspot/bin/java.exe', major: 21, version: '21.0.1', distribution: 'Temurin', source: 'system', foreignArch: null },
+  { path: 'C:/Users/you/.jdks/corretto-19.0.2/bin/java.exe', major: 19, version: '19.0.2', distribution: 'Corretto', source: 'intelliJ', foreignArch: null },
+  { path: 'C:/curseforge/minecraft/Install/java/java-runtime-gamma/bin/java.exe', major: 17, version: '17.0.8', distribution: 'Temurin', source: 'curseForge', foreignArch: null },
+  { path: 'C:/Program Files/Eclipse Adoptium/jdk-17.0.16.8-hotspot/bin/java.exe', major: 17, version: '17.0.16', distribution: 'Temurin', source: 'javaHome', foreignArch: null },
+  { path: 'C:/Users/you/.gradle/jdks/eclipse_adoptium-17-amd64-windows/jdk-17.0.16+8/bin/java.exe', major: 17, version: '17.0.16', distribution: 'Temurin', source: 'gradle', foreignArch: null },
+]
 let minecraftAccount: { name: string; uuid: string } | null = scenario === 'empty' ? null : { name: 'muonr', uuid: '0f6c1e5a2b3d4c5e8f9a0b1c2d3e4f50' }
 let onlineMode = true
 let autoUpdate = true
@@ -606,7 +618,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   set_minecraft_online_mode: ({ online }) => {
     onlineMode = online as boolean
   },
-  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: {}, defenderExcluded: [], defenderDismissed: false, minecraftEulaAccepted: eulaAccepted, minecraftOnlineMode: onlineMode, editorAskMb: 50, editorMaxMb: 100, gitName: '', gitEmail: '', autoUpdate }),
+  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: { ...javaByMajor }, defenderExcluded: [], defenderDismissed: false, minecraftEulaAccepted: eulaAccepted, minecraftOnlineMode: onlineMode, editorAskMb: 50, editorMaxMb: 100, gitName: '', gitEmail: '', autoUpdate }),
   update_status: () => updateView(),
   check_for_update: () => updateView(),
   install_update: () => {
@@ -820,6 +832,31 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   discohook_link: () => 'https://discohook.app/?share=example',
   discohook_preview: () => 'https://discohook.app/?share=example',
   get_pack_java: () => null,
+  pack_java_default: () => ({ major: 21, path: javaByMajor['21'] ?? mockJavas.find((j) => j.major === 21)?.path ?? null, error: null }),
+  scan_java: () => ({
+    installs: mockJavas,
+    automatic: Object.fromEntries([...new Set(mockJavas.map((j) => j.major))].map((major) => [major, mockJavas.find((j) => j.major === major)!.path])),
+    downloads: { 17: 21, 21: 21, 25: 25 },
+    needed: [21],
+  }),
+  // Plays a short download so you can see the progress bar, then adds GraalVM as if it had unpacked.
+  download_java: async ({ major }) => {
+    const graalvm = major === 25 ? 25 : 21
+    const total = 324_662_676
+    javaDownloadCancelled = false
+    for (let step = 1; step <= 20; step++) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      if (javaDownloadCancelled) throw 'Download cancelled.'
+      emit('java-download', { graalvm, received: (total * step) / 20, total })
+    }
+    const java = { path: `C:/Users/you/AppData/Roaming/dev.muon.packraven/java/graalvm-jdk-${graalvm}.0.4+7.1/bin/java.exe`, major: graalvm, version: `${graalvm}.0.4`, distribution: 'GraalVM', source: 'packraven', foreignArch: null }
+    mockJavas.unshift(java)
+    if (graalvm !== major) javaByMajor[String(major)] = java.path
+    return java
+  },
+  cancel_java_download: () => {
+    javaDownloadCancelled = true
+  },
   set_icon_theme: () => null,
   'plugin:window|set_theme': () => null,
   'plugin:autostart|is_enabled': () => false,
