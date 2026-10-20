@@ -1,8 +1,8 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
   import { errorText } from '../lib/api'
-  import type { Level, LogModel } from '../lib/logs'
-  import { shortcut } from '../lib/platform'
+  import type { Head, Level, LogModel } from '../lib/logs'
+  import { isMac, shortcut } from '../lib/platform'
   import ContextMenu from './ContextMenu.svelte'
   import type { MenuItem } from '../lib/menu'
 
@@ -39,12 +39,17 @@
     { level: 'info', label: 'Info' },
     { level: 'debug', label: 'Debug' },
   ]
+  const CONTEXT_CHOICES = [0, 1, 2, 3, 5, 10, 25]
+  const CONTEXT_KEY = 'packraven.logContext'
+  const BACK_KEYS = isMac ? 'Option+Left' : 'Alt+Left'
 
   const collapsed = new Set<number>()
   let foldVersion = $state(0)
   let note = $state<string | null>(null)
   let shown = $state<Record<Level, boolean>>({ error: true, warn: true, info: true, debug: true, none: true })
   let query = $state('')
+  let leftQuery = $state('')
+  let context = $state(storedContext())
   let scrollTop = $state(0)
   let viewportHeight = $state(0)
   let pinned = $state(true)
@@ -101,20 +106,49 @@
     return entries
   })
 
-  let rows = $derived.by(() => {
+  // Like grep -C, context counts the lines the level filters and folds leave showing, and a line
+  // that starts a new run after skipped ones goes in `breaks` so we can mark the gap.
+  let view = $derived.by(() => {
     void version
     void generation
     void foldVersion
-    const out: number[] = []
+    const visible: number[] = []
     for (let i = 0; i < model.lines.length; i++) {
       const entry = model.lineEntry[i]
       if (!shown[model.entries[entry].level]) continue
-      if (matching && !matching[entry]) continue
       if (i !== model.entries[entry].start && collapsed.has(entry)) continue
-      out.push(i)
+      visible.push(i)
     }
-    return out
+    const breaks = new Set<number>()
+    if (!matching) return { rows: visible, breaks }
+    const hit = (k: number) => matching[model.lineEntry[visible[k]]] === 1
+    const near = new Uint8Array(visible.length)
+    for (let k = 0, after = 0; k < visible.length; k++) {
+      if (hit(k)) {
+        near[k] = 1
+        after = context
+      } else if (after > 0) {
+        near[k] = 1
+        after--
+      }
+    }
+    for (let k = visible.length - 1, before = 0; k >= 0; k--) {
+      if (hit(k)) {
+        before = context
+      } else if (before > 0) {
+        near[k] = 1
+        before--
+      }
+    }
+    const rows: number[] = []
+    for (let k = 0; k < visible.length; k++) {
+      if (!near[k]) continue
+      if (context && rows.length && !near[k - 1]) breaks.add(visible[k])
+      rows.push(visible[k])
+    }
+    return { rows, breaks }
   })
+  let rows = $derived(view.rows)
 
   let first = $derived(Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN))
   let last = $derived(Math.min(rows.length, Math.ceil((scrollTop + viewportHeight) / ROW) + OVERSCAN))
@@ -129,6 +163,8 @@
     return { ...model.counts }
   })
   let matchCount = $derived(matching ? matching.reduce((sum, hit) => sum + hit, 0) : 0)
+  let selectedShown = $derived(selected !== null && rows.includes(selected))
+  let levelsHidden = $derived(FILTERS.some(({ level }) => !shown[level] && counts[level]))
 
   // Scroll events arrive a frame later, so when we scroll we record the position ourselves and
   // render the right rows straight away.
@@ -178,6 +214,7 @@
     void shown.info
     void shown.debug
     void needle
+    void context
     void foldVersion
     untrack(async () => {
       await tick()
@@ -193,6 +230,17 @@
     if (top < viewport.scrollTop || top + ROW > viewport.scrollTop + viewport.clientHeight) {
       scrollTo(Math.max(0, top - viewport.clientHeight / 3))
     }
+    if (needle) revealMark()
+  }
+
+  // A match can sit past the right edge of a long line, so we scroll sideways to it.
+  async function revealMark() {
+    await tick()
+    const mark = viewport?.querySelector<HTMLElement>('.row.selected mark')
+    if (!mark) return
+    const box = viewport.getBoundingClientRect()
+    const at = mark.getBoundingClientRect()
+    if (at.left < box.left || at.right > box.right) viewport.scrollLeft += at.left - box.left - box.width / 3
   }
 
   // Picking a line in a live log stops following, so new lines don't scroll it away.
@@ -236,6 +284,101 @@
     }
   }
 
+  function isHit(line: number) {
+    return matching !== null && matching[model.lineEntry[line]] === 1
+  }
+
+  // We remember the filter you leave, so you can go back to the other matches.
+  function leaveFilter() {
+    if (!query) return
+    leftQuery = query
+    query = ''
+    spoken = `Filter cleared. Press ${BACK_KEYS} to go back to “${leftQuery}”.`
+  }
+
+  function setQuery(text: string) {
+    query = text
+    leftQuery = ''
+  }
+
+  function showInFullLog(line: number) {
+    shown[model.entries[model.lineEntry[line]].level] = true
+    leaveFilter()
+    selected = line
+    pinned = false
+    spoken = `Showing line ${line + 1} in the full log. Press ${BACK_KEYS} to go back to “${leftQuery}”.`
+  }
+
+  // We skip the typing pause so the matches are there to select straight away.
+  async function applyFilterNow() {
+    needle = query.trim().toLowerCase()
+    await tick()
+  }
+
+  // If the line you moved to in the full log is filtered out, we select the nearest line above it.
+  async function backToFilter() {
+    if (!leftQuery) return
+    setQuery(leftQuery)
+    await applyFilterNow()
+    viewport.focus({ preventScroll: true })
+    if (selected === null || !rows.length || rows.includes(selected)) return
+    const at = Math.max(0, rows.findLastIndex((line) => line < selected!))
+    select(rows[at])
+    reveal(at)
+  }
+
+  // Enter in the filter field moves to the results, starting at the first match.
+  async function enterResults() {
+    await applyFilterNow()
+    if (!rows.length) return
+    const current = selected !== null ? rows.indexOf(selected) : -1
+    const at = current >= 0 ? current : Math.max(0, rows.findIndex(isHit))
+    select(rows[at])
+    pinned = false
+    viewport.focus({ preventScroll: true })
+    reveal(at)
+    announce(rows[at])
+  }
+
+  function onFilterKey(event: KeyboardEvent) {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      enterResults()
+    } else if (event.key === 'Escape' && query) {
+      event.preventDefault()
+      leaveFilter()
+    }
+  }
+
+  function showAllLevels() {
+    for (const { level } of FILTERS) shown[level] = true
+  }
+
+  // Matches in the thread or logger columns have nothing to highlight in the message, and a narrow
+  // pane hides those columns, so we name the column that matched.
+  function matchedColumn(head: Head) {
+    if (!needle || head.message.toLowerCase().includes(needle)) return null
+    if (`${head.logger}/${head.marker}`.toLowerCase().includes(needle)) return { column: 'logger', shownWide: shortLogger(head.logger).toLowerCase().includes(needle) }
+    if (head.thread.toLowerCase().includes(needle)) return { column: 'thread', shownWide: true }
+    return null
+  }
+
+  function storedContext() {
+    try {
+      const stored = Number(localStorage.getItem(CONTEXT_KEY))
+      return CONTEXT_CHOICES.includes(stored) ? stored : 0
+    } catch {
+      return 0
+    }
+  }
+
+  function setContext(lines: number) {
+    context = lines
+    try {
+      localStorage.setItem(CONTEXT_KEY, String(lines))
+    } catch {}
+  }
+
   function jumpToLatest() {
     pinned = true
     selected = null
@@ -256,7 +399,8 @@
   }
 
   function announce(line: number) {
-    spoken = `Line ${line + 1}: ${model.lines[line]}`
+    const kind = !matching || !context ? '' : `${isHit(line) ? 'Match' : 'Context'}${view.breaks.has(line) ? ' after skipped lines' : ''}, `
+    spoken = `${kind}Line ${line + 1}: ${model.lines[line]}`
   }
 
   function onKey(event: KeyboardEvent) {
@@ -282,11 +426,17 @@
       const row = viewport.querySelector<HTMLElement>('.row.selected')?.getBoundingClientRect()
       const box = viewport.getBoundingClientRect()
       openMenu(row ? row.left + 80 : box.left + 40, row ? row.bottom : box.top + 40, selected)
+    } else if (selected !== null && needle && event.key === 'Enter') {
+      event.preventDefault()
+      showInFullLog(selected)
     } else if (selected !== null && command && event.key.toLowerCase() === 'c' && window.getSelection()?.isCollapsed !== false) {
       event.preventDefault()
       copy(model.lines[selected])
     } else if (event.key === 'Escape' && query) {
-      query = ''
+      leaveFilter()
+    } else if (event.altKey && event.key === 'ArrowLeft' && !query && leftQuery) {
+      event.preventDefault()
+      backToFilter()
     }
   }
 
@@ -313,10 +463,11 @@
       x,
       y,
       items: [
-        { label: 'Copy line', run: () => copy(model.lines[line]) },
+        ...(needle ? [{ label: 'Show in full log', shortcut: 'Enter', run: () => showInFullLog(line) }, 'separator' as const] : []),
+        { label: 'Copy line', shortcut: shortcut('Ctrl+C'), run: () => copy(model.lines[line]) },
         ...(lines > 1 ? [{ label: `Copy entry (${lines} lines)`, run: () => copy(entryText(entry)) }] : []),
         'separator',
-        ...(logger ? [{ label: `Filter to ${shortLogger(logger)}`, run: () => (query = logger) }] : []),
+        ...(logger ? [{ label: `Filter to ${shortLogger(logger)}`, run: () => setQuery(logger) }] : []),
       ],
     }
   }
@@ -350,26 +501,44 @@
   <div class="bar">
     <span class="levels" role="group" aria-label="Show levels">
       {#each FILTERS as { level, label: filterLabel } (level)}
-        <button class="filter {level}" aria-pressed={shown[level]} disabled={!counts[level] && !loading} onclick={() => toggleLevel(level)}>
-          {filterLabel} <span class="count">{counts[level].toLocaleString()}</span>
-        </button>
+        <span class="level-group">
+          <button class="filter {level}" aria-pressed={shown[level]} disabled={!counts[level] && !loading} onclick={() => toggleLevel(level)}>
+            {filterLabel} <span class="count">{counts[level].toLocaleString()}</span>
+          </button>
+          {#if level === 'error'}
+            <button class="ghost" aria-label="Previous error" title="Previous error (Shift+F8)" disabled={!counts.error} onclick={() => stepError(-1)}>
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 7.5l3-3 3 3" /></svg>
+            </button>
+            <button class="ghost" aria-label="Next error" title="Next error (F8)" disabled={!counts.error} onclick={() => stepError(1)}>
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg>
+            </button>
+          {/if}
+        </span>
       {/each}
-      <span class="step">
-        <button class="ghost" aria-label="Previous error" title="Previous error (Shift+F8)" disabled={!counts.error} onclick={() => stepError(-1)}>↑</button>
-        <button class="ghost" aria-label="Next error" title="Next error (F8)" disabled={!counts.error} onclick={() => stepError(1)}>↓</button>
-      </span>
     </span>
     <span class="search">
       <input
         bind:this={filterField}
         bind:value={query}
+        oninput={() => (leftQuery = '')}
+        onkeydown={onFilterKey}
         type="search"
         placeholder="Filter lines"
         aria-label="Filter {label.toLowerCase()}"
-        title="Filter lines ({shortcut('Ctrl+F')})"
+        title="Filter lines ({shortcut('Ctrl+F')}). Press Enter to go to the matches."
         spellcheck="false"
       />
-      {#if needle}<span class="muted small">{matchCount.toLocaleString()} {matchCount === 1 ? 'entry' : 'entries'}</span>{/if}
+      {#if needle}
+        <select class="context" value={context} onchange={(e) => setContext(Number(e.currentTarget.value))} aria-label="Lines to show around each match" title="Lines to show around each match">
+          {#each CONTEXT_CHOICES as lines (lines)}<option value={lines}>{lines ? `± ${lines} ${lines === 1 ? 'line' : 'lines'}` : 'Matches only'}</option>{/each}
+        </select>
+      {/if}
+      <span class="muted small" aria-live="polite">{needle ? `${matchCount.toLocaleString()} ${matchCount === 1 ? 'entry' : 'entries'}` : ''}</span>
+      {#if needle && selectedShown}
+        <button class="link small" title="Show this line among all lines (Enter or double-click)" onclick={() => selected !== null && showInFullLog(selected)}>Show in full log</button>
+      {:else if !query && leftQuery}
+        <button class="link small back" title="Back to “{leftQuery}” ({BACK_KEYS})" aria-label="Back to filter “{leftQuery}”" onclick={backToFilter}>Back to “{leftQuery}”</button>
+      {/if}
     </span>
   </div>
   {#if note}<p class="note failed small">{note}</p>{/if}
@@ -401,8 +570,12 @@
             class:app={entry.stream === 'info'}
             class:start
             class:selected={selected === line}
+            class:context={matching && !matching[entryIndex]}
+            class:hit={matching && context && matching[entryIndex]}
+            class:gap={view.breaks.has(line)}
             style:top="{(first + k) * ROW}px"
             onclick={() => select(line)}
+            ondblclick={() => needle && (window.getSelection()?.removeAllRanges(), showInFullLog(line))}
             oncontextmenu={(e) => onRowMenu(e, line)}
           >
             <span class="number">{line + 1}</span>
@@ -416,8 +589,10 @@
             {#if start && entry.head}
               <span class="time">{entry.head.time}</span>
               <span class="level">{entry.head.level}</span>
-              <span class="thread" title={entry.head.thread}>{entry.head.thread}</span>
-              {#if entry.head.logger}<span class="logger" title={[entry.head.logger, entry.head.marker].filter(Boolean).join(' / ')}>{shortLogger(entry.head.logger)}</span>{/if}
+              {@const found = matchedColumn(entry.head)}
+              <span class="thread" title={entry.head.thread}>{@render marked(entry.head.thread)}</span>
+              {#if entry.head.logger}<span class="logger" title={[entry.head.logger, entry.head.marker].filter(Boolean).join(' / ')}>{@render marked(shortLogger(entry.head.logger))}</span>{/if}
+              {#if found}<span class="found-in" class:shown-wide={found.shownWide} title={found.column === 'logger' ? [entry.head.logger, entry.head.marker].filter(Boolean).join(' / ') : entry.head.thread}>in {found.column}</span>{/if}
               <span class="message">{@render marked(entry.head.message)}</span>
               {#if extra && folded(entryIndex)}<span class="hidden-lines">{extra} more {extra === 1 ? 'line' : 'lines'}</span>{/if}
             {:else}
@@ -429,7 +604,17 @@
       {#if loading}
         <p class="empty muted">Reading the log…</p>
       {:else if !rows.length}
-        <p class="empty muted">{model.lines.length ? 'No lines match these filters.' : empty}</p>
+        <p class="empty muted">
+          {#if !model.lines.length}
+            {empty}
+          {:else if needle}
+            No lines match “{query.trim()}”{levelsHidden ? ' at the levels shown' : ''}.
+            <button class="link" onclick={() => setQuery('')}>Clear filter</button>
+            {#if levelsHidden}<button class="link" onclick={showAllLevels}>Show all levels</button>{/if}
+          {:else}
+            No lines at the levels shown. <button class="link" onclick={showAllLevels}>Show all levels</button>
+          {/if}
+        </p>
       {/if}
     </div>
     {#if live && !pinned}
@@ -472,7 +657,7 @@
 
   .levels,
   .search,
-  .step {
+  .level-group {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -482,8 +667,8 @@
     flex-wrap: wrap;
   }
 
-  .step {
-    margin-left: 4px;
+  .level-group {
+    gap: 2px;
   }
 
   .filter {
@@ -517,16 +702,39 @@
   }
 
   .ghost {
-    width: 26px;
-    padding: 2px 0;
-    font-size: inherit;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+  }
+
+  .ghost svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .back {
+    max-width: 22ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .search input,
+  .search select {
+    padding: 3px 8px;
+    font-size: var(--step--1);
   }
 
   .search input {
     width: 220px;
     max-width: 100%;
-    padding: 3px 8px;
-    font-size: var(--step--1);
   }
 
   .small {
@@ -601,6 +809,35 @@
 
   .row.debug {
     color: var(--muted);
+  }
+
+  /* Context lines recede so the matches stand out, but an error or warning nearby keeps its
+     level's color, since it's often what you were looking for. */
+  .row.context,
+  .row.context .message {
+    color: var(--muted);
+    font-weight: 400;
+  }
+
+  .row.context.error .level {
+    color: var(--fail);
+  }
+
+  .row.context.warn .level {
+    color: var(--warn);
+  }
+
+  .row.context.error.start:not(.selected) {
+    background: transparent;
+  }
+
+  .row.hit .number {
+    color: var(--text);
+    background: var(--hit-soft);
+  }
+
+  .row.gap {
+    border-top: 1px dashed var(--muted);
   }
 
   /* packraven's own messages, like "Building the server pack", stand apart from the game's. */
@@ -687,8 +924,24 @@
     }
   }
 
+  @container (min-width: 761px) {
+    .found-in.shown-wide {
+      display: none;
+    }
+  }
+
   .message {
     flex: none;
+  }
+
+  .found-in {
+    flex: none;
+    padding: 0 6px;
+    font-family: var(--font-ui);
+    color: var(--text);
+    background: var(--hit-soft);
+    border: 1px solid var(--hit-edge);
+    border-radius: 999px;
   }
 
   .hidden-lines {
@@ -713,6 +966,10 @@
     right: 0;
     text-align: center;
     font-family: var(--font-ui);
+  }
+
+  .empty .link {
+    margin-left: 8px;
   }
 
   .jump {
