@@ -221,6 +221,8 @@ pub fn run() {
             pack_commands::update_hooks,
             pack_commands::get_pack_java,
             pack_commands::set_pack_java,
+            pack_commands::get_run_args,
+            pack_commands::set_run_args,
             pack_commands::get_server_icon,
             pack_commands::set_server_icon,
             pack_commands::use_project_logo_as_server_icon,

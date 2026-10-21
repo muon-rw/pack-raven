@@ -402,14 +402,22 @@ fn launched_file(launch: &str) -> &str {
     launch.trim_start_matches('@').trim_start_matches("-jar ")
 }
 
-pub fn server_args(pack: &Pack, dir: &Path) -> Result<Vec<String>> {
+pub fn server_args(pack: &Pack, dir: &Path, extra_jvm: &[String], extra: &[String]) -> Result<Vec<String>> {
     let launch = loader_launch(pack, cfg!(windows))?;
     let launched_file = launched_file(&launch);
     if !dir.join(launched_file).exists() {
         bail!("the {} installer didn't create {launched_file}, so packraven can't start this server", pack.lock.mod_loader()?.name());
     }
     let args = pack.config.server.args.iter().map(|arg| arg.trim()).filter(|arg| !arg.is_empty());
-    Ok(["@user_jvm_args.txt"].into_iter().chain(launch.split(' ')).chain(["nogui"]).chain(args).map(String::from).collect())
+    Ok(["@user_jvm_args.txt"]
+        .into_iter()
+        .chain(extra_jvm.iter().map(String::as_str))
+        .chain(launch.split(' '))
+        .chain(["nogui"])
+        .chain(args)
+        .chain(extra.iter().map(String::as_str))
+        .map(String::from)
+        .collect())
 }
 
 fn server_graalvm(pack: &Pack) -> Result<Option<String>> {

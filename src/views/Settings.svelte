@@ -2,6 +2,7 @@
   import Notice from '../components/Notice.svelte'
   import CredentialField from '../components/CredentialField.svelte'
   import JavaPicker from '../components/JavaPicker.svelte'
+  import ExtraLaunchArgs, { emptyDraft, fromDraft, toDraft } from '../components/ExtraLaunchArgs.svelte'
   import { onMount, tick } from 'svelte'
   import { open } from '@tauri-apps/plugin-dialog'
   import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
@@ -22,10 +23,14 @@
   let autostartError: string | null = $state(null)
   let credentialsError: string | null = $state(null)
   let saving = $state(false)
+  let runArgs = $state(emptyDraft())
+  let runArgsEditor = $state<ExtraLaunchArgs>()
 
   async function load() {
     try {
-      settings = await api.getSettings()
+      const loaded = await api.getSettings()
+      runArgs = toDraft(loaded.runArgs)
+      settings = loaded
       settingsError = null
     } catch (error) {
       settingsError = errorText(error)
@@ -152,19 +157,23 @@
 
   async function save() {
     if (!settings) return
+    const argsProblem = runArgsEditor?.revealProblem() ?? false
     saving = true
     try {
       const editorAskMb = Math.max(1, Math.round(settings.editorAskMb || 50))
       const editorMaxMb = Math.max(editorAskMb, Math.round(settings.editorMaxMb || 100))
       const adjusted = editorAskMb !== settings.editorAskMb || editorMaxMb !== settings.editorMaxMb
       const javaByMajor = Object.fromEntries(Object.entries(settings.javaByMajor).map(([major, java]) => [major, java.trim()]).filter(([, java]) => java))
-      await api.saveSettings({ ...settings, javaByMajor, editorAskMb, editorMaxMb })
+      await api.saveSettings({ ...settings, javaByMajor, editorAskMb, editorMaxMb, runArgs: fromDraft(runArgs) })
       await load()
       scanJava()
       onchange()
       messageFailed = false
       identityMessage = null
-      message = adjusted ? `Saved. The editor limits are now ${editorAskMb} MB and ${editorMaxMb} MB, since the second can't be lower than the first.` : 'Saved'
+      message = argsProblem
+        ? 'Saved, but an extra launch argument will stop test runs from starting'
+        : adjusted
+          ? `Saved. The editor limits are now ${editorAskMb} MB and ${editorMaxMb} MB, since the second can't be lower than the first.` : 'Saved'
     } catch (error) {
       messageFailed = true
       message = `Couldn't save: ${errorText(error)}`
@@ -458,6 +467,7 @@
         {/if}
         <button type="button" class="link" disabled={javas.scanning} onclick={scanJava}>{javas.scanning ? 'Looking' : 'Look again'}</button>
       </p>
+      <ExtraLaunchArgs bind:this={runArgsEditor} bind:draft={runArgs} scope="app" />
     </section>
 
     <section>

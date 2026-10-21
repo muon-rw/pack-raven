@@ -1,6 +1,7 @@
 <script lang="ts">
   import Notice from '../components/Notice.svelte'
   import JavaPicker from '../components/JavaPicker.svelte'
+  import ExtraLaunchArgs, { activeLines, emptyDraft, fromDraft, toDraft } from '../components/ExtraLaunchArgs.svelte'
   import { onMount } from 'svelte'
   import { ask } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type PackConfig, type PackJavaDefault } from '../lib/api'
@@ -20,6 +21,9 @@
   let configError: string | null = $state(null)
   let webhook = $state('')
   let packJava = $state('')
+  let runArgs = $state(emptyDraft())
+  let appRunArgs = $state(0)
+  let runArgsEditor = $state<ExtraLaunchArgs>()
   let javaDefault = $state<PackJavaDefault | null>(null)
   let message: string | null = $state(null)
   let messageFailed = $state(false)
@@ -33,6 +37,9 @@
 
   async function load() {
     try {
+      runArgs = toDraft(await api.getRunArgs())
+      // Only the App settings hint depends on this, so a failed read shouldn't hide the pack's settings.
+      appRunArgs = await api.getSettings().then((settings) => activeLines(settings.runArgs), () => 0)
       config = await api.getPackConfig()
       webhook = (await api.getWebhook()) ?? ''
       packJava = (await api.getPackJava()) ?? ''
@@ -65,6 +72,8 @@
       portField?.focus()
       return
     }
+    // These are for debugging, so we save a problem and only point it out.
+    const argsProblem = runArgsEditor?.revealProblem() ?? false
     saving = true
     try {
       // Server saves its own settings as you change them, so we keep whatever it wrote since we loaded.
@@ -72,10 +81,11 @@
       await api.savePackConfig({ ...config, server: fresh.server, updates: fresh.updates })
       await api.setWebhook(webhook)
       await api.setPackJava(packJava.trim() || null)
+      await api.setRunArgs(fromDraft(runArgs))
       await load()
       onchange()
       messageFailed = false
-      message = 'Saved'
+      message = argsProblem ? 'Saved, but an extra launch argument will stop test runs from starting' : 'Saved'
     } catch (error) {
       messageFailed = true
       message = `Couldn't save: ${errorText(error)}`
@@ -120,7 +130,7 @@
 <div class="settings">
   <header>
     <h2>Pack settings</h2>
-    <p class="muted">For {name} only. packraven stores these in <span class="file">packraven.toml</span> in the pack repo, except the Java and the webhook.</p>
+    <p class="muted">For {name} only. packraven stores these in <span class="file">packraven.toml</span> in the pack repo, except the Java, the extra launch arguments and the webhook.</p>
   </header>
 
   {#if configError}
@@ -183,6 +193,7 @@
             packraven uses this Java for the pack's test runs and server builds, and saves your choice only on this machine, never in the pack repo. To choose a Java for every pack, open <button type="button" class="link" onclick={onappsettings}>App settings</button>.
           </p>
         {/if}
+        <ExtraLaunchArgs bind:this={runArgsEditor} bind:draft={runArgs} scope="pack" inherited={appRunArgs} {onappsettings} />
       </section>
 
       <section>

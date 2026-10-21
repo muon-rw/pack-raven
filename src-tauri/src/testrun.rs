@@ -15,7 +15,7 @@ use crate::launch::{self, Player};
 use crate::mirror::{mirror, FilePlan, MirrorReport, Planned};
 use crate::pack::Pack;
 use crate::process::{spawn_watched, LineHook};
-use crate::settings::Settings;
+use crate::settings::{RunArgs, Settings};
 
 // Fabric keeps its remapped mods in .fabric, and rebuilding that cache slows every start.
 const KEPT_ON_RESYNC: [&str; 5] = ["world", "logs", "crash-reports", "usercache.json", ".fabric"];
@@ -138,9 +138,11 @@ fn test_properties(text: &str, port: u16, online: bool) -> String {
     lines.join("\n") + "\n"
 }
 
-pub async fn run_server(app: AppHandle, run: Arc<TestRun>, pack: &Pack, java: PathBuf, test_dir: PathBuf, ready: watch::Sender<bool>, log: Log) -> Result<String> {
+pub async fn run_server(app: AppHandle, run: Arc<TestRun>, pack: &Pack, java: PathBuf, test_dir: PathBuf, run_args: RunArgs, ready: watch::Sender<bool>, log: Log) -> Result<String> {
+    let (extra_jvm, extra) = (run_args.server_jvm(), run_args.server());
+    log_extra_args(&log, &extra_jvm, &extra);
     let mut command = Command::new(&java);
-    command.current_dir(&test_dir).args(server_args(pack, &test_dir)?);
+    command.current_dir(&test_dir).args(server_args(pack, &test_dir, &extra_jvm, &extra)?);
     let hook_app = app.clone();
     let hook: LineHook = Arc::new(move |line: &str| {
         if line.contains("Done (") && line.contains(")! For help") {
@@ -170,6 +172,8 @@ pub async fn run_client(app: AppHandle, run: Arc<TestRun>, settings: &Settings, 
     let target = address.as_deref().map_or_else(|| "to the title screen".to_string(), |a| format!("joining {a}"));
     let mode = if player.is_offline() { " offline" } else { "" };
     log.info(format!("Launching {}{mode} as {}, {target}", pack.lock.loader()?, player.name));
+    let run_args = settings.combined_run_args(&settings.instance_dir);
+    log_extra_args(&log, &run_args.client_jvm(), &run_args.client());
     let mut command = Command::new(&launch.java);
     command.current_dir(&settings.instance_dir).args(&launch.args);
     let child = spawn_watched(command, &log, false, None)?;
@@ -179,6 +183,16 @@ pub async fn run_client(app: AppHandle, run: Arc<TestRun>, settings: &Settings, 
     let result = supervise(child, managed, &run.client).await;
     emit(&app, "client-stopped", "");
     result
+}
+
+// Extra arguments are easy to forget once a debugging session ends, so each run lists the ones it adds.
+fn log_extra_args(log: &Log, jvm: &[String], args: &[String]) {
+    if !jvm.is_empty() {
+        log.info(format!("Adding extra JVM flags: {}", jvm.join(" ")));
+    }
+    if !args.is_empty() {
+        log.info(format!("Adding extra arguments: {}", args.join(" ")));
+    }
 }
 
 #[cfg(test)]

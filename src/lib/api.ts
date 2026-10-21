@@ -14,6 +14,7 @@ export interface Settings {
   gitName: string
   gitEmail: string
   autoUpdate: boolean
+  runArgs: RunArgs
 }
 
 export type JavaSource = 'curseForge' | 'packraven' | 'javaHome' | 'path' | 'system' | 'intelliJ' | 'gradle' | 'prism' | 'modrinth'
@@ -35,6 +36,13 @@ export interface JavaScan {
   downloads: Record<string, number>
   // The Java versions the packs you added need.
   needed: number[]
+}
+
+export interface RunArgs {
+  clientJvmArgs: string[]
+  clientArgs: string[]
+  serverJvmArgs: string[]
+  serverArgs: string[]
 }
 
 export interface PackJavaDefault {
@@ -395,6 +403,8 @@ export const api = {
   getPackJava: () => invoke<string | null>('get_pack_java'),
   setPackJava: (java: string | null) => invoke<void>('set_pack_java', { java }),
   packJavaDefault: () => invoke<PackJavaDefault>('pack_java_default'),
+  getRunArgs: () => invoke<RunArgs>('get_run_args'),
+  setRunArgs: (args: RunArgs) => invoke<void>('set_run_args', { args }),
   scanJava: () => invoke<JavaScan>('scan_java'),
   downloadJava: (major: number) => invoke<JavaInstall>('download_java', { major }),
   cancelJavaDownload: (graalvm: number) => invoke<void>('cancel_java_download', { graalvm }),

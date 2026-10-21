@@ -97,7 +97,7 @@ fn client_command() {
 
 async fn boots(java: &Path, pack: &Pack, dir: &Path) -> bool {
     let mut command = Command::new(java);
-    command.current_dir(dir).args(export::server_args(pack, dir).unwrap());
+    command.current_dir(dir).args(export::server_args(pack, dir, &[], &[]).unwrap());
     boots_with(command).await
 }
 

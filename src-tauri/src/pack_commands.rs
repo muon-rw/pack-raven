@@ -7,6 +7,7 @@ use crate::commands::AppState;
 use crate::join;
 use crate::pack::SERVER_ICON;
 use crate::server_icon;
+use crate::settings::RunArgs;
 use crate::setup::{self, InstanceInfo, SetupOptions};
 
 type CmdResult<T> = Result<T, String>;
@@ -116,6 +117,22 @@ pub fn set_pack_java(state: State<'_, AppState>, java: Option<PathBuf>) -> CmdRe
         .update_settings(|s| {
             let pack = s.instance_dir.clone();
             s.set_pack_java(&pack, java);
+        })
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn get_run_args(state: State<'_, AppState>) -> RunArgs {
+    let settings = state.settings();
+    settings.pack_run_args(&settings.instance_dir)
+}
+
+#[tauri::command]
+pub fn set_run_args(state: State<'_, AppState>, args: RunArgs) -> CmdResult<()> {
+    state
+        .update_settings(|s| {
+            let pack = s.instance_dir.clone();
+            s.set_pack_run_args(&pack, args);
         })
         .map_err(err)
 }

@@ -422,3 +422,28 @@ test('downloading GraalVM fills a Java version nobody has installed', async ({ p
   await expect(slot.getByRole('status')).toHaveText('Downloaded GraalVM 25.0.4. packraven now uses it for Java 25.')
   await expect(page.locator('#java-25 option:checked')).toHaveText('Automatic: GraalVM 25.0.4 · downloaded by packraven')
 })
+
+test('extra launch arguments check what Java will receive', async ({ page }) => {
+  await openApp(page, 'pack', 'dirty')
+  const flags = page.getByRole('textbox', { name: 'Client JVM flags' })
+  await expect(flags).toBeHidden()
+  await page.getByText('Extra launch arguments', { exact: true }).click()
+  await flags.fill('--add-opens\njava.base/java.lang=ALL-UNNAMED')
+  await expect(page.getByText("doesn't start with a dash")).toHaveCount(0)
+  await flags.fill('-Dmixin.debug.export=true stray')
+  await expect(page.getByText(`"stray" doesn't start with a dash`)).toBeVisible()
+  await expect(page.getByText('1 problem')).toBeVisible()
+  await flags.fill('-javaagent:"C:/Program Files/spark.jar\n# -XX:+UnlockDiagnosticVMOptions')
+  await expect(page.getByText('opening double quote with no closing one')).toBeVisible()
+  await flags.fill('-javaagent:"C:/Program Files/spark.jar"\n# -XX:+UnlockDiagnosticVMOptions')
+  await expect(page.locator('code', { hasText: '-javaagent:C:/Program Files/spark.jar' })).toBeVisible()
+  await page.getByRole('textbox', { name: 'Server arguments' }).fill('--world\nDebug World')
+  await expect(page.getByText('(3 lines in use)')).toBeVisible()
+  await page.getByRole('button', { name: 'Save pack settings' }).click()
+  await expect(page.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible()
+
+  // Saved arguments keep the fields open the next time you look.
+  await page.getByRole('button', { name: 'Run', exact: true }).click()
+  await page.getByRole('button', { name: 'Pack settings', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: 'Server arguments' })).toHaveValue('--world\nDebug World')
+})

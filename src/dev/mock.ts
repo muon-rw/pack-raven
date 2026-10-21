@@ -592,6 +592,10 @@ function startMockClient() {
   emit('test-event', { kind: 'client-started', detail: '' })
 }
 
+const noRunArgs = () => ({ clientJvmArgs: [] as string[], clientArgs: [] as string[], serverJvmArgs: [] as string[], serverArgs: [] as string[] })
+let runArgs = noRunArgs()
+let appRunArgs = noRunArgs()
+
 const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   list_packs: () => (scenario === 'nopack' ? { active: null, packs: [], instancesRoot: 'C:/Instances' } : { active: pack.dir, packs: [pack], instancesRoot: 'C:/Instances' }),
   overview: () => ({
@@ -655,7 +659,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   set_minecraft_online_mode: ({ online }) => {
     onlineMode = online as boolean
   },
-  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: { ...javaByMajor }, defenderExcluded: [], defenderDismissed: false, minecraftEulaAccepted: eulaAccepted, minecraftOnlineMode: onlineMode, editorAskMb: 50, editorMaxMb: 100, gitName: '', gitEmail: '', autoUpdate }),
+  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: { ...javaByMajor }, defenderExcluded: [], defenderDismissed: false, minecraftEulaAccepted: eulaAccepted, minecraftOnlineMode: onlineMode, editorAskMb: 50, editorMaxMb: 100, gitName: '', gitEmail: '', autoUpdate, runArgs: appRunArgs }),
+  save_settings: (a) => (appRunArgs = (a.settings as { runArgs: typeof appRunArgs }).runArgs),
   update_status: () => updateView(),
   check_for_update: () => updateView(),
   install_update: () => {
@@ -869,6 +874,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   discohook_link: () => 'https://discohook.app/?share=example',
   discohook_preview: () => 'https://discohook.app/?share=example',
   get_pack_java: () => null,
+  get_run_args: () => runArgs,
+  set_run_args: (a) => (runArgs = a.args as typeof runArgs),
   pack_java_default: () => ({ major: 21, path: javaByMajor['21'] ?? mockJavas.find((j) => j.major === 21)?.path ?? null, error: null }),
   scan_java: () => ({
     installs: mockJavas,

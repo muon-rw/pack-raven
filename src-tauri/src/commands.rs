@@ -392,6 +392,7 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, recopy_all: bool, 
     let (data_dir, cache_path) = (state.data_dir.clone(), state.cache_path());
     let test_dir = state.pack_data().join("test-server");
     let natives = state.pack_data().join("natives");
+    let run_args = settings.combined_run_args(&settings.instance_dir);
     let jobs = state.jobs.clone();
     let run = state.test.clone();
     let minecraft = state.minecraft.clone();
@@ -415,7 +416,7 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, recopy_all: bool, 
         let server_pack = Pack::open(&pack.dir)?;
         let (server_app, server_run) = (job_app.clone(), run.clone());
         jobs.start(&job_app, "server", move |server_log| async move {
-            testrun::run_server(server_app, server_run, &server_pack, java, test_dir, ready_tx, server_log).await
+            testrun::run_server(server_app, server_run, &server_pack, java, test_dir, run_args, ready_tx, server_log).await
         })
         .map_err(anyhow::Error::msg)?;
         if !connect {

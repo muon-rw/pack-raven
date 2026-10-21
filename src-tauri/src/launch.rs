@@ -304,12 +304,14 @@ pub fn client(settings: &Settings, pack: &Pack, player: &Player, server: Option<
     };
 
     let profile = launcher_profile(install, &settings.instance_dir);
+    let run_args = settings.combined_run_args(&settings.instance_dir);
     let mut args: Vec<String> = Vec::new();
     collect("jvm", &mut args);
     match profile.java_args {
         Some(java_args) => args.extend(split_args(&java_args)),
         None => args.push(format!("-Xmx{}", pack.config.test.client_memory)),
     }
+    args.extend(run_args.client_jvm());
     if let Some(logging) = parent.pointer("/logging/client") {
         let file = logging.pointer("/file/id").and_then(Value::as_str).unwrap_or_default();
         let config = install.join("assets").join("log_configs").join(file);
@@ -319,5 +321,6 @@ pub fn client(settings: &Settings, pack: &Pack, player: &Player, server: Option<
     }
     args.push(child.get("mainClass").or(parent.get("mainClass")).and_then(Value::as_str).context("version has no main class")?.to_string());
     collect("game", &mut args);
+    args.extend(run_args.client());
     Ok(ClientLaunch { java: java(settings)?, args })
 }
