@@ -2,7 +2,7 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.4]
+## [0.1.4] - 2026-10-21
 ### Added
 - Can now add JVM flags and arguments for test runs of the client and server, under Pack settings -> Test runs, or for every pack under App settings -> Java. These are not shipped.
 
@@ -71,7 +71,8 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 - Mod updates skip jars Minecraft is currently holding open instead of stopping partway
 - Failed downloads will retry up to three times
 
-[Unreleased]: https://github.com/muon-rw/pack-raven/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/muon-rw/pack-raven/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/muon-rw/pack-raven/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/muon-rw/pack-raven/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/muon-rw/pack-raven/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/muon-rw/pack-raven/compare/v0.1.0...v0.1.1
