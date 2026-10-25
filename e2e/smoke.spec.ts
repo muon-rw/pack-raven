@@ -447,3 +447,75 @@ test('extra launch arguments check what Java will receive', async ({ page }) => 
   await page.getByRole('button', { name: 'Pack settings', exact: true }).click()
   await expect(page.getByRole('textbox', { name: 'Server arguments' })).toHaveValue('--world\nDebug World')
 })
+
+test('you can search the text of every file, open a match, and replace and undo', async ({ page }) => {
+  await openApp(page, 'files', 'dirty')
+  await page.keyboard.press('Control+Shift+F')
+  const find = page.getByRole('textbox', { name: 'Search text in files' })
+  await expect(find).toBeFocused()
+  await find.fill('true')
+  const summary = page.locator('#text-search-summary')
+  await expect(summary).toHaveText('14 matches in 2 files')
+
+  // Whole word and match case narrow the search, and their shortcuts work from the field.
+  await page.keyboard.press('Alt+C')
+  await expect(page.getByRole('button', { name: 'Match case' })).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press('Alt+C')
+
+  // The arrow keys move from the field into the results, and Enter opens the match in the editor.
+  const results = page.getByRole('tree', { name: 'Search results' })
+  await find.press('ArrowDown')
+  await expect(results.getByRole('treeitem', { name: /^fml\.toml/ })).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('tab', { name: 'fml.toml' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.cm-activeLine')).toContainText('earlyWindowControl')
+
+  // F4 steps to the next match from the editor.
+  await page.keyboard.press('F4')
+  await expect(page.locator('.cm-activeLine')).toContainText('disableOptimizedDFU')
+
+  // Delete hides a match, so replacing leaves it alone.
+  await results.getByRole('treeitem', { name: /^Line 12:/ }).click()
+  await page.keyboard.press('Delete')
+  await expect(summary).toContainText('13 matches in 2 files (1 hidden)')
+
+  await page.keyboard.press('Control+Shift+H')
+  const replaceWith = page.getByRole('textbox', { name: 'Replace with' })
+  await expect(replaceWith).toBeFocused()
+  await replaceWith.fill('false')
+  await expect(results.getByRole('treeitem', { name: /^Line 4, replaces true with false:/ })).toBeVisible()
+
+  // Replacing one match from the keyboard keeps your place in the list.
+  await results.getByRole('treeitem', { name: /^Line 15,/ }).click()
+  await page.keyboard.press('Shift+F10')
+  await page.getByRole('menuitem', { name: 'Replace this match' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Replaced 1 match in shouldersurfing-client.toml.' })).toBeVisible()
+  await expect(results.getByRole('treeitem', { name: /^Line 17,/ })).toBeFocused()
+
+  page.once('dialog', (dialog) => {
+    expect(dialog.message()).toContain('Replace 12 matches in 2 files with “false”?')
+    dialog.accept()
+  })
+  await page.getByRole('button', { name: 'Replace 12 in 2 files' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Replaced 12 matches in 2 files.' })).toBeVisible()
+  await expect(summary).toContainText('You hid the only match.')
+
+  await page.getByRole('button', { name: 'Undo', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Undid the replace.' })).toBeVisible()
+  await expect(summary).toContainText('12 matches in 2 files (1 hidden)')
+
+  // Esc goes back to the file tree, and the search is still there when you come back.
+  await find.press('Escape')
+  await expect(page.getByRole('heading', { name: 'Files', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Search text in files' }).click()
+  await expect(page.getByRole('textbox', { name: 'Search text in files' })).toHaveValue('true')
+})
+
+test('an invalid regex says what is wrong', async ({ page }) => {
+  await openApp(page, 'files', 'dirty')
+  await page.keyboard.press('Control+Shift+F')
+  await page.getByRole('button', { name: 'Use regular expression' }).click()
+  await page.getByRole('textbox', { name: 'Search text in files' }).fill('(')
+  await expect(page.locator('#text-search-summary')).toContainText("That isn't a valid regex")
+})

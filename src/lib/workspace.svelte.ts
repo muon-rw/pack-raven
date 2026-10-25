@@ -296,7 +296,7 @@ function parentDir(path: string) {
   return index < 0 ? '' : path.slice(0, index)
 }
 
-async function onDiskChange(paths: string[]) {
+export async function onDiskChange(paths: string[]) {
   fs.dirs = [...new Set(paths.flatMap((p) => [parentDir(p), p]))]
   fs.seq++
   for (const current of workspace.tabs.filter((t) => paths.includes(t.path) && t.state)) {

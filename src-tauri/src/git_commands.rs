@@ -2,7 +2,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
-use crate::gitops::{self, Commit, Diff, IgnoreOption, IgnorePreview, PullPreview, Status};
+use crate::gitops::{self, Commit, Diff, IgnoreOption, IgnorePreview, LineAction, PullPreview, Status, Version};
 use crate::modsync::Prefer;
 
 type CmdResult<T> = Result<T, String>;
@@ -27,6 +27,16 @@ pub fn git_overview(state: State<'_, AppState>) -> CmdResult<GitOverview> {
 #[tauri::command(async)]
 pub fn git_diff(state: State<'_, AppState>, path: String, staged: bool, untracked: bool) -> CmdResult<Diff> {
     gitops::diff(&state.settings().instance_dir, &path, staged, untracked).map_err(err)
+}
+
+#[tauri::command(async)]
+pub fn git_blob(state: State<'_, AppState>, path: String, version: Version) -> CmdResult<tauri::ipc::Response> {
+    gitops::blob(&state.settings().instance_dir, &path, version).map(tauri::ipc::Response::new).map_err(err)
+}
+
+#[tauri::command(async)]
+pub fn git_apply_lines(state: State<'_, AppState>, path: String, diff: String, selected: Vec<usize>, action: LineAction) -> CmdResult<()> {
+    gitops::apply_lines(&state.settings().instance_dir, &path, &diff, &selected, action).map_err(err)
 }
 
 #[tauri::command(async)]

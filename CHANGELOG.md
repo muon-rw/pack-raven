@@ -2,6 +2,13 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- Individual rows in git view can now be unstaged
+- Git diff windows can now be scrolled horizontally
+- Images now show their before/after state in the git view, rather than a binary file warning
+- Added Find in Files/Find and Replace in Files
+
 ## [0.1.4] - 2026-10-21
 ### Added
 - Can now add JVM flags and arguments for test runs of the client and server, under Pack settings -> Test runs, or for every pack under App settings -> Java. These are not shipped.

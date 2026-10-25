@@ -1,5 +1,6 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
 use anyhow::{bail, Result};
@@ -53,13 +54,33 @@ pub fn run(dir: &Path, args: &[&str]) -> Result<String> {
 }
 
 pub fn run_accepting(dir: &Path, args: &[&str], ok_codes: &[i32]) -> Result<String> {
+    Ok(String::from_utf8_lossy(&run_raw(dir, args, ok_codes, None)?).into_owned())
+}
+
+pub fn run_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    run_raw(dir, args, &[0], None)
+}
+
+pub fn run_with_input(dir: &Path, args: &[&str], input: &str) -> Result<String> {
+    Ok(String::from_utf8_lossy(&run_raw(dir, args, &[0], Some(input.as_bytes()))?).into_owned())
+}
+
+fn run_raw(dir: &Path, args: &[&str], ok_codes: &[i32], input: Option<&[u8]>) -> Result<Vec<u8>> {
     let mut command = command();
     command.current_dir(dir).args(args).env("GIT_TERMINAL_PROMPT", "0");
-    let output = command.output()?;
+    let output = match input {
+        None => command.output()?,
+        Some(input) => {
+            command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+            let mut child = command.spawn()?;
+            child.stdin.take().expect("stdin is piped").write_all(input)?;
+            child.wait_with_output()?
+        }
+    };
     if !output.status.code().is_some_and(|code| ok_codes.contains(&code)) {
         bail!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr).trim());
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(output.stdout)
 }
 
 pub fn tracked_files(dir: &Path) -> Result<Vec<String>> {

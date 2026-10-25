@@ -276,7 +276,15 @@
   })
 
   function onKey(event: KeyboardEvent) {
-    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+    if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+    if (event.shiftKey) {
+      const key = event.key.toLowerCase()
+      if (!packs?.active || (key !== 'f' && key !== 'h')) return
+      event.preventDefault()
+      nav.textSearch = key === 'h' ? 'replace' : 'find'
+      view = 'files'
+      return
+    }
     const key = event.key.toUpperCase()
     // Files and Git keep their old letter shortcuts as aliases.
     const item = packs?.active ? groups.flatMap((group) => group.items).find((item) => item.key === key || item.alias === key) : undefined

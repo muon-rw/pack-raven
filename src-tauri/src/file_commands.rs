@@ -10,6 +10,7 @@ use crate::commands::AppState;
 use crate::files::{self, Entry, FileContent, Pasted};
 use crate::history::{self, Action, HistoryView, Outcome};
 use crate::os_drag;
+use crate::text_search;
 
 type CmdResult<T> = Result<T, String>;
 
@@ -37,6 +38,26 @@ pub fn write_file(state: State<'_, AppState>, path: String, text: String, crlf: 
 pub async fn index_files(state: State<'_, AppState>) -> CmdResult<files::Index> {
     let root = state.settings().instance_dir;
     tauri::async_runtime::spawn_blocking(move || files::index(&root)).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn search_text(state: State<'_, AppState>, query: text_search::Query) -> CmdResult<Option<text_search::Results>> {
+    let settings = state.settings();
+    let (root, limit) = (settings.instance_dir.clone(), settings.editor_limits().ask);
+    tauri::async_runtime::spawn_blocking(move || text_search::search(&root, &query, limit)).await.map_err(|e| e.to_string())?.map_err(err)
+}
+
+#[tauri::command]
+pub async fn replace_text(state: State<'_, AppState>, query: text_search::Query, targets: Vec<text_search::Target>) -> CmdResult<text_search::Replaced> {
+    let settings = state.settings();
+    let (root, limit) = (settings.instance_dir.clone(), settings.editor_limits().ask);
+    let task_root = root.clone();
+    let mut replaced = tauri::async_runtime::spawn_blocking(move || text_search::replace(&task_root, &query, &targets, limit)).await.map_err(|e| e.to_string())?.map_err(err)?;
+    if !replaced.files.is_empty() {
+        let undo = replaced.undoable.then(|| Action::Rewrite(std::mem::take(&mut replaced.rewrites)));
+        state.history.lock().unwrap().record(&root, replaced.label.clone(), undo);
+    }
+    Ok(replaced)
 }
 
 #[tauri::command]

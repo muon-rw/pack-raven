@@ -4,7 +4,7 @@
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
   import { getCurrentWebview, type DragDropEvent } from '@tauri-apps/api/webview'
   import { api, errorText, type DirEntry, type GitStatus, type Pasted } from '../lib/api'
-  import { fs, moved } from '../lib/workspace.svelte'
+  import { fs, moved, onDiskChange } from '../lib/workspace.svelte'
   import { drag } from '../lib/drag.svelte'
   import { gitMenu } from '../lib/gitActions'
   import { RangeSelection, isPlainClick } from '../lib/rangeSelection'
@@ -578,6 +578,7 @@
         onremoved(outcome.removed)
         forget(outcome.removed)
       }
+      if (outcome.changed.length) await onDiskChange(outcome.changed)
       if (outcome.moved.length) await afterMove(outcome.moved)
       else await refresh()
       const shown = [...outcome.added, ...outcome.moved.map(([, to]) => to)]

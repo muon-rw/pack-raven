@@ -177,9 +177,14 @@ pub fn write(root: &Path, relative: &str, text: &str, crlf: bool, bom: bool) -> 
     if bom {
         body.insert(0, '\u{feff}');
     }
+    replace_contents(&path, body.as_bytes())
+}
+
+/// Writes to a temporary file first, so a failed write can't leave the file half written.
+pub(crate) fn replace_contents(path: &Path, bytes: &[u8]) -> Result<()> {
     let temp = path.with_extension("packraven-tmp");
-    std::fs::write(&temp, body).with_context(|| format!("writing {}", path.display()))?;
-    std::fs::rename(&temp, &path).with_context(|| format!("replacing {}", path.display()))?;
+    std::fs::write(&temp, bytes).with_context(|| format!("writing {}", path.display()))?;
+    std::fs::rename(&temp, path).with_context(|| format!("replacing {}", path.display()))?;
     Ok(())
 }
 

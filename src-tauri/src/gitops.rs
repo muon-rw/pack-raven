@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::git::{self, Identity};
@@ -115,6 +115,176 @@ pub fn diff(dir: &Path, path: &str, staged: bool, untracked: bool) -> Result<Dif
     let truncated = text.len() > MAX_DIFF_BYTES;
     let text = if truncated { text[..text.floor_char_boundary(MAX_DIFF_BYTES)].to_string() } else { text };
     Ok(Diff { text, binary, truncated })
+}
+
+const MAX_BLOB_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub enum Version {
+    Head,
+    Index,
+}
+
+/// Returns a file's bytes as HEAD or the index has them.
+pub fn blob(dir: &Path, path: &str, version: Version) -> Result<Vec<u8>> {
+    let object = match version {
+        Version::Head => format!("HEAD:{path}"),
+        Version::Index => format!(":{path}"),
+    };
+    let size: u64 = git::run(dir, &["cat-file", "-s", &object])?.trim().parse()?;
+    if size > MAX_BLOB_BYTES {
+        bail!("{path} is too large to show here");
+    }
+    git::run_bytes(dir, &["cat-file", "blob", &object])
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub enum LineAction {
+    Stage,
+    Unstage,
+    Discard,
+}
+
+/// Stages, unstages or discards the chosen lines of `diff`, which indexes `selected` by line.
+/// We apply a patch built from the diff you saw, so if the file changed since, git refuses it
+/// instead of applying lines you didn't pick.
+pub fn apply_lines(dir: &Path, path: &str, diff: &str, selected: &[usize], action: LineAction) -> Result<()> {
+    let Some(patch) = partial_patch(path, diff, &selected.iter().copied().collect(), action != LineAction::Stage) else {
+        bail!("Select some added or removed lines first.");
+    };
+    let args: &[&str] = match action {
+        LineAction::Stage => &["apply", "--cached", "--whitespace=nowarn", "-"],
+        LineAction::Unstage => &["apply", "--cached", "--reverse", "--whitespace=nowarn", "-"],
+        LineAction::Discard => &["apply", "--reverse", "--whitespace=nowarn", "-"],
+    };
+    git::run_with_input(dir, args, &patch).map(|_| ()).context("The file changed since packraven showed this diff, so it couldn't apply those lines. Pick them again.")
+}
+
+struct Hunk {
+    old_start: usize,
+    new_start: usize,
+    body: Vec<String>,
+    old_count: usize,
+    new_count: usize,
+}
+
+fn hunk_starts(header: &str) -> Option<(usize, usize)> {
+    let mut ranges = header.strip_prefix("@@ -")?.split_whitespace();
+    let start = |range: &str| range.split(',').next()?.parse().ok();
+    Some((start(ranges.next()?)?, start(ranges.next()?.strip_prefix('+')?)?))
+}
+
+// A count of zero puts a hunk's start on the line before it, so we convert to and from the first
+// line the hunk touches when we move a start across sides.
+fn first_line(start: usize, count: usize) -> usize {
+    if count == 0 { start + 1 } else { start }
+}
+
+fn start_for(first: usize, count: usize) -> usize {
+    if count == 0 { first.saturating_sub(1) } else { first }
+}
+
+fn quote_path(path: &str) -> String {
+    let mut quoted = String::from("\"");
+    for c in path.chars() {
+        match c {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\t' => quoted.push_str("\\t"),
+            '\n' => quoted.push_str("\\n"),
+            _ => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+/// Builds a patch holding only the selected change lines. Forward patches apply to the diff's old
+/// side, so unselected removals stay as context and unselected additions drop out. Reverse patches
+/// apply backwards to the new side, so it's the other way around.
+fn partial_patch(path: &str, diff: &str, selected: &HashSet<usize>, reverse: bool) -> Option<String> {
+    let lines: Vec<&str> = diff.split('\n').collect();
+    let mode_of = |prefix: &str| lines.iter().take_while(|l| !l.starts_with("@@")).find_map(|l| l.strip_prefix(prefix)).map(str::to_string);
+    let (new_mode, deleted_mode) = (mode_of("new file mode "), mode_of("deleted file mode "));
+
+    let mut hunks = Vec::new();
+    let mut current: Option<(Hunk, bool)> = None;
+    let mut kept_last = false;
+    for (index, line) in lines.iter().enumerate() {
+        if line.starts_with("@@") {
+            hunks.extend(current.take().filter(|(_, picked)| *picked).map(|(hunk, _)| hunk));
+            let (old_start, new_start) = hunk_starts(line)?;
+            current = Some((Hunk { old_start, new_start, body: Vec::new(), old_count: 0, new_count: 0 }, false));
+            continue;
+        }
+        let Some((hunk, picked)) = current.as_mut() else { continue };
+        let chosen = selected.contains(&index);
+        let kept = match line.chars().next() {
+            Some('\\') => {
+                if kept_last {
+                    hunk.body.push(line.to_string());
+                }
+                continue;
+            }
+            Some('+') if chosen => Some(('+', true)),
+            Some('-') if chosen => Some(('-', true)),
+            Some('+') => reverse.then_some((' ', false)),
+            Some('-') => (!reverse).then_some((' ', false)),
+            Some(' ') => Some((' ', false)),
+            _ => None,
+        };
+        kept_last = kept.is_some();
+        if let Some((sign, change)) = kept {
+            *picked |= change;
+            hunk.body.push(format!("{sign}{}", &line[1..]));
+            match sign {
+                '+' => hunk.new_count += 1,
+                '-' => hunk.old_count += 1,
+                _ => {
+                    hunk.old_count += 1;
+                    hunk.new_count += 1;
+                }
+            }
+        }
+    }
+    hunks.extend(current.take().filter(|(_, picked)| *picked).map(|(hunk, _)| hunk));
+    if hunks.is_empty() {
+        return None;
+    }
+
+    // The side the patch applies to keeps its line numbers, and we shift the other side by what
+    // the hunks before it add or remove.
+    let mut shift: isize = 0;
+    for hunk in &mut hunks {
+        if reverse {
+            let first = first_line(hunk.new_start, hunk.new_count) as isize - shift;
+            hunk.old_start = start_for(first.max(1) as usize, hunk.old_count);
+        } else {
+            let first = first_line(hunk.old_start, hunk.old_count) as isize + shift;
+            hunk.new_start = start_for(first.max(1) as usize, hunk.new_count);
+        }
+        shift += hunk.new_count as isize - hunk.old_count as isize;
+    }
+
+    let old_empty = hunks.iter().all(|h| h.old_count == 0);
+    let new_empty = hunks.iter().all(|h| h.new_count == 0);
+    let (a, b) = (quote_path(&format!("a/{path}")), quote_path(&format!("b/{path}")));
+    let mut patch = format!("diff --git {a} {b}\n");
+    match (&new_mode, &deleted_mode) {
+        (Some(mode), _) if old_empty => patch.push_str(&format!("new file mode {mode}\n--- /dev/null\n+++ {b}\n")),
+        (_, Some(mode)) if new_empty => patch.push_str(&format!("deleted file mode {mode}\n--- {a}\n+++ /dev/null\n")),
+        _ => patch.push_str(&format!("--- {a}\n+++ {b}\n")),
+    }
+    for hunk in hunks {
+        patch.push_str(&format!("@@ -{},{} +{},{} @@\n", hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count));
+        for line in hunk.body {
+            patch.push_str(&line);
+            patch.push('\n');
+        }
+    }
+    Some(patch)
 }
 
 pub fn stage(dir: &Path, paths: &[String]) -> Result<()> {
@@ -577,6 +747,74 @@ mod tests {
         untrack(&dir, &["config/a.json".into()]).unwrap();
         assert!(git::run(&dir, &["ls-files"]).unwrap().is_empty());
         assert!(dir.join("config/a.json").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn line_repo(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("packraven-lines-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        git(&dir, &["config", "core.autocrlf", "false"]);
+        let text: String = (1..=20).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(dir.join("a b.txt"), text).unwrap();
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-q", "-m", "Initial"]);
+        dir
+    }
+
+    fn picked(diff: &str, wanted: &[&str]) -> Vec<usize> {
+        diff.split('\n').enumerate().filter(|(_, l)| wanted.contains(l)).map(|(i, _)| i).collect()
+    }
+
+    fn worktree_diff(dir: &Path, path: &str, staged: bool) -> String {
+        diff(dir, path, staged, false).unwrap().text
+    }
+
+    #[test]
+    fn stages_unstages_and_discards_single_lines() {
+        let dir = line_repo("modify");
+        let edited: String = (1..=20).map(|n| if n == 2 || n == 15 { format!("changed {n}\n") } else { format!("line {n}\n") }).collect();
+        std::fs::write(dir.join("a b.txt"), format!("{edited}added\n")).unwrap();
+
+        let unstaged = worktree_diff(&dir, "a b.txt", false);
+        apply_lines(&dir, "a b.txt", &unstaged, &picked(&unstaged, &["-line 15", "+changed 15"]), LineAction::Stage).unwrap();
+        let staged = worktree_diff(&dir, "a b.txt", true);
+        assert!(staged.contains("+changed 15") && !staged.contains("changed 2") && !staged.contains("+added"), "{staged}");
+
+        apply_lines(&dir, "a b.txt", &staged, &picked(&staged, &["+changed 15"]), LineAction::Unstage).unwrap();
+        let index = String::from_utf8(blob(&dir, "a b.txt", Version::Index).unwrap()).unwrap();
+        assert!(!index.contains(" 15\n") && index.contains("line 14\nline 16\n"), "{index}");
+
+        let unstaged = worktree_diff(&dir, "a b.txt", false);
+        apply_lines(&dir, "a b.txt", &unstaged, &picked(&unstaged, &["-line 2", "+changed 2", "+added"]), LineAction::Discard).unwrap();
+        let worktree = std::fs::read_to_string(dir.join("a b.txt")).unwrap();
+        assert!(worktree.contains("line 2\n") && worktree.contains("changed 15\n") && !worktree.contains("added"), "{worktree}");
+
+        let stale = apply_lines(&dir, "a b.txt", &unstaged, &picked(&unstaged, &["+added"]), LineAction::Discard);
+        assert!(stale.is_err());
+        assert!(apply_lines(&dir, "a b.txt", &unstaged, &[0], LineAction::Stage).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn stages_part_of_new_and_deleted_files() {
+        let dir = line_repo("whole");
+        std::fs::write(dir.join("new.txt"), "one\ntwo\nthree\n").unwrap();
+        let untracked = diff(&dir, "new.txt", false, true).unwrap().text;
+        apply_lines(&dir, "new.txt", &untracked, &picked(&untracked, &["+one", "+three"]), LineAction::Stage).unwrap();
+        assert_eq!(String::from_utf8(blob(&dir, "new.txt", Version::Index).unwrap()).unwrap(), "one\nthree\n");
+
+        let staged = worktree_diff(&dir, "new.txt", true);
+        apply_lines(&dir, "new.txt", &staged, &picked(&staged, &["+one", "+three"]), LineAction::Unstage).unwrap();
+        assert!(!git::run(&dir, &["ls-files", "--", "new.txt"]).unwrap().contains("new.txt"));
+
+        std::fs::remove_file(dir.join("a b.txt")).unwrap();
+        let deleted = worktree_diff(&dir, "a b.txt", false);
+        apply_lines(&dir, "a b.txt", &deleted, &picked(&deleted, &["-line 1"]), LineAction::Stage).unwrap();
+        let index = String::from_utf8(blob(&dir, "a b.txt", Version::Index).unwrap()).unwrap();
+        assert!(index.starts_with("line 2\n") && index.ends_with("line 20\n"), "{index}");
+        assert_eq!(blob(&dir, "a b.txt", Version::Head).unwrap().len(), (1..=20).map(|n| format!("line {n}\n").len()).sum::<usize>());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

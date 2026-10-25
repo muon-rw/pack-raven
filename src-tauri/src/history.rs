@@ -12,6 +12,14 @@ pub enum Action {
     Move(Vec<(PathBuf, PathBuf)>),
     Trash(Vec<PathBuf>),
     Restore(Vec<TrashItem>),
+    Rewrite(Vec<Rewrite>),
+}
+
+/// Puts back a file's earlier contents, as long as it still holds what we last wrote to it.
+pub struct Rewrite {
+    pub path: PathBuf,
+    pub expected: Vec<u8>,
+    pub restore: Vec<u8>,
 }
 
 struct Entry {
@@ -41,6 +49,7 @@ pub struct Outcome {
     moved: Vec<(String, String)>,
     removed: Vec<String>,
     added: Vec<String>,
+    changed: Vec<String>,
 }
 
 #[derive(Default)]
@@ -48,6 +57,7 @@ struct Changes {
     moved: Vec<(PathBuf, PathBuf)>,
     removed: Vec<PathBuf>,
     added: Vec<PathBuf>,
+    changed: Vec<PathBuf>,
 }
 
 impl History {
@@ -98,6 +108,7 @@ impl Outcome {
             moved: Vec::new(),
             removed: changes.removed.iter().filter_map(|p| relative(p)).collect(),
             added: changes.added.iter().filter_map(|p| relative(p)).collect(),
+            changed: changes.changed.iter().filter_map(|p| relative(p)).collect(),
         };
         for (from, to) in &changes.moved {
             match (relative(from), relative(to)) {
@@ -142,6 +153,20 @@ fn apply(action: Action) -> Result<(Option<Action>, Changes)> {
             }
             restore(items)?;
             Ok((Some(Action::Trash(paths.clone())), Changes { added: paths, ..Default::default() }))
+        }
+        Action::Rewrite(rewrites) => {
+            // An edit since the replace would be lost, so we check every file before writing any.
+            for rewrite in &rewrites {
+                if std::fs::read(&rewrite.path).ok().as_ref() != Some(&rewrite.expected) {
+                    bail!("{} changed since, so we can't undo this without losing that change", rewrite.path.display());
+                }
+            }
+            for rewrite in &rewrites {
+                crate::files::replace_contents(&rewrite.path, &rewrite.restore)?;
+            }
+            let changed = rewrites.iter().map(|r| r.path.clone()).collect();
+            let inverse = rewrites.into_iter().map(|r| Rewrite { path: r.path, expected: r.restore, restore: r.expected }).collect();
+            Ok((Some(Action::Rewrite(inverse)), Changes { changed, ..Default::default() }))
         }
     }
 }
@@ -244,6 +269,26 @@ mod tests {
         assert!(file.exists());
         assert_eq!(changes.added.len(), 1);
         assert!(matches!(inverse, Some(Action::Trash(_))));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn undoing_a_rewrite_refuses_to_lose_a_later_edit() {
+        let dir = std::env::temp_dir().join("packraven-rewrite-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.toml");
+        std::fs::write(&file, "new").unwrap();
+        let undo = || Action::Rewrite(vec![Rewrite { path: file.clone(), expected: b"new".to_vec(), restore: b"old".to_vec() }]);
+
+        let (inverse, changes) = apply(undo()).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"old");
+        assert_eq!(changes.changed, [file.clone()]);
+        assert!(matches!(inverse, Some(Action::Rewrite(ref r)) if r[0].expected == b"old"));
+
+        std::fs::write(&file, "edited").unwrap();
+        assert!(apply(undo()).is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"edited");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -12,6 +12,9 @@
   import { nav } from '../lib/nav.svelte'
   import FileTree from '../components/FileTree.svelte'
   import FileSearchResults from '../components/FileSearchResults.svelte'
+  import TextSearch from '../components/TextSearch.svelte'
+  import { textSearch } from '../lib/textSearch.svelte'
+  import type { TextMatch } from '../lib/api'
   import ImageView from '../components/ImageView.svelte'
   import MediaView from '../components/MediaView.svelte'
   import NbtView from '../components/NbtView.svelte'
@@ -38,11 +41,12 @@
   const selection = new SvelteSet<string>()
   let tabMenu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
   let query = $state('')
-  let searchField: HTMLInputElement
+  let searchField: HTMLInputElement | undefined = $state()
   let results: FileSearchResults | undefined = $state()
   let activeResult = $state(0)
   let openedFromSearch: string | null = null
   let searching = $derived(!!query.trim())
+  let textPanel: TextSearch | undefined = $state()
 
   $effect.pre(() => resetFor(pack))
 
@@ -84,6 +88,48 @@
       tree.show(path).then(() => openFile(path, true))
     })
   })
+
+  $effect(() => {
+    const mode = nav.textSearch
+    if (!mode) return
+    nav.textSearch = null
+    untrack(() => openTextSearch(mode === 'replace'))
+  })
+
+  // Like VS Code, a short selection in the editor becomes what you search for.
+  function editorSelection() {
+    if (!view?.hasFocus) return ''
+    const range = view.state.selection.main
+    const text = view.state.sliceDoc(range.from, range.to)
+    return text.length <= 200 && !text.includes('\n') ? text : ''
+  }
+
+  async function openTextSearch(replace: boolean) {
+    const selected = editorSelection()
+    if (selected) textSearch.pattern = textSearch.regex ? selected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : selected
+    if (replace) textSearch.showReplace = true
+    textSearch.open = true
+    await tick()
+    textPanel?.focus(replace)
+  }
+
+  async function closeTextSearch() {
+    textSearch.open = false
+    await tick()
+    if (workspace.active) tree.show(workspace.active)
+    else searchField?.focus()
+  }
+
+  async function openMatch(path: string, match: TextMatch | null, { pinned, focusEditor }: { pinned: boolean; focusEditor: boolean }) {
+    await openFile(path, pinned)
+    if (focusEditor) view?.focus()
+    if (!match || workspace.active !== path || !view) return
+    const doc = view.state.doc
+    if (match.line > doc.lines) return
+    const line = doc.line(match.line)
+    const from = Math.min(line.from + match.column, line.to)
+    view.dispatch({ selection: { anchor: from, head: Math.min(from + match.length, line.to) }, effects: EditorView.scrollIntoView(from, { y: 'center' }) })
+  }
 
   $effect(() => {
     const path = workspace.active
@@ -282,6 +328,11 @@
   }
 
   function onKey(event: KeyboardEvent) {
+    if (event.key === 'F4' && textSearch.open && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault()
+      textPanel?.step(event.shiftKey ? -1 : 1)
+      return
+    }
     if (!(event.ctrlKey || event.metaKey)) return
     const current = activeTab()
     const key = event.key.toLowerCase()
@@ -296,10 +347,10 @@
       closeTab(current)
     } else if ((key === 'p' || (key === 'f' && !event.defaultPrevented)) && !event.shiftKey && commandKey(event)) {
       // The editor and the log viewer handle their own Ctrl+F and mark it handled, so outside
-      // them Ctrl+F searches file names, like Ctrl+P.
+      // them Ctrl+F searches file names, like Ctrl+P. In the text search, it goes to its field.
       event.preventDefault()
-      searchField.focus()
-      searchField.select()
+      if (key === 'f' && textSearch.open) textPanel?.focus(false)
+      else focusNameSearch()
     } else if (key === 't' && event.shiftKey && commandKey(event)) {
       event.preventDefault()
       reopenTab()
@@ -329,6 +380,15 @@
     event.preventDefault()
     selectTab(tabs[to])
     document.getElementById(`tab-${to}`)?.focus()
+  }
+
+  async function focusNameSearch() {
+    if (textSearch.open) {
+      textSearch.open = false
+      await tick()
+    }
+    searchField?.focus()
+    searchField?.select()
   }
 
   function onSearchKey(event: KeyboardEvent) {
@@ -362,7 +422,7 @@
     openedFromSearch = null
     query = ''
     if (path) tree.show(path)
-    else searchField.blur()
+    else searchField?.blur()
   }
 
   function plural(count: number, noun: string) {
@@ -446,6 +506,11 @@
   let splitTotal = $derived(filesWidth - TREE_GAP)
   let treeMax = $derived(Math.min(splitTotal / 2, splitTotal - EDITOR_MIN))
   let treeWidth = $derived(clamp(treeSplit.value ?? Math.max(200, Math.min(300, splitTotal * 0.3)), TREE_MIN, treeMax))
+  // Search results need room to show a line around each match, so while you search the browser
+  // widens, taking up to half the space from the editor in a small window.
+  const SEARCH_MIN = 300
+  let searchMax = $derived(Math.max(treeMax, Math.min(splitTotal / 2, SEARCH_MIN)))
+  let browserWidth = $derived(textSearch.open ? clamp(Math.max(treeWidth, SEARCH_MIN), TREE_MIN, searchMax) : treeWidth)
   let preview: MarkdownPreview | undefined = $state()
   let previewDoc = $state<{ path: string; text: string } | null>(null)
   let editorScrollIgnoredUntil = 0
@@ -541,54 +606,61 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="files" bind:clientWidth={filesWidth} style:grid-template-columns={filesWidth ? `${treeWidth}px ${TREE_GAP}px minmax(0, 1fr)` : null}>
+<div class="files" bind:clientWidth={filesWidth} style:grid-template-columns={filesWidth ? `${browserWidth}px ${TREE_GAP}px minmax(0, 1fr)` : null}>
   <aside class="browser" id="file-browser">
-    <div class="browser-head">
-      <h2>Files</h2>
-      <span class="search">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.25" /><path d="M10.25 10.25l3.5 3.5" /></svg>
-        <input
-          bind:this={searchField}
-          bind:value={query}
-          type="search"
-          placeholder="Search names"
-          aria-label="Search file and folder names"
-          aria-controls="file-results"
-          aria-activedescendant={searching ? `result-${activeResult}` : undefined}
-          title="Search file and folder names ({shortcut('Ctrl+P')})"
-          spellcheck="false"
-          autocomplete="off"
-          onkeydown={onSearchKey}
-        />
-      </span>
-      <span class="tools">
-        <button class="icon" aria-label="Refresh" title="Refresh" onclick={() => tree.refresh()}>
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.25 8a5.25 5.25 0 1 1-1.54-3.71" /><path d="M12.25 1.75v3h-3" /></svg>
-        </button>
-        <button
-          class="icon"
-          class:armed={drag.paths.length > 0}
-          class:over={drag.overTrash}
-          data-drop="trash"
-          aria-label="Delete selected"
-          aria-disabled={!selection.size}
-          title={selection.size ? `Move the selection to the ${trashName}, or drop files here` : 'Select files to delete, or drag them here'}
-          onclick={() => selection.size && remove(tree.selectedPaths())}
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M3.75 4l.75 9.5h7l.75-9.5M6.5 6.75v4.5M9.5 6.75v4.5" /></svg>
-        </button>
-        <button class="icon" aria-label="Open the pack folder in {fileManager}" title="Open the pack folder in {fileManager}" onclick={openPackFolder}>
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 3.25h4.5l1.5 1.75h6.5v7.75H1.75z" /></svg>
-        </button>
-      </span>
-    </div>
-    {#if searching}
-      <FileSearchResults bind:this={results} bind:active={activeResult} {query} onopen={openFromSearch} onshowfolder={showFolder} />
+    {#if textSearch.open}
+      <TextSearch bind:this={textPanel} onopen={openMatch} onclose={closeTextSearch} />
+    {:else}
+      <div class="browser-head">
+        <h2>Files</h2>
+        <span class="search">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.25" /><path d="M10.25 10.25l3.5 3.5" /></svg>
+          <input
+            bind:this={searchField}
+            bind:value={query}
+            type="search"
+            placeholder="Search names"
+            aria-label="Search file and folder names"
+            aria-controls="file-results"
+            aria-activedescendant={searching ? `result-${activeResult}` : undefined}
+            title="Search file and folder names ({shortcut('Ctrl+P')})"
+            spellcheck="false"
+            autocomplete="off"
+            onkeydown={onSearchKey}
+          />
+        </span>
+        <span class="tools">
+          <button class="icon" aria-label="Search text in files" title="Search text in files ({shortcut('Ctrl+Shift+F')})" onclick={() => openTextSearch(false)}>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h8M2.5 6.5h4.5M2.5 9.5h3" /><circle cx="10.5" cy="10" r="2.75" /><path d="M12.5 12l2 2" /></svg>
+          </button>
+          <button class="icon" aria-label="Refresh" title="Refresh" onclick={() => tree.refresh()}>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.25 8a5.25 5.25 0 1 1-1.54-3.71" /><path d="M12.25 1.75v3h-3" /></svg>
+          </button>
+          <button
+            class="icon"
+            class:armed={drag.paths.length > 0}
+            class:over={drag.overTrash}
+            data-drop="trash"
+            aria-label="Delete selected"
+            aria-disabled={!selection.size}
+            title={selection.size ? `Move the selection to the ${trashName}, or drop files here` : 'Select files to delete, or drag them here'}
+            onclick={() => selection.size && remove(tree.selectedPaths())}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M3.75 4l.75 9.5h7l.75-9.5M6.5 6.75v4.5M9.5 6.75v4.5" /></svg>
+          </button>
+          <button class="icon" aria-label="Open the pack folder in {fileManager}" title="Open the pack folder in {fileManager}" onclick={openPackFolder}>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 3.25h4.5l1.5 1.75h6.5v7.75H1.75z" /></svg>
+          </button>
+        </span>
+      </div>
+      {#if searching}
+        <FileSearchResults bind:this={results} bind:active={activeResult} {query} onopen={openFromSearch} onshowfolder={showFolder} />
+      {/if}
     {/if}
-    <FileTree bind:this={tree} hidden={searching} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} onremoved={closeRemoved} ongitchange={loadChanges} />
+    <FileTree bind:this={tree} hidden={searching || textSearch.open} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} onremoved={closeRemoved} ongitchange={loadChanges} />
   </aside>
 
-  <Splitter value={treeWidth} min={TREE_MIN} max={treeMax} total={splitTotal} label="Resize the file browser" controls="file-browser" onresize={(px) => treeSplit.set(px)} onreset={() => treeSplit.reset()} />
+  <Splitter value={browserWidth} min={TREE_MIN} max={textSearch.open ? searchMax : treeMax} total={splitTotal} label="Resize the file browser" controls="file-browser" onresize={(px) => treeSplit.set(px)} onreset={() => treeSplit.reset()} />
 
   <section class="editor" bind:clientWidth={editorWidth}>
     {#if workspace.tabs.length}
@@ -733,7 +805,7 @@
       <div class="placeholder">
         <p>Open a file from the tree to edit it.</p>
         <p class="muted small">
-          Press {shortcut('Ctrl+S')} to save, {shortcut('Ctrl+F')} to search, or {shortcut('Ctrl+W')} to close the tab. In the editor, Tab
+          Press {shortcut('Ctrl+S')} to save, {shortcut('Ctrl+F')} to search, {shortcut('Ctrl+Shift+F')} to search every file, or {shortcut('Ctrl+W')} to close the tab. In the editor, Tab
           indents; press Esc, then Tab, to move on.
         </p>
       </div>
@@ -763,11 +835,13 @@
     overflow: hidden;
   }
 
+  /* The name search gets a line of its own, so it stays usable at the narrowest sidebar. */
   .browser-head {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
-    gap: 10px;
+    gap: 8px 10px;
     padding: 10px 12px;
     border-bottom: 1px solid var(--line);
     background: var(--surface);
@@ -780,9 +854,9 @@
 
   .search {
     position: relative;
-    flex: 1;
+    order: 1;
+    flex: 1 0 100%;
     min-width: 0;
-    margin: -4px 0;
   }
 
   .search svg {

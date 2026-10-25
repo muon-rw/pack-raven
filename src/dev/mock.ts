@@ -42,6 +42,14 @@ if (scenario === 'empty') {
 
 const staged = fx.status.staged.length ? fx.status.staged : fx.status.unstaged.slice(0, 2)
 const unstaged = fx.status.staged.length ? fx.status.unstaged : fx.status.unstaged.slice(2)
+// Texture changes, so the dirty scenario covers the side-by-side image diff.
+if (scenario === 'dirty') {
+  const texture = (path: string) => ({ text: `diff --git a/${path} b/${path}\nindex 3f2a1b0..9c8d7e6 100644\nBinary files a/${path} and b/${path} differ\n`, binary: true, truncated: false })
+  unstaged.push({ path: 'kubejs/assets/ravens/textures/item/raven_feather.png', status: 'M' })
+  staged.push({ path: 'kubejs/assets/ravens/textures/block/raven_banner.png', status: 'A' })
+  fx.diffs['u:kubejs/assets/ravens/textures/item/raven_feather.png'] = texture('kubejs/assets/ravens/textures/item/raven_feather.png')
+  fx.diffs['s:kubejs/assets/ravens/textures/block/raven_banner.png'] = texture('kubejs/assets/ravens/textures/block/raven_banner.png')
+}
 const diffFor = (path: string, isStaged: boolean) => fx.diffs[`${isStaged ? 's' : 'u'}:${path}`] ?? fx.diffs[`u:${path}`] ?? { text: '', binary: false, truncated: false }
 
 const pack = {
@@ -489,9 +497,10 @@ let updatePhase: Record<string, unknown> = scenario === 'dirty' ? { phase: 'read
 const updateView = () => ({ current: '0.1.0', auto: autoUpdate, supported: true, blocked: null, status: updatePhase })
 let cancelSignIn = () => {}
 
-function mockImage(path: string) {
+function mockImage(path: string, older = false) {
   const canvas = document.createElement('canvas')
   const frames = path.includes('fire') ? 4 : 1
+  // The older version of a changed texture has a moss corner, so the image diff has a few changed pixels to show.
   canvas.width = 16
   canvas.height = 16 * frames
   const context = canvas.getContext('2d')!
@@ -499,7 +508,7 @@ function mockImage(path: string) {
   for (let f = 0; f < frames; f++) {
     for (let y = 0; y < 16; y++) {
       for (let x = 0; x < 16; x++) {
-        if (frames === 1) context.fillStyle = (x + y) % 4 < 2 ? '#868e96' : '#495057'
+        if (frames === 1) context.fillStyle = older && x < 6 && y < 6 ? ((x + y) % 3 ? '#4d6b2f' : '#7f9b5c') : (x + y) % 4 < 2 ? '#868e96' : '#495057'
         else context.fillStyle = (x * 7 + y * 3 + f * 5) % 6 < 3 ? colors[f] : 'transparent'
         context.fillRect(x, f * 16 + y, 1, 1)
       }
@@ -596,7 +605,99 @@ const noRunArgs = () => ({ clientJvmArgs: [] as string[], clientArgs: [] as stri
 let runArgs = noRunArgs()
 let appRunArgs = noRunArgs()
 
+type MockTextQuery = { pattern: string; regex: boolean; matchCase: boolean; wholeWord: boolean; include: string; exclude: string; includeIgnored: boolean; replace: string | null }
+let lastReplace: { label: string; before: Record<string, string> } | null = null
+
+function textRegex(q: MockTextQuery) {
+  let body = q.regex ? q.pattern : q.pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  if (q.wholeWord) body = `\\b(?:${body})\\b`
+  try {
+    return new RegExp(body, q.matchCase ? 'gu' : 'giu')
+  } catch (e) {
+    throw `That isn't a valid regex: ${(e as Error).message.replace(/^.*: /, '').toLowerCase()}.`
+  }
+}
+
+function mockGlob(list: string) {
+  const patterns = list.split(',').map((p) => p.trim().replace(/^\.?\//, '').replace(/\/$/, '')).filter(Boolean)
+  const toRegex = (p: string) => new RegExp(`(^|/)${p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\0').replace(/\*/g, '[^/]*').replace(/\0/g, '.*')}(/|$)`, 'i')
+  return patterns.length ? patterns.map(toRegex) : null
+}
+
+function textFiles(q: MockTextQuery) {
+  const include = mockGlob(q.include)
+  const exclude = mockGlob(q.exclude)
+  const entries = Object.values(fx.dirs).flat() as MockEntry[]
+  const ignored = (path: string) => entries.some((e) => e.ignored && (path === e.path || path.startsWith(`${e.path}/`)))
+  return [...new Set([...entries.filter((e) => !e.isDir).map((e) => e.path), ...Object.keys(fx.files)])]
+    .filter((path) => (q.includeIgnored || !ignored(path)) && (!include || include.some((r) => r.test(path))) && !exclude?.some((r) => r.test(path)))
+    .map((path) => ({ path, text: (readFile(path) as { text: string | null }).text }))
+    .filter((file): file is { path: string; text: string } => file.text !== null)
+    .sort((a, b) => a.path.toLowerCase().localeCompare(b.path.toLowerCase()))
+}
+
+function textMatches(text: string, q: MockTextQuery) {
+  const regex = textRegex(q)
+  return text.split('\n').flatMap((line, index) =>
+    [...line.matchAll(regex)]
+      .filter((m) => m[0])
+      .map((m) => {
+        const indent = line.length - line.trimStart().length
+        const from = m.index! - Math.min(indent, m.index!) > 30 ? m.index! - 30 : Math.min(indent, m.index!)
+        const prefix = from > Math.min(indent, m.index!) ? '…' : ''
+        return {
+          line: index + 1,
+          column: m.index!,
+          length: m[0].length,
+          preview: prefix + line.slice(from, from + 250) + (from + 250 < line.length ? '…' : ''),
+          start: prefix.length + m.index! - from,
+          end: prefix.length + m.index! - from + m[0].length,
+          replacement: q.replace === null ? null : m[0].replace(new RegExp(regex.source, regex.flags.replace('g', '')), q.regex ? q.replace : q.replace.replace(/\$/g, '$$$$')),
+        }
+      }),
+  )
+}
+
 const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
+  search_text: (a) => {
+    const q = a.query as MockTextQuery
+    if (!q.pattern) return { files: [], total: 0, truncated: false, searched: 0, tooLarge: 0 }
+    const files = textFiles(q)
+    const found = files.map((f) => ({ path: f.path, matches: textMatches(f.text, q) })).filter((f) => f.matches.length)
+    return { files: found, total: found.reduce((n, f) => n + f.matches.length, 0), truncated: false, searched: files.length, tooLarge: 0 }
+  },
+  replace_text: (a) => {
+    const q = a.query as MockTextQuery
+    const before: Record<string, string> = {}
+    let replaced = 0
+    let missed = 0
+    for (const target of a.targets as { path: string; matches: [number, number][] }[]) {
+      const text = (readFile(target.path) as { text: string | null }).text ?? ''
+      const wanted = new Set(target.matches.map(([line, column]) => `${line}:${column}`))
+      const lines = text.split('\n')
+      let hits = 0
+      const next = lines.map((line, index) => {
+        let out = ''
+        let copied = 0
+        for (const m of textMatches(line, q)) {
+          if (!wanted.has(`${index + 1}:${m.column}`)) continue
+          out += line.slice(copied, m.column) + m.replacement
+          copied = m.column + m.length
+          hits++
+        }
+        return out + line.slice(copied)
+      })
+      missed += wanted.size - hits
+      if (!hits) continue
+      before[target.path] = text
+      fx.files[target.path] = { ...(readFile(target.path) as object), text: next.join('\n') }
+      replaced += hits
+    }
+    const files = Object.keys(before)
+    const label = `Replace in ${files.length === 1 ? files[0].slice(files[0].lastIndexOf('/') + 1) : `${files.length} items`}`
+    if (files.length) lastReplace = { label, before }
+    return { label, files, replaced, missed, undoable: true }
+  },
   list_packs: () => (scenario === 'nopack' ? { active: null, packs: [], instancesRoot: 'C:/Instances' } : { active: pack.dir, packs: [pack], instancesRoot: 'C:/Instances' }),
   overview: () => ({
     name: pack.name,
@@ -698,6 +799,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   defender_status: () => ({ active: true, exclusionsReadable: false, missing: [], prompt: false }),
   git_overview: () => ({ status: { branch: 'master', upstream: 'origin/master', ahead: 1, behind: 0, hasCommits: true, hasRemote: true, conflicted: [], ...fx.status, staged, unstaged }, commits: fx.commits }),
   git_diff: (a) => diffFor(String(a.path), Boolean(a.staged)),
+  git_blob: (a) => dataUrlBytes(mockImage(String(a.path), a.version === 'head' || String(a.path).includes('feather'))),
+  git_apply_lines: (a) => console.info('[mock] applied lines', a.action, a.path, a.selected),
   list_dir: (a) => listDir(String(a.path)),
   read_file: (a) =>
     String(a.path).endsWith('huge-recipes.json')
@@ -773,8 +876,14 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     moved: [],
   }),
   drag_out: () => null,
-  file_history: () => ({ undo: 'Rename options.txt', redo: null }),
-  file_undo: () => null,
+  file_history: () => ({ undo: lastReplace?.label ?? 'Rename options.txt', redo: null }),
+  file_undo: () => {
+    if (!lastReplace) return null
+    const { label, before } = lastReplace
+    lastReplace = null
+    for (const [path, text] of Object.entries(before)) fx.files[path] = { ...(readFile(path) as object), text }
+    return { label, moved: [], removed: [], added: [], changed: Object.keys(before) }
+  },
   paste_files: () => {
     throw 'The clipboard has no files to paste.'
   },

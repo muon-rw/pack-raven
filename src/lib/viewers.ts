@@ -64,11 +64,14 @@ export function outerArchive(path: string) {
 
 const mimeTypes: Record<string, string> = { svg: 'image/svg+xml', ogg: 'audio/ogg', oga: 'audio/ogg', mp3: 'audio/mpeg', wav: 'audio/wav' }
 
+export function blobUrl(path: string, bytes: ArrayBuffer) {
+  return URL.createObjectURL(new Blob([bytes], { type: mimeTypes[extensionOf(path)] ?? '' }))
+}
+
 // Files on disk stream through the asset protocol, which supports seeking in long videos.
 // Files inside a jar have no path the webview can load, so we read their bytes instead.
 export async function mediaUrl(path: string, archived: boolean): Promise<{ url: string; release: () => void }> {
   if (!archived) return { url: convertFileSrc(await api.mediaPath(path)), release: () => {} }
-  const bytes = await api.readBytes(path)
-  const url = URL.createObjectURL(new Blob([bytes], { type: mimeTypes[extensionOf(path)] ?? '' }))
+  const url = blobUrl(path, await api.readBytes(path))
   return { url, release: () => URL.revokeObjectURL(url) }
 }

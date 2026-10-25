@@ -1,11 +1,14 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
-  import { api, errorText, type FileChange, type GitCommit, type GitDiff, type GitStatus, type ModConflict, type Prefer } from '../lib/api'
+  import { ask } from '@tauri-apps/plugin-dialog'
+  import { api, errorText, type FileChange, type GitCommit, type GitDiff, type GitStatus, type LineAction, type ModConflict, type Prefer } from '../lib/api'
   import { job, onJobEnd } from '../lib/jobs.svelte'
   import { nav, showInFiles } from '../lib/nav.svelte'
   import { confirmDiscard, discardChanges, ignoreItems, type Feedback } from '../lib/gitActions'
+  import { LOCKFILE } from '../lib/modsync'
+  import { viewerFor } from '../lib/viewers'
   import { openIgnoreDialog } from '../lib/ignoreDialog.svelte'
   import { changeRows, type ChangeRow } from '../lib/changeTree'
   import { RangeSelection, isPlainClick } from '../lib/rangeSelection'
@@ -17,13 +20,15 @@
   import LogView from '../components/LogView.svelte'
   import LinkedText from '../components/LinkedText.svelte'
   import Splitter from '../components/Splitter.svelte'
+  import DiffView from '../components/DiffView.svelte'
+  import ImageDiff from '../components/ImageDiff.svelte'
   import { StoredSplit, clamp } from '../lib/storedSplit.svelte'
 
   let { onchange }: { onchange: () => void } = $props()
 
   type Group = 'staged' | 'unstaged'
   type Layout = 'list' | 'tree'
-  type Selection = { path: string; staged: boolean; untracked: boolean }
+  type Selection = { path: string; staged: boolean; untracked: boolean; status: string | null; origPath: string | null }
 
   const LAYOUT_KEY = 'packraven.gitLayout'
 
@@ -148,6 +153,7 @@
   })
 
   // We clear the old diff on a new selection, so the header never sits over another file's changes.
+  // A poll that finds the same diff leaves it alone, so the lines you picked stay picked.
   function loadDiff(current: Selection, fresh: boolean) {
     if (fresh) {
       diff = null
@@ -156,7 +162,7 @@
     api
       .gitDiff(current.path, current.staged, current.untracked)
       .then((d) => {
-        if (selected === current) diff = d
+        if (selected === current && (d.text !== diff?.text || d.binary !== diff.binary || d.truncated !== diff.truncated)) diff = d
       })
       .catch((e) => selected === current && (error = errorText(e)))
       .finally(() => selected === current && (diffLoading = false))
@@ -364,6 +370,46 @@
     }
   }
 
+  const DISCARD_PREVIEW_LINES = 6
+  const DISCARD_PREVIEW_CHARS = 60
+
+  function discardPreview(text: string, lines: number[]) {
+    const raw = text.split('\n')
+    const shown = lines.slice(0, DISCARD_PREVIEW_LINES).map((i) => {
+      const line = (raw[i] ?? '').replace(/\r$/, '')
+      const body = line.slice(1)
+      return `${line[0] === '+' ? '+' : '−'} ${body.length > DISCARD_PREVIEW_CHARS ? `${body.slice(0, DISCARD_PREVIEW_CHARS - 1)}…` : body}`
+    })
+    const more = lines.length - shown.length
+    return [...shown, ...(more > 0 ? [`and ${more} more`] : [])].join('\n')
+  }
+
+  // DiffView shows apply errors next to the lines, so we throw them back to it instead of
+  // reporting them in this column. A false result means you cancelled.
+  async function applyLines(action: LineAction, lines: number[]) {
+    const current = selected
+    const shown = diff
+    if (!current || !shown) return false
+    if (action === 'discard') {
+      const count = lines.length
+      const confirmed = await ask(
+        `Discard ${count === 1 ? 'this line' : `these ${count} lines`} in ${current.path}?\n\n${discardPreview(shown.text, lines)}\n\npackraven deletes the added lines and puts the removed ones back. This can't be undone.`,
+        { title: 'Discard lines', kind: 'warning', okLabel: 'Discard', cancelLabel: 'Cancel' },
+      )
+      if (!confirmed) return false
+    }
+    try {
+      await api.gitApplyLines(current.path, shown.text, lines, action)
+    } catch (e) {
+      throw errorText(e)
+    } finally {
+      await load()
+      onchange()
+      if (selected === current) loadDiff(current, false)
+    }
+    return true
+  }
+
   async function commit() {
     if (!canCommit) return
     lastAction = 'commit'
@@ -406,14 +452,6 @@
     return index < 0 ? { dir: '', name: path } : { dir: path.slice(0, index + 1), name: path.slice(index + 1) }
   }
 
-  function diffClass(line: string) {
-    if (line.startsWith('@@')) return 'hunk'
-    if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('index ')) return 'meta'
-    if (line.startsWith('+')) return 'add'
-    if (line.startsWith('-')) return 'del'
-    return ''
-  }
-
   let busy = $derived(job('git').phase === 'running' || checkingPull)
   let canCommit = $derived(!busy && !!status?.staged.length && message.trim().length > 0)
   let commitHint = $derived(
@@ -425,7 +463,6 @@
         ? 'Write a message describing the change.'
         : null,
   )
-  let diffLines = $derived(diff ? diff.text.split('\n').filter((l) => !l.startsWith('\\ No newline')) : [])
   let groupChanges = $derived({ staged: status?.staged ?? [], unstaged: status?.unstaged ?? [] })
   let rowsByGroup = $derived({
     staged: changeRows(groupChanges.staged, layout === 'tree', (dir) => collapsed.has(`staged:${dir}`)),
@@ -438,14 +475,21 @@
   })
   let selectedStaged = $derived(selectedChanges('staged'))
   let selectedUnstaged = $derived(selectedChanges('unstaged'))
-  // We show a diff when you select exactly one file, and read the status untracked so the poll
-  // doesn't reload a diff that's already open.
+  // We show a diff when you select exactly one file. Each poll replaces every change, so we keep
+  // the selected one's status as text and only reload the diff when that text changes, such as
+  // when staging some of a new file's lines makes git track it.
   let diffKey = $derived(keys.size === 1 && ![...keys][0].endsWith('/') ? [...keys][0] : null)
+  let selectedChange = $derived.by(() => {
+    if (!diffKey) return null
+    const { group, path } = parseKey(diffKey)
+    const change = groupChanges[group].find((c) => c.path === path)
+    return change ? `${change.status}\0${change.origPath ?? ''}` : null
+  })
   let selected = $derived.by((): Selection | null => {
     if (!diffKey) return null
     const { group, path } = parseKey(diffKey)
-    const change = untrack(() => groupChanges[group].find((c) => c.path === path))
-    return { path, staged: group === 'staged', untracked: change?.status === '?' }
+    const [status, origPath] = selectedChange?.split('\0') ?? [null, null]
+    return { path, staged: group === 'staged', untracked: status === '?', status, origPath: origPath || null }
   })
   let gitJob = $derived(job('git'))
 </script>
@@ -678,18 +722,15 @@
       </div>
       {#if !diff && diffLoading}
         <p class="muted pad">Loading the diff.</p>
+      {:else if diff?.binary && viewerFor(selected.path) === 'image'}
+        <ImageDiff path={selected.path} origPath={selected.origPath} staged={selected.staged} status={selected.status} version={diff.text} />
       {:else if diff?.binary}
         <p class="muted pad">This is a binary file, so there's no text diff to show.</p>
       {:else if diff && !diff.text.trim()}
         <p class="muted pad">No content changes. Git flagged this file over line endings or file metadata only; you can stage it to clear the flag.</p>
       {:else if diff}
-        {#if diff.truncated}<div class="pad"><Notice tone="warn"><p>This diff is very large, so packraven shows only the first part.</p></Notice></div>{/if}
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <div class="diff-body" role="region" aria-label="Changes in {selected.path}" tabindex="0">
-          {#each diffLines as line, i (i)}
-            <div class="line {diffClass(line)}">{line || ' '}</div>
-          {/each}
-        </div>
+        {#if diff.truncated}<div class="pad"><Notice tone="warn"><p>This diff is very large, so packraven shows only the first part, and you can only stage the whole file.</p></Notice></div>{/if}
+        <DiffView text={diff.text} path={selected.path} staged={selected.staged} selectable={!diff.truncated} canDiscard={selected.path !== LOCKFILE} onapply={applyLines} />
       {/if}
     {/if}
   </section>
@@ -1088,39 +1129,5 @@
 
   .selection-count {
     font-weight: 700;
-  }
-
-  .diff-body {
-    flex: 1;
-    overflow: auto;
-    padding: 8px 0;
-    font-family: var(--font-log);
-    font-size: var(--step--2);
-    line-height: 1.5;
-  }
-
-  .line {
-    padding: 0 14px;
-    white-space: pre;
-    content-visibility: auto;
-    contain-intrinsic-size: auto 1.5em;
-  }
-
-  .line.add {
-    background: var(--ok-fill);
-  }
-
-  .line.del {
-    background: var(--fail-fill);
-  }
-
-  .line.hunk {
-    color: var(--muted);
-    background: var(--surface);
-    margin-top: 6px;
-  }
-
-  .line.meta {
-    color: var(--muted);
   }
 </style>

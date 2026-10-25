@@ -311,6 +311,8 @@ export interface GitDiff {
   truncated: boolean
 }
 
+export type LineAction = 'stage' | 'unstage' | 'discard'
+
 export interface DirEntry {
   name: string
   path: string
@@ -326,6 +328,45 @@ export interface HistoryOutcome {
   moved: [string, string][]
   removed: string[]
   added: string[]
+  changed: string[]
+}
+
+export interface TextQuery {
+  pattern: string
+  regex: boolean
+  matchCase: boolean
+  wholeWord: boolean
+  include: string
+  exclude: string
+  includeIgnored: boolean
+  replace: string | null
+}
+
+/** `column` and `length` place the match in the file; `start` and `end` place it in `preview`. */
+export interface TextMatch {
+  line: number
+  column: number
+  length: number
+  preview: string
+  start: number
+  end: number
+  replacement: string | null
+}
+
+export interface TextResults {
+  files: { path: string; matches: TextMatch[] }[]
+  total: number
+  truncated: boolean
+  searched: number
+  tooLarge: number
+}
+
+export interface Replaced {
+  label: string
+  files: string[]
+  replaced: number
+  missed: number
+  undoable: boolean
 }
 
 export interface Pasted {
@@ -451,6 +492,8 @@ export const api = {
   compressPaths: (paths: string[]) => invoke<string>('compress_paths', { paths }),
   mediaPath: (path: string) => invoke<string>('media_path', { path }),
   indexFiles: () => invoke<{ paths: string[]; truncated: boolean }>('index_files'),
+  searchText: (query: TextQuery) => invoke<TextResults | null>('search_text', { query }),
+  replaceText: (query: TextQuery, targets: { path: string; matches: [number, number][] }[]) => invoke<Replaced>('replace_text', { query, targets }),
   importPaths: (dir: string, sources: string[]) => invoke<Pasted>('import_paths', { dir, sources }),
   dragOut: (paths: string[]) => invoke<void>('drag_out', { paths }),
   fileHistory: () => invoke<{ undo: string | null; redo: string | null }>('file_history'),
@@ -459,6 +502,8 @@ export const api = {
   movePaths: (paths: string[], dir: string) => invoke<[string, string][]>('move_paths', { paths, dir }),
   gitOverview: () => invoke<{ status: GitStatus; commits: GitCommit[] }>('git_overview'),
   gitDiff: (path: string, staged: boolean, untracked: boolean) => invoke<GitDiff>('git_diff', { path, staged, untracked }),
+  gitBlob: (path: string, version: 'head' | 'index') => invoke<ArrayBuffer>('git_blob', { path, version }),
+  gitApplyLines: (path: string, diff: string, selected: number[], action: LineAction) => invoke<void>('git_apply_lines', { path, diff, selected, action }),
   gitStage: (paths: string[]) => invoke<void>('git_stage', { paths }),
   gitUnstage: (paths: string[]) => invoke<void>('git_unstage', { paths }),
   gitIgnoreOptions: (paths: string[]) => invoke<IgnoreOption[]>('git_ignore_options', { paths }),

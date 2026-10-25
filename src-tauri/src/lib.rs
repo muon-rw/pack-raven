@@ -46,6 +46,7 @@ mod setup;
 mod sides;
 mod system_commands;
 mod testrun;
+mod text_search;
 mod watcher;
 #[cfg(test)]
 mod live_tests;
@@ -230,6 +231,8 @@ pub fn run() {
             pack_commands::server_launch,
             git_commands::git_overview,
             git_commands::git_diff,
+            git_commands::git_blob,
+            git_commands::git_apply_lines,
             git_commands::git_stage,
             git_commands::git_unstage,
             git_commands::git_discard,
@@ -252,6 +255,8 @@ pub fn run() {
             file_commands::move_paths,
             file_commands::open_pack_folder,
             file_commands::index_files,
+            file_commands::search_text,
+            file_commands::replace_text,
             file_commands::copy_paths,
             file_commands::open_with_default_app,
             file_commands::default_app,
