@@ -42,6 +42,12 @@ export function extensionOf(path: string) {
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
 }
 
+const FORMATTABLE = new Set(['json', 'jsonc', 'mcmeta', 'toml', 'yml', 'yaml', 'js', 'mjs'])
+
+export function canFormat(path: string) {
+  return FORMATTABLE.has(extensionOf(path))
+}
+
 export function isGzip(path: string) {
   return extensionOf(path) === 'gz'
 }

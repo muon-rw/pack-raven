@@ -125,17 +125,7 @@ impl Outcome {
 fn apply(action: Action) -> Result<(Option<Action>, Changes)> {
     match action {
         Action::Move(pairs) => {
-            for (from, to) in &pairs {
-                if !from.exists() {
-                    bail!("{} is no longer there", from.display());
-                }
-                if to.exists() {
-                    bail!("{} already exists", to.display());
-                }
-            }
-            for (from, to) in &pairs {
-                crate::files::move_entry(from, to)?;
-            }
+            crate::files::move_all(&pairs)?;
             let inverse = pairs.iter().map(|(from, to)| (to.clone(), from.clone())).collect();
             Ok((Some(Action::Move(inverse)), Changes { moved: pairs, ..Default::default() }))
         }

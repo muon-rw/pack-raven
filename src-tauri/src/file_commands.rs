@@ -272,6 +272,20 @@ pub fn rename_path(state: State<'_, AppState>, from: String, to: String) -> CmdR
 }
 
 #[tauri::command]
+pub async fn rename_paths(state: State<'_, AppState>, renames: Vec<(String, String)>) -> CmdResult<Vec<(String, String)>> {
+    let root = state.settings().instance_dir;
+    let task_root = root.clone();
+    let renamed = tauri::async_runtime::spawn_blocking(move || files::rename_all(&task_root, &renames)).await.map_err(|e| e.to_string())?.map_err(err)?;
+    if !renamed.is_empty() {
+        let sources: Vec<&String> = renamed.iter().map(|(from, _)| from).collect();
+        let label = format!("Rename {}", history::describe(&sources));
+        let undo = Action::Move(renamed.iter().map(|(from, to)| (root.join(to), root.join(from))).collect());
+        state.history.lock().unwrap().record(&root, label, Some(undo));
+    }
+    Ok(renamed)
+}
+
+#[tauri::command]
 pub fn move_paths(state: State<'_, AppState>, paths: Vec<String>, dir: String) -> CmdResult<Vec<(String, String)>> {
     let root = state.settings().instance_dir;
     let moved = files::move_into(&root, &paths, &dir).map_err(err)?;

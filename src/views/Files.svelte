@@ -2,6 +2,7 @@
   import { onMount, tick, untrack } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { EditorView } from '@codemirror/view'
+  import type { Text } from '@codemirror/state'
   import { openLintPanel } from '@codemirror/lint'
   import { ask } from '@tauri-apps/plugin-dialog'
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
@@ -21,7 +22,8 @@
   import LogViewer from '../components/LogViewer.svelte'
   import MarkdownPreview from '../components/MarkdownPreview.svelte'
   import { SvelteMap } from 'svelte/reactivity'
-  import { isGzip, outerArchive, viewerFor } from '../lib/viewers'
+  import { canFormat, isGzip, outerArchive, viewerFor } from '../lib/viewers'
+  import type { FormatOutcome } from '../lib/format'
   import ContextMenu from '../components/ContextMenu.svelte'
   import type { MenuItem } from '../lib/menu'
   import Notice from '../components/Notice.svelte'
@@ -328,6 +330,13 @@
   }
 
   function onKey(event: KeyboardEvent) {
+    // On macOS, Option changes event.key, so we match the physical key.
+    if (event.code === 'KeyF' && event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey && formatTarget(event.target)) {
+      event.preventDefault()
+      format()
+      return
+    }
+    if (event.key === 'Escape') formatNote = null
     if (event.key === 'F4' && textSearch.open && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault()
       textPanel?.step(event.shiftKey ? -1 : 1)
@@ -464,13 +473,29 @@
   let blockedTimer = 0
   let blockedSeen = workspace.blocked
 
+  let blockedText = $derived(
+    current?.archived
+      ? `This file is inside ${name(outerArchive(current.path))}, so you can't change it here. Extract the archive to edit its files.`
+      : "We show this file decompressed, so you can't change it here. Extract it to edit a copy.",
+  )
+
   $effect(() => {
     if (workspace.blocked === blockedSeen) return
     blockedSeen = workspace.blocked
     blockedNotice = true
+    announce(untrack(() => blockedText))
     clearTimeout(blockedTimer)
     blockedTimer = setTimeout(() => (blockedNotice = false), 3000)
   })
+
+  // Screen readers can miss a live region that appears with its text already in it, and don't
+  // repeat a message that hasn't changed, so one region stays on the page and we clear it first.
+  let announcement = $state('')
+
+  function announce(text: string) {
+    announcement = ''
+    requestAnimationFrame(() => (announcement = text))
+  }
 
   async function openLarge(path: string) {
     try {
@@ -479,6 +504,81 @@
     } catch (e) {
       openError = errorText(e)
     }
+  }
+
+  // Typing in a field, like the name search or the editor's own find panel, shouldn't format
+  // the open file.
+  function formatTarget(target: EventTarget | null) {
+    return !(target instanceof HTMLElement && target.closest('input, textarea, select'))
+  }
+
+  function formatMessage(outcome: FormatOutcome) {
+    switch (outcome.kind) {
+      case 'formatted':
+        return `We formatted this file and checked that its values didn't change. Press ${shortcut('Ctrl+Z')} to undo.`
+      case 'unchanged':
+        return 'This file is already formatted.'
+      case 'invalid':
+        return `${outcome.line ? `Line ${outcome.line} has` : 'This file has'} a syntax error. Fix it, then format again.`
+      case 'unsupported':
+        return 'We can only format JSON, TOML, YAML and JavaScript files.'
+      case 'unsafe':
+        return "We couldn't format this file without changing its values, so we left it as it was."
+      case 'edited':
+        return 'You edited the file while we were formatting it, so we left it as it was.'
+    }
+  }
+
+  let formatNote = $state<{ path: string; text: string; warn: boolean; doc: Text } | null>(null)
+  let formatTimer = 0
+  let formatting = false
+  // Formatting blocks the window until it's done, which takes about a second for a YAML file
+  // this long, so past it we show that we're working first.
+  const SLOW_FORMAT_CHARS = 300_000
+
+  // A note about the file goes stale once you edit it or switch tabs. Until then, a problem
+  // stays up so you have time to read which line to fix.
+  $effect(() => {
+    if (formatNote && (current?.path !== formatNote.path || (current.state && current.state.doc !== formatNote.doc))) formatNote = null
+  })
+
+  // The formatters are part of the lazily loaded editor bundle, so we load them only when you ask.
+  async function format() {
+    const path = current?.path
+    if (!path || !current?.state) return
+    if (readOnly) {
+      workspace.blocked++
+      return
+    }
+    if (formatting) return
+    formatting = true
+    try {
+      const { formatView } = await import('../lib/format')
+      if (!view || workspace.active !== path) return
+      if (view.state.doc.length > SLOW_FORMAT_CHARS) {
+        clearTimeout(formatTimer)
+        formatNote = { path, text: 'Formatting…', warn: false, doc: view.state.doc }
+        await new Promise((painted) => requestAnimationFrame(() => requestAnimationFrame(painted)))
+        if (!view || workspace.active !== path) return
+      }
+      const outcome = await formatView(view, path)
+      if (!view || workspace.active !== path) return
+      showFormatOutcome(path, outcome)
+    } finally {
+      formatting = false
+    }
+  }
+
+  function showFormatOutcome(path: string, outcome: FormatOutcome) {
+    if (!view) return
+    const warn = outcome.kind === 'invalid' || outcome.kind === 'unsafe'
+    const text = formatMessage(outcome)
+    formatNote = { path, text, warn, doc: view.state.doc }
+    announce(text)
+    // After a click, the button keeps focus, and undo only works in the editor.
+    view.focus()
+    clearTimeout(formatTimer)
+    if (!warn) formatTimer = setTimeout(() => (formatNote = null), 3000)
   }
 
   // The linter is part of the lazily loaded editor bundle, so we load it only when you ask.
@@ -605,6 +705,7 @@
 </script>
 
 <svelte:window onkeydown={onKey} />
+<p class="visually-hidden" role="status">{announcement}</p>
 
 <div class="files" bind:clientWidth={filesWidth} style:grid-template-columns={filesWidth ? `${browserWidth}px ${TREE_GAP}px minmax(0, 1fr)` : null}>
   <aside class="browser" id="file-browser">
@@ -718,20 +819,19 @@
           {#if readOnly && viewer !== 'log'}<span class="read-only" class:flash={blockedNotice}>Read-only</span>{/if}
           <button class="ghost action" onclick={() => reveal(outerArchive(current!.path))}>{current.archived ? 'Show the archive in folder' : 'Show in folder'}</button>
           <button class="ghost action" onclick={() => reloadTab(current!)}>Reload</button>
+          {#if current.state && !readOnly && canFormat(current.path)}
+            <button class="ghost action" title="Tidy indentation and spacing without changing any values ({shortcut('Shift+Alt+F')})" aria-keyshortcuts="Shift+Alt+F" onclick={format}>Format</button>
+          {/if}
           {#if current.state && !readOnly}
             <button class="primary save" disabled={!current.dirty} onclick={() => save(current!.path).then(loadChanges)}>
               {current.dirty ? 'Save' : 'Saved'} <kbd aria-hidden="true">{shortcut('Ctrl+S')}</kbd>
             </button>
           {/if}
         </span>
-        {#if readOnly && blockedNotice}
-          <p class="blocked-note" role="status">
-            {#if current.archived}
-              This file is inside {name(outerArchive(current.path))}, so you can't change it here. Extract the archive to edit its files.
-            {:else}
-              We show this file decompressed, so you can't change it here. Extract it to edit a copy.
-            {/if}
-          </p>
+        {#if formatNote?.path === current.path}
+          <p class="toolbar-note" class:warn={formatNote.warn} aria-hidden="true">{formatNote.text}</p>
+        {:else if readOnly && blockedNotice}
+          <p class="toolbar-note warn" aria-hidden="true">{blockedText}</p>
         {/if}
       </div>
     {/if}
@@ -805,7 +905,7 @@
       <div class="placeholder">
         <p>Open a file from the tree to edit it.</p>
         <p class="muted small">
-          Press {shortcut('Ctrl+S')} to save, {shortcut('Ctrl+F')} to search, {shortcut('Ctrl+Shift+F')} to search every file, or {shortcut('Ctrl+W')} to close the tab. In the editor, Tab
+          Press {shortcut('Ctrl+S')} to save, {shortcut('Shift+Alt+F')} to format, {shortcut('Ctrl+F')} to search, {shortcut('Ctrl+Shift+F')} to search every file, or {shortcut('Ctrl+W')} to close the tab. In the editor, Tab
           indents; press Esc, then Tab, to move on.
         </p>
       </div>
@@ -1163,7 +1263,9 @@
     }
   }
 
-  .blocked-note {
+  /* The note covers the top of the editor, so clicks pass through it. */
+  .toolbar-note {
+    pointer-events: none;
     position: absolute;
     z-index: 5;
     top: calc(100% + 6px);
@@ -1172,9 +1274,13 @@
     padding: 6px 10px;
     font-size: var(--step--1);
     background: var(--surface);
-    border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+    border: 1px solid var(--line-strong);
     border-radius: var(--radius-control);
     box-shadow: 0 6px 16px var(--shadow);
+  }
+
+  .toolbar-note.warn {
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
   }
 
   .buttons {
@@ -1188,6 +1294,7 @@
     display: grid;
     place-content: center;
     gap: 6px;
+    padding: 0 16px;
     text-align: center;
     color: var(--muted);
   }

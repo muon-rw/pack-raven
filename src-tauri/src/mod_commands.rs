@@ -107,7 +107,8 @@ pub async fn mod_changelog(project_id: u64, file_id: u64) -> CmdResult<String> {
 
 #[tauri::command]
 pub async fn set_mods_enabled(state: State<'_, AppState>, paths: Vec<String>, enabled: bool) -> CmdResult<Vec<String>> {
-    if client_running(&state) {
+    // The client never opens .disabled files, so only disabling has to wait for it to close.
+    if !enabled && client_running(&state) {
         return Err(CLIENT_HAS_MODS_OPEN.into());
     }
     let dir = state.settings().instance_dir;

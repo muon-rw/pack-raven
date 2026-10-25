@@ -7,7 +7,12 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 - Individual rows in git view can now be unstaged
 - Git diff windows can now be scrolled horizontally
 - Images now show their before/after state in the git view, rather than a binary file warning
-- Added Find in Files/Find and Replace in Files
+- Added Find in Files/Find and Replace in Files (Ctrl+Shift+F/Ctrl+Shift+H)
+- Added Bulk Rename Files
+- Added Quick Format (Alt+Shift+F in editor)
+
+### Changed
+- Disabled mods can now be enabled while the test client is running
 
 ## [0.1.4] - 2026-10-21
 ### Added

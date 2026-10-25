@@ -252,6 +252,7 @@ pub fn run() {
             file_commands::copy_files,
             file_commands::paste_files,
             file_commands::rename_path,
+            file_commands::rename_paths,
             file_commands::move_paths,
             file_commands::open_pack_folder,
             file_commands::index_files,

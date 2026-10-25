@@ -10,9 +10,11 @@
   import { RangeSelection, isPlainClick } from '../lib/rangeSelection'
   import { commandKey, fileManager, isMac, shortcut } from '../lib/platform'
   import { isGzip, outerArchive } from '../lib/viewers'
+  import BulkRename from './BulkRename.svelte'
   import ContextMenu from './ContextMenu.svelte'
   import Twisty from './Twisty.svelte'
   import type { MenuItem } from '../lib/menu'
+  import type { RenameItem } from '../lib/bulkRename.svelte'
 
   let {
     selected,
@@ -50,6 +52,7 @@
   let message = $state<{ text: string; tone: 'fail' | 'note' } | null>(null)
   let edit = $state<{ kind: 'file' | 'folder' | 'rename'; parent: string; path: string | null; error: string | null; busy: boolean } | null>(null)
   let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  let bulkRename = $state<RenameItem[] | null>(null)
   let cutPaths = $state<string[]>([])
   let jump = $state<{ text: string; found: boolean } | null>(null)
   let jumpTimer = 0
@@ -324,7 +327,9 @@
       if (row.entry.archived) explainReadOnly(row.entry.path)
       else paste(targetDir(row))
     } else if (event.key === 'F2') {
-      if (row.entry.archived) explainReadOnly(row.entry.path)
+      const paths = selectedPaths()
+      if (readOnly(paths.length ? paths : [row.entry.path])) explainReadOnly(row.entry.path)
+      else if (paths.length > 1) startBulkRename(paths)
       else startRename(row.entry.path)
     } else if (event.key === 'Delete' || (isMac && event.metaKey && event.key === 'Backspace')) {
       if (readOnly(selectedPaths())) explainReadOnly(row.entry.path)
@@ -408,6 +413,7 @@
           : []),
         { label: 'Paste', shortcut: shortcut('Ctrl+V'), run: () => paste(dir) },
         ...(paths.length === 1 ? [{ label: 'Rename', shortcut: 'F2', run: () => startRename(paths[0]) }] : []),
+        ...(paths.length > 1 ? [{ label: `Rename${count}…`, shortcut: 'F2', run: () => startBulkRename(paths) }] : []),
         'separator',
         ...(single && (single.archive || (!single.isDir && isGzip(single.path))) ? [{ label: 'Extract here', run: () => extract(single.path) }] : []),
         ...(paths.length && !single?.archive ? [{ label: paths.length > 1 ? `Compress ${paths.length} items to .zip` : 'Compress to .zip', run: () => compress(paths) }] : []),
@@ -482,6 +488,32 @@
   function startRename(path: string) {
     message = null
     edit = { kind: 'rename', parent: parentOf(path), path, error: null, busy: false }
+  }
+
+  function startBulkRename(paths: string[]) {
+    message = null
+    bulkRename = paths.flatMap((path) => {
+      const entry = entries.get(path)
+      return entry ? [{ path, name: entry.name, isDir: entry.isDir, size: entry.size }] : []
+    })
+  }
+
+  function siblingsOf(dir: string) {
+    return (children.get(dir) ?? []).map((e) => e.name)
+  }
+
+  function closeBulkRename() {
+    bulkRename = null
+    if (focused) focusRow(focused)
+  }
+
+  async function afterBulkRename(pairs: [string, string][]) {
+    bulkRename = null
+    if (!pairs.length) return
+    await afterMove(pairs)
+    picker.replace(pairs.map(([, to]) => to))
+    focusRow(pairs[0][1])
+    report(`Renamed ${pairs.length === 1 ? nameOf(pairs[0][0]) : `${pairs.length} items`}. Press ${shortcut('Ctrl+Z')} here to undo.`, 'note')
   }
 
   function nameField(input: HTMLInputElement) {
@@ -920,6 +952,10 @@
   <div class="ghost" style:left="{ghost.x + 14}px" style:top="{ghost.y + 10}px" aria-hidden="true">
     {drag.paths.length === 1 ? nameOf(drag.paths[0]) : `${drag.paths.length} items`}
   </div>
+{/if}
+
+{#if bulkRename}
+  <BulkRename items={bulkRename} {siblingsOf} onclose={closeBulkRename} ondone={afterBulkRename} />
 {/if}
 
 {#if menu}

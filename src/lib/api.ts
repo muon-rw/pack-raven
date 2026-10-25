@@ -499,6 +499,7 @@ export const api = {
   fileHistory: () => invoke<{ undo: string | null; redo: string | null }>('file_history'),
   fileUndo: (redo: boolean) => invoke<HistoryOutcome | null>('file_undo', { redo }),
   renamePath: (from: string, to: string) => invoke<void>('rename_path', { from, to }),
+  renamePaths: (renames: [string, string][]) => invoke<[string, string][]>('rename_paths', { renames }),
   movePaths: (paths: string[], dir: string) => invoke<[string, string][]>('move_paths', { paths, dir }),
   gitOverview: () => invoke<{ status: GitStatus; commits: GitCommit[] }>('git_overview'),
   gitDiff: (path: string, staged: boolean, untracked: boolean) => invoke<GitDiff>('git_diff', { path, staged, untracked }),

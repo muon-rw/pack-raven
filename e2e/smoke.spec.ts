@@ -519,3 +519,97 @@ test('an invalid regex says what is wrong', async ({ page }) => {
   await page.getByRole('textbox', { name: 'Search text in files' }).fill('(')
   await expect(page.locator('#text-search-summary')).toContainText("That isn't a valid regex")
 })
+
+test('selected files can be renamed together with a preview', async ({ page }) => {
+  await openApp(page, 'files', 'dirty')
+  const tree = page.getByRole('tree', { name: 'Pack files' })
+  await tree.getByRole('treeitem', { name: 'datapacks', exact: true }).click()
+  await tree.getByRole('treeitem', { name: 'AetherCompat1.0.zip' }).click()
+  await tree.getByRole('treeitem', { name: 'QuarkCompat1.0.zip' }).click({ modifiers: ['Shift'] })
+  await page.keyboard.press('F2')
+
+  const dialog = page.getByRole('dialog', { name: 'Rename 5 items' })
+  await expect(dialog.getByRole('textbox', { name: 'Find' })).toBeFocused()
+  await dialog.getByRole('textbox', { name: 'Find' }).fill('Compat')
+  await dialog.getByRole('textbox', { name: 'Replace with' }).fill('-compat')
+  await expect(dialog.getByRole('row', { name: /AetherCompat1\.0\.zip Aether-compat1\.0\.zip/ })).toBeVisible()
+
+  // Two items that would end up with one name block the rename until you change the settings.
+  await dialog.getByRole('checkbox', { name: 'Regular expression' }).check()
+  await dialog.getByRole('textbox', { name: 'Find' }).fill('^.*$')
+  await dialog.getByRole('textbox', { name: 'Replace with' }).fill('same')
+  await expect(dialog.getByRole('row', { name: /AetherCompat1\.0\.zip same\.zip 5 items would be named same\.zip/ })).toBeVisible()
+  await expect(dialog.getByRole('status')).toContainText('5 new names have problems')
+  await expect(dialog.getByRole('button', { name: 'Rename', exact: true })).toBeDisabled()
+
+  // Skipping the items with problems leaves nothing to rename, and ticking them all brings them back.
+  await dialog.getByRole('button', { name: 'Skip them' }).click()
+  await expect(dialog.getByRole('status')).toContainText('Tick at least one item to rename.')
+  await dialog.getByRole('checkbox', { name: 'Rename all' }).check()
+
+  // Alt+3 switches to numbering and moves to its first field.
+  await page.keyboard.press('Alt+3')
+  await expect(dialog.getByRole('radio', { name: 'Number' })).toBeChecked()
+  await dialog.getByRole('textbox', { name: 'New name' }).fill('compat')
+  await dialog.getByRole('combobox', { name: 'Counter', exact: true }).selectOption('01')
+  await dialog.getByRole('checkbox', { name: 'Rename CataclysmCompat1.0.zip' }).uncheck()
+  await expect(dialog.getByRole('row', { name: /Irons_Spellbooks_Compat_1\.0\.0\.zip compat 02\.zip/ })).toBeVisible()
+  await dialog.getByRole('button', { name: 'Rename 4 items' }).click()
+
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('status').filter({ hasText: 'Renamed 4 items.' })).toBeAttached()
+  for (const name of ['compat 01.zip', 'compat 04.zip', 'CataclysmCompat1.0.zip']) await expect(tree.getByRole('treeitem', { name })).toBeVisible()
+  await expect(tree.getByRole('treeitem', { name: 'compat 01.zip' })).toHaveAttribute('aria-selected', 'true')
+})
+
+test('Format tidies the open file, keeps its comments, and undoes in one step', async ({ page }) => {
+  await openApp(page, 'files', 'dirty')
+  await page.getByRole('searchbox', { name: 'Search file and folder names' }).fill('packraven.toml')
+  await page.keyboard.press('Enter')
+  const editor = page.locator('.cm-content')
+  const status = page.getByRole('status')
+  await editor.click()
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText('# pack\n[pack]\nname="x"   # note\nmods=[1,2,  3]\n\n\n\n[test]\nport=25565\n')
+  await page.keyboard.press('Shift+Alt+F')
+  await expect(status.filter({ hasText: "We formatted this file and checked that its values didn't change." })).toBeAttached()
+  await expect(editor).toHaveText('# pack[pack]name = "x" # notemods = [1, 2, 3][test]port = 25565')
+  await page.keyboard.press('Shift+Alt+F')
+  await expect(status.filter({ hasText: 'This file is already formatted.' })).toBeAttached()
+
+  // The button hands focus back to the editor, so undo works right after a click.
+  await page.keyboard.press('Control+Z')
+  await expect(editor).toContainText('name="x"   # note')
+  await page.getByRole('button', { name: 'Format', exact: true }).click()
+  await expect(editor).toContainText('name = "x" # note')
+  await page.keyboard.press('Control+Z')
+  await expect(editor).toContainText('name="x"   # note')
+
+  // A file that doesn't parse stays as it is, and the note names the line to fix.
+  await page.keyboard.press('Control+Home')
+  await page.keyboard.insertText('[broken\n')
+  await page.keyboard.press('Shift+Alt+F')
+  await expect(status.filter({ hasText: 'Line 1 has a syntax error. Fix it, then format again.' })).toBeAttached()
+  await expect(editor).toContainText('[broken')
+})
+
+test('Format tidies a KubeJS script with Prettier, and the linter flags its syntax errors', async ({ page }) => {
+  await openApp(page, 'files', 'dirty')
+  // The mock has no scripts, so we add one the way the New file action would.
+  await page.evaluate(() => {
+    const internals = (globalThis as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: object) => Promise<unknown> } }).__TAURI_INTERNALS__
+    return internals.invoke('create_file', { path: 'kubejs/server_scripts/recipes.js' })
+  })
+  await page.getByRole('searchbox', { name: 'Search file and folder names' }).fill('recipes.js')
+  await page.keyboard.press('Enter')
+  const editor = page.locator('.cm-content')
+  await editor.click()
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText("ServerEvents.recipes(event=>{\n  event.remove({output:'minecraft:stick'}) // no sticks\n})\n")
+  await page.keyboard.press('Shift+Alt+F')
+  await expect(page.getByRole('status').filter({ hasText: 'We formatted this file' })).toBeAttached()
+  await expect(editor).toHaveText("ServerEvents.recipes(event => {  event.remove({ output: 'minecraft:stick' }) // no sticks})")
+  await page.keyboard.press('Control+End')
+  await page.keyboard.insertText('event.shaped(\n')
+  await expect(page.locator('.cm-lint-marker-error')).toHaveCount(1)
+})

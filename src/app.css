@@ -251,6 +251,11 @@ button.primary:hover:not(:disabled, [aria-disabled='true']) {
   border-color: var(--forest-hi);
 }
 
+button.primary:not(:disabled, [aria-disabled='true']) kbd {
+  color: inherit;
+  border-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+
 button.busy:disabled,
 button.busy[aria-disabled='true'] {
   color: var(--text);

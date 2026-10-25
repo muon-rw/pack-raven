@@ -325,6 +325,94 @@ pub fn rename(root: &Path, from: &str, to: &str) -> Result<()> {
     std::fs::rename(&source, &target).with_context(|| format!("renaming {from} to {to}"))
 }
 
+// Windows rejects these characters, and we keep names portable since teams share a pack across
+// machines.
+const UNPORTABLE: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
+
+fn check_name(name: &str) -> Result<()> {
+    if name.trim().is_empty() || name == "." || name == ".." {
+        bail!("names can't be empty");
+    }
+    if let Some(c) = name.chars().find(|c| UNPORTABLE.contains(c) || c.is_control()) {
+        bail!("{name} has a {c}, which Windows doesn't allow in names");
+    }
+    if name.ends_with(['.', ' ']) {
+        bail!("{name} ends with a dot or space, which Windows doesn't allow");
+    }
+    let device = name.split('.').next().unwrap_or_default().to_ascii_uppercase();
+    let numbered = |prefix: &str| device.strip_prefix(prefix).is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
+    if ["CON", "PRN", "AUX", "NUL"].contains(&device.as_str()) || numbered("COM") || numbered("LPT") {
+        bail!("Windows reserves the name {device}");
+    }
+    // macOS counts the limit in UTF-8 bytes, which is never fewer than Windows' UTF-16 units.
+    if name.len() > 255 {
+        bail!("{name} is over 255 bytes long");
+    }
+    Ok(())
+}
+
+/// Gives each entry a new name in its own folder and returns the (old, new) path of every entry
+/// whose name changed.
+pub fn rename_all(root: &Path, renames: &[(String, String)]) -> Result<Vec<(String, String)>> {
+    let mut changed = Vec::new();
+    for (from, name) in renames {
+        check_name(name)?;
+        let source = resolve_entry(root, from)?;
+        let parent = from.rsplit_once('/').map_or("", |(parent, _)| parent);
+        let to = if parent.is_empty() { name.clone() } else { format!("{parent}/{name}") };
+        if to != *from {
+            changed.push((from.clone(), to.clone(), source.clone(), source.with_file_name(name)));
+        }
+    }
+    let pairs: Vec<(PathBuf, PathBuf)> = changed.iter().map(|(_, _, source, target)| (source.clone(), target.clone())).collect();
+    move_all(&pairs)?;
+    Ok(changed.into_iter().map(|(from, to, ..)| (from, to)).collect())
+}
+
+fn folded(path: &Path) -> String {
+    path.to_string_lossy().to_lowercase()
+}
+
+/// Moves every pair, or none of them. A target may be another pair's source, as when you
+/// renumber 1, 2, 3 to 2, 3, 4 or swap two names.
+pub(crate) fn move_all(pairs: &[(PathBuf, PathBuf)]) -> Result<()> {
+    let mut targets = HashSet::new();
+    for (from, to) in pairs {
+        if !from.exists() {
+            bail!("{} is no longer there", from.display());
+        }
+        // Windows and macOS compare names case-insensitively, so two targets that differ only
+        // in case would land on the same entry.
+        if !targets.insert(folded(to)) {
+            bail!("two entries would both be named {}", to.file_name().unwrap_or_default().to_string_lossy());
+        }
+        if to.exists() && !pairs.iter().any(|(source, _)| same_entry(source, to)) {
+            bail!("{} already exists", to.display());
+        }
+    }
+    if !pairs.iter().any(|(_, to)| to.exists()) {
+        return move_steps(pairs.to_vec());
+    }
+    // Some targets are still taken by entries we're about to move, so we move everything to a
+    // temporary name first. Case-only renames go this way too, since the target is the source.
+    let staged: Vec<PathBuf> = pairs.iter().enumerate().map(|(i, (from, _))| from.with_file_name(format!(".packraven-rename-{}-{i}", std::process::id()))).collect();
+    let mut steps: Vec<(PathBuf, PathBuf)> = pairs.iter().zip(&staged).map(|((from, _), temp)| (from.clone(), temp.clone())).collect();
+    steps.extend(staged.iter().zip(pairs).map(|(temp, (_, to))| (temp.clone(), to.clone())));
+    move_steps(steps)
+}
+
+fn move_steps(steps: Vec<(PathBuf, PathBuf)>) -> Result<()> {
+    for (done, (from, to)) in steps.iter().enumerate() {
+        if let Err(error) = move_entry(from, to) {
+            for (from, to) in steps[..done].iter().rev() {
+                let _ = move_entry(to, from);
+            }
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
 /// Moves each entry into `relative_dir` and returns the (old, new) path of every entry that moved.
 pub fn move_into(root: &Path, relatives: &[String], relative_dir: &str) -> Result<Vec<(String, String)>> {
     let dir = resolve(root, relative_dir)?;
@@ -586,6 +674,30 @@ mod tests {
         if cfg!(windows) {
             assert!(!absolute.contains('/'));
         }
+    }
+
+    #[test]
+    fn rename_all_handles_chains_swaps_and_case() {
+        let dir = std::env::temp_dir().join("packraven-rename-all-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("shots")).unwrap();
+        for (name, text) in [("1.png", "one"), ("2.png", "two"), ("a.txt", "a"), ("b.txt", "b"), ("Case.txt", "case")] {
+            std::fs::write(dir.join("shots").join(name), text).unwrap();
+        }
+        let renames = |pairs: &[(&str, &str)]| pairs.iter().map(|(from, to)| (format!("shots/{from}"), to.to_string())).collect::<Vec<_>>();
+        let renamed = rename_all(&dir, &renames(&[("1.png", "2.png"), ("2.png", "3.png"), ("a.txt", "b.txt"), ("b.txt", "a.txt"), ("Case.txt", "case.txt")])).unwrap();
+        assert_eq!(renamed.len(), 5);
+        let read = |name: &str| std::fs::read_to_string(dir.join("shots").join(name)).unwrap();
+        assert_eq!((read("2.png").as_str(), read("3.png").as_str()), ("one", "two"));
+        assert_eq!((read("a.txt").as_str(), read("b.txt").as_str()), ("b", "a"));
+        let names: Vec<String> = std::fs::read_dir(dir.join("shots")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert!(names.contains(&"case.txt".to_string()) && !names.iter().any(|n| n.starts_with(".packraven")));
+        assert!(rename_all(&dir, &renames(&[("2.png", "a.txt")])).is_err());
+        assert!(rename_all(&dir, &renames(&[("2.png", "x.png"), ("3.png", "X.png")])).is_err());
+        assert!(rename_all(&dir, &renames(&[("2.png", "what?.png")])).is_err());
+        assert!(rename_all(&dir, &renames(&[("2.png", "nul.png")])).is_err());
+        assert_eq!(read("2.png"), "one");
+        assert!(rename_all(&dir, &renames(&[("2.png", "2.png")])).unwrap().is_empty());
     }
 
     #[test]

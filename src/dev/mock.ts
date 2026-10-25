@@ -841,6 +841,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   create_dir: (a) => addEntry(String(a.path), true),
   trash_paths: (a) => removeEntries(a.paths as string[]),
   rename_path: (a) => moveEntry(String(a.from), String(a.to)),
+  rename_paths: (a) => {
+    const pairs = (a.renames as [string, string][]).map(([from, name]): [string, string] => [from, `${from.includes('/') ? from.slice(0, from.lastIndexOf('/') + 1) : ''}${name}`])
+    // Renames can swap names, so we move everything aside before giving out the new names.
+    pairs.forEach(([from], i) => moveEntry(from, `${from}.renaming-${i}`))
+    pairs.forEach(([from, to], i) => moveEntry(`${from}.renaming-${i}`, to))
+    return pairs
+  },
   move_paths: (a) =>
     (a.paths as string[]).map((from) => {
       const to = `${a.dir ? `${a.dir}/` : ''}${from.slice(from.lastIndexOf('/') + 1)}`

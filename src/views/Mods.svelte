@@ -55,7 +55,9 @@
   let updating = $derived(job('mods').phase === 'running')
   let blocked = $derived(updating || clientRunning)
   let whyNoUpdate = $derived(clientRunning ? 'Close the test client first; it has these files open' : null)
-  let whyNoChange = $derived(whyNoUpdate ?? (updating ? 'Wait for the downloads to finish' : null))
+  // The client never opens .disabled files, so you can enable them while it runs.
+  let whyNoEnable = $derived(updating ? 'Wait for the downloads to finish' : null)
+  let whyNoChange = $derived(whyNoUpdate ?? whyNoEnable)
   let showLog = $state(false)
   // The Update button you just pressed turns into Cancel, so we hold back its red focus style
   // until focus leaves it and comes back.
@@ -386,7 +388,7 @@
         'separator',
         // While a change runs, the version you'd lock to is about to change.
         { label: lockedHere ? 'Unlock' : 'Lock to this version', disabled: !!change, run: () => setLocked(mod, !lockedHere) },
-        { label: disabled ? 'Enable' : 'Disable', disabled: blocked, run: () => setEnabled([mod], disabled) },
+        { label: disabled ? 'Enable' : 'Disable', disabled: disabled ? updating : blocked, run: () => setEnabled([mod], disabled) },
         'separator',
         { label: `Move to ${trashName}`, danger: true, disabled: blocked, run: () => remove([mod]) },
       ],
@@ -642,7 +644,7 @@
   {/if}
   {#if clientRunning}
     <Notice tone="warn">
-      <p>Close or kill the test client to update, disable or remove mods, since it has their files open. You can still add mods, and the client will load them when you restart it.</p>
+      <p>Close or kill the test client to update, disable or remove mods, since it has their files open. You can still add or enable mods, and the client will load them when you restart it.</p>
       <p><button onclick={ontest}>Show the client log</button></p>
     </Notice>
   {/if}
@@ -659,8 +661,8 @@
     <Notice tone="ok">
       <p>
         {undo.message}
-        <Tip tip={whyNoChange}>
-          {#snippet children(why)}<button class="link" onclick={() => !whyNoChange && undoDisable()} aria-disabled={!!whyNoChange} aria-describedby={why}>Undo</button>{/snippet}
+        <Tip tip={whyNoEnable}>
+          {#snippet children(why)}<button class="link" onclick={() => !whyNoEnable && undoDisable()} aria-disabled={!!whyNoEnable} aria-describedby={why}>Undo</button>{/snippet}
         </Tip>
       </p>
     </Notice>
@@ -699,8 +701,8 @@
         {@const pending = pendingFor(selectedMods)}
         <div class="bulk" role="toolbar" aria-label="Selected files">
           <span class="bulk-count">{selected.size} selected</span>
-          <Tip tip={whyNoChange}>
-            {#snippet children(why)}<button onclick={() => !whyNoChange && setEnabled(selectedMods, true)} disabled={!selectedMods.some((m) => m.path.endsWith('.disabled'))} aria-disabled={!!whyNoChange} aria-describedby={why}>Enable</button>{/snippet}
+          <Tip tip={whyNoEnable}>
+            {#snippet children(why)}<button onclick={() => !whyNoEnable && setEnabled(selectedMods, true)} disabled={!selectedMods.some((m) => m.path.endsWith('.disabled'))} aria-disabled={!!whyNoEnable} aria-describedby={why}>Enable</button>{/snippet}
           </Tip>
           <Tip tip={whyNoChange}>
             {#snippet children(why)}<button onclick={() => !whyNoChange && setEnabled(selectedMods, false)} disabled={selectedMods.every((m) => m.path.endsWith('.disabled'))} aria-disabled={!!whyNoChange} aria-describedby={why}>Disable</button>{/snippet}
@@ -754,6 +756,7 @@
                 {@const lockedHere = modUpdates.locked.has(mod.projectId)}
                 {@const held = newestOnChannel(status)}
                 {@const disabled = mod.path.endsWith('.disabled')}
+                {@const whyNoToggle = disabled ? whyNoEnable : whyNoChange}
                 {@const change = changeFor(mod.path)}
                 {@const logo = mod.logo ?? status?.logo}
                 <tr class="row" class:open={expanded === mod.path} class:off={disabled} class:picked={selected.has(mod.path)} onclick={(e) => onRowClick(e, mod)} oncontextmenu={(e) => openMenu(e, mod)}>
@@ -761,18 +764,18 @@
                     <input type="checkbox" checked={selected.has(mod.path)} onchange={(e) => select(mod, e.currentTarget.checked)} aria-label="Select {mod.name}" />
                   </td>
                   <td class="enabled">
-                    <Tip tip={whyNoChange}>
+                    <Tip tip={whyNoToggle}>
                       {#snippet children(why)}
                         <button
                           class="switch"
                           role="switch"
                           aria-checked={!disabled}
                           aria-label="Enable {mod.name}"
-                          title={whyNoChange ? undefined : disabled ? 'Disabled. We won\'t include it in exports.' : 'Enabled'}
-                          aria-disabled={!!whyNoChange}
+                          title={whyNoToggle ? undefined : disabled ? 'Disabled. We won\'t include it in exports.' : 'Enabled'}
+                          aria-disabled={!!whyNoToggle}
                           aria-describedby={why}
                           aria-busy={toggling === mod.path}
-                          onclick={() => !whyNoChange && setEnabled([mod], disabled)}
+                          onclick={() => !whyNoToggle && setEnabled([mod], disabled)}
                         ></button>
                       {/snippet}
                     </Tip>

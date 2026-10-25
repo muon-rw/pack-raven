@@ -8,6 +8,9 @@ import { parseAllDocuments } from 'yaml'
 
 type Check = (doc: Text) => Diagnostic[]
 
+// Prettier's parser is large, so we load it only once you open a script.
+const javascript = () => import('./javascript')
+
 // Each check re-parses the whole file, so past this long a pass stalls typing noticeably. How
 // long a pass takes depends on the device as much as the file, so we measure it.
 const SLOW_CHECK_MS = 150
@@ -24,11 +27,13 @@ export function lintFor(path: string, onPaused: () => void): Extension {
   if (!check) return []
   let paused = false
   let forced = false
-  const source = (view: EditorView) => {
+  const source = async (view: EditorView) => {
     if (paused && !forced) return []
     forced = false
+    const doc = view.state.doc
+    const run = await check
     const started = performance.now()
-    const diagnostics = check(view.state.doc)
+    const diagnostics = run(doc)
     if (!paused && performance.now() - started > SLOW_CHECK_MS) {
       paused = true
       onPaused()
@@ -47,7 +52,7 @@ export function checkNow(view: EditorView) {
   forceLinting(view)
 }
 
-function checkFor(path: string): Check | null {
+function checkFor(path: string): Check | Promise<Check> | null {
   const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase()
   const ext = name.slice(name.lastIndexOf('.') + 1)
   switch (ext) {
@@ -66,6 +71,9 @@ function checkFor(path: string): Check | null {
       return checkYaml
     case 'properties':
       return checkProperties
+    case 'js':
+    case 'mjs':
+      return javascript().then((js) => (doc) => checkJs(doc, js))
     default:
       return null
   }
@@ -232,6 +240,17 @@ function errorAt(doc: Text, line: number, column: number, message: string): Diag
   const rest = doc.sliceString(from, doc.lineAt(from).to)
   const word = rest.match(/^[^\s=:,[\]{}"']*/)![0].length
   return { ...clamp(doc, from, from + Math.max(word, 1)), severity: 'error', message: capitalize(message) }
+}
+
+function checkJs(doc: Text, js: Awaited<ReturnType<typeof javascript>>): Diagnostic[] {
+  try {
+    js.parseJs(doc.toString())
+    return []
+  } catch (e) {
+    const error = js.syntaxErrorOf(e)
+    if (!error) throw e
+    return [errorAt(doc, error.line, error.column, error.message)]
+  }
 }
 
 function checkYaml(doc: Text): Diagnostic[] {
