@@ -5,6 +5,7 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 ## [Unreleased]
 
 ### Added
+- Ability to create datapacks/resourcepacks targeting a file when viewing inside a mod
 
 ### Fixed
 - Pulling remote mod changes on Windows always saying you had local mod changes, even if you didn't.

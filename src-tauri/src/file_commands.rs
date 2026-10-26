@@ -8,6 +8,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::commands::AppState;
 use crate::files::{self, Entry, FileContent, Pasted};
+use crate::global_packs::{self, Copied, Loader, PackFolder, PackKind};
 use crate::history::{self, Action, HistoryView, Outcome};
 use crate::os_drag;
 use crate::text_search;
@@ -160,6 +161,43 @@ pub async fn compress_paths(state: State<'_, AppState>, paths: Vec<String>) -> C
     let target = tauri::async_runtime::spawn_blocking(move || crate::archive::compress(&sources, &dir)).await.map_err(|e| e.to_string())?.map_err(err)?;
     state.history.lock().unwrap().record(&root, label, Some(Action::Trash(vec![target.clone()])));
     Ok(relative_to(&root, &target))
+}
+
+#[tauri::command]
+pub fn pack_loaders(state: State<'_, AppState>, kind: PackKind) -> Vec<Loader> {
+    let lock = state.pack().ok().map(|pack| pack.lock);
+    global_packs::loaders(&state.settings().instance_dir, lock.as_ref(), kind)
+}
+
+#[tauri::command]
+pub fn pack_folder(state: State<'_, AppState>, path: String) -> CmdResult<PackFolder> {
+    global_packs::folder(&state.settings().instance_dir, &path).map_err(err)
+}
+
+#[tauri::command]
+pub async fn copy_into_pack(state: State<'_, AppState>, source: String, pack: String, create: bool) -> CmdResult<Copied> {
+    let settings = state.settings();
+    let root = settings.instance_dir.clone();
+    let meta = if create {
+        let kind = global_packs::inside_path(&source).and_then(PackKind::of).ok_or("Only files under data/ or assets/ in a mod's jar belong in a pack.")?;
+        let lock = state.pack().map_err(err)?.lock;
+        let name = pack.trim_end_matches('/').rsplit('/').next().unwrap_or(&pack).to_string();
+        Some(global_packs::pack_meta(&settings.install_dir, lock.minecraft().map_err(err)?, kind, &name).map_err(err)?)
+    } else {
+        None
+    };
+    let task_root = root.clone();
+    let task_source = source.clone();
+    let copied = tauri::async_runtime::spawn_blocking(move || global_packs::copy_into_pack(&task_root, &task_source, &pack, meta.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(err)?;
+    if !copied.created.is_empty() {
+        let label = format!("Override {}", history::describe(std::slice::from_ref(&source)));
+        let created = copied.created.iter().map(|p| root.join(p)).collect();
+        state.history.lock().unwrap().record(&root, label, Some(Action::Trash(created)));
+    }
+    Ok(copied)
 }
 
 // The webview streams video and audio from the asset protocol, which can seek, so we allow

@@ -15,6 +15,7 @@ mod files;
 mod git;
 mod git_commands;
 mod git_install;
+mod global_packs;
 mod java;
 mod history;
 mod gitops;
@@ -268,6 +269,9 @@ pub fn run() {
             file_commands::extract_archive,
             file_commands::compress_paths,
             file_commands::media_path,
+            file_commands::pack_loaders,
+            file_commands::pack_folder,
+            file_commands::copy_into_pack,
             file_commands::import_paths,
             file_commands::drag_out,
             file_commands::file_history,

@@ -9,7 +9,7 @@
   import { gitMenu } from '../lib/gitActions'
   import { RangeSelection, isPlainClick } from '../lib/rangeSelection'
   import { commandKey, fileManager, isMac, shortcut } from '../lib/platform'
-  import { isGzip, outerArchive } from '../lib/viewers'
+  import { isGzip, outerArchive, packTarget } from '../lib/viewers'
   import BulkRename from './BulkRename.svelte'
   import ContextMenu from './ContextMenu.svelte'
   import Twisty from './Twisty.svelte'
@@ -25,6 +25,7 @@
     ondelete,
     onremoved,
     ongitchange,
+    onoverride,
   }: {
     selected: string | null
     status: GitStatus | null
@@ -34,6 +35,7 @@
     ondelete: (paths: string[]) => void
     onremoved: (paths: string[]) => void
     ongitchange: () => void
+    onoverride: (path: string, isDir: boolean) => void
   } = $props()
 
   const DRAG_THRESHOLD = 5
@@ -441,8 +443,11 @@
   function archivedMenu(paths: string[]): MenuItem[] {
     const single = paths.length === 1 ? entries.get(paths[0]) : undefined
     const inside = (path: string) => path.slice(outerArchive(path).length + 1)
+    const override = single ? packTarget(single.path) : null
     return [
       ...(single && !single.isDir && !single.archive ? [{ label: 'Open', run: () => onopen(single.path, true) }] : []),
+      'separator',
+      ...(single && !single.archive && override ? [{ label: `Override in a ${override.kind === 'data' ? 'data' : 'resource'} pack…`, run: () => onoverride(single.path, single.isDir) }] : []),
       'separator',
       { label: paths.length > 1 ? 'Copy paths inside the archive' : 'Copy path inside the archive', run: () => copyPaths(paths.map(inside), false) },
       'separator',

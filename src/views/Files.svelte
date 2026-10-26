@@ -22,11 +22,12 @@
   import LogViewer from '../components/LogViewer.svelte'
   import MarkdownPreview from '../components/MarkdownPreview.svelte'
   import { SvelteMap } from 'svelte/reactivity'
-  import { canFormat, isGzip, outerArchive, viewerFor } from '../lib/viewers'
+  import { canFormat, isGzip, outerArchive, packTarget, viewerFor } from '../lib/viewers'
   import type { FormatOutcome } from '../lib/format'
   import ContextMenu from '../components/ContextMenu.svelte'
   import type { MenuItem } from '../lib/menu'
   import Notice from '../components/Notice.svelte'
+  import PackOverrideDialog from '../components/PackOverrideDialog.svelte'
   import Splitter from '../components/Splitter.svelte'
   import { StoredSplit, clamp } from '../lib/storedSplit.svelte'
 
@@ -473,9 +474,28 @@
   let blockedTimer = 0
   let blockedSeen = workspace.blocked
 
+  let overrideTarget = $derived(current?.archived ? packTarget(current.path) : null)
+  let overrideNoun = $derived(overrideTarget?.kind === 'resource' ? 'resource pack' : 'data pack')
+  let overriding = $state<{ source: string; isDir: boolean } | null>(null)
+
+  let overrideNote = $state<{ path: string; text: string } | null>(null)
+  let overrideTimer = 0
+
+  async function showOverride(path: string, isDir: boolean, note: string) {
+    await tree.refresh()
+    if (isDir) await tree.show(path, true)
+    else await tree.show(path).then(() => openFile(path, true))
+    overrideNote = { path, text: note }
+    announce(note)
+    clearTimeout(overrideTimer)
+    overrideTimer = setTimeout(() => (overrideNote = null), 6000)
+  }
+
   let blockedText = $derived(
     current?.archived
-      ? `This file is inside ${name(outerArchive(current.path))}, so you can't change it here. Extract the archive to edit its files.`
+      ? overrideTarget
+        ? `This file is inside ${name(outerArchive(current.path))}, so you can't change it here. Override it in a ${overrideNoun} to edit a copy.`
+        : `This file is inside ${name(outerArchive(current.path))}, so you can't change it here. Extract the archive to edit its files.`
       : "We show this file decompressed, so you can't change it here. Extract it to edit a copy.",
   )
 
@@ -758,7 +778,7 @@
         <FileSearchResults bind:this={results} bind:active={activeResult} {query} onopen={openFromSearch} onshowfolder={showFolder} />
       {/if}
     {/if}
-    <FileTree bind:this={tree} hidden={searching || textSearch.open} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} onremoved={closeRemoved} ongitchange={loadChanges} />
+    <FileTree bind:this={tree} hidden={searching || textSearch.open} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} onremoved={closeRemoved} ongitchange={loadChanges} onoverride={(source, isDir) => (overriding = { source, isDir })} />
   </aside>
 
   <Splitter value={browserWidth} min={TREE_MIN} max={textSearch.open ? searchMax : treeMax} total={splitTotal} label="Resize the file browser" controls="file-browser" onresize={(px) => treeSplit.set(px)} onreset={() => treeSplit.reset()} />
@@ -817,6 +837,9 @@
             </span>
           {/if}
           {#if readOnly && viewer !== 'log'}<span class="read-only" class:flash={blockedNotice}>Read-only</span>{/if}
+          {#if overrideTarget}
+            <button class="primary override" title="Copy this file into a {overrideNoun}, where you can edit it" onclick={() => (overriding = { source: current!.path, isDir: false })}>Override in a {overrideNoun}…</button>
+          {/if}
           <button class="ghost action" onclick={() => reveal(outerArchive(current!.path))}>{current.archived ? 'Show the archive in folder' : 'Show in folder'}</button>
           <button class="ghost action" onclick={() => reloadTab(current!)}>Reload</button>
           {#if current.state && !readOnly && canFormat(current.path)}
@@ -830,6 +853,8 @@
         </span>
         {#if formatNote?.path === current.path}
           <p class="toolbar-note" class:warn={formatNote.warn} aria-hidden="true">{formatNote.text}</p>
+        {:else if overrideNote?.path === current.path}
+          <p class="toolbar-note" aria-hidden="true">{overrideNote.text}</p>
         {:else if readOnly && blockedNotice}
           <p class="toolbar-note warn" aria-hidden="true">{blockedText}</p>
         {/if}
@@ -912,6 +937,8 @@
     {/if}
   </section>
 </div>
+
+<PackOverrideDialog request={overriding} {pack} onclose={() => (overriding = null)} ondone={showOverride} />
 
 {#if tabMenu}
   <ContextMenu x={tabMenu.x} y={tabMenu.y} label="Tab actions" items={tabMenu.items} onclose={() => (tabMenu = null)} />
@@ -1177,7 +1204,8 @@
     color: var(--warn);
   }
 
-  .save {
+  .save,
+  .override {
     padding: 4px 10px;
   }
 

@@ -244,6 +244,9 @@ const catalog: MockProject[] = [
   { projectId: 404465, name: 'FTB Quests', summary: 'Questing mod that lets pack authors write a quest book.', authors: ['FTB'], downloads: 87000000, updated: '2026-07-01T09:00:00Z', kind: 'mods', fileName: null },
   { projectId: 855414, name: "Iron's Spells 'n Spellbooks", summary: 'Upgrade your magic with 80+ spells, scrolls and spellbooks.', authors: ['iron431'], downloads: 61000000, updated: '2026-10-01T09:00:00Z', kind: 'mods', fileName: 'irons_spellbooks-1.21.1-3.5.0.jar' },
   { projectId: 453763, name: 'Fresh Animations', summary: 'Breathing new life into the mobs of Minecraft.', authors: ['FreshLX'], downloads: 18000000, updated: '2026-09-01T09:00:00Z', kind: 'resourcepacks', fileName: 'FreshAnimations_v1.9.4.zip' },
+  { projectId: 1015157, name: 'Paxi (NeoForge) [1.20.4 - 1.21.1 ONLY]', summary: 'Load data packs and resource packs globally, in every world.', authors: ['YUNGNICKYOUNG'], downloads: 9800000, updated: '2026-06-02T09:00:00Z', kind: 'mods', fileName: 'Paxi-1.21.1-NeoForge-5.1.3.jar', requires: [1015100] },
+  { projectId: 1015100, name: "YUNG's API (NeoForge) [1.20.4 - 1.21.1 ONLY]", summary: "Common code for YUNG's mods.", authors: ['YUNGNICKYOUNG'], downloads: 41000000, updated: '2026-06-02T09:00:00Z', kind: 'mods', fileName: 'YungsApi-1.21.1-NeoForge-5.1.9.jar' },
+  { projectId: 354339, name: 'Open Loader', summary: 'Load data and resource packs from a global folder.', authors: ['Darkhax'], downloads: 21000000, updated: '2026-05-11T09:00:00Z', kind: 'mods', fileName: 'OpenLoader-neoforge-1.21.1-21.1.3.jar' },
   { projectId: 627557, name: 'Complementary Shaders - Reimagined', summary: 'Complementary with the classic looks.', authors: ['EminGT'], downloads: 32000000, updated: '2026-09-21T09:00:00Z', kind: 'shaderpacks', fileName: 'ComplementaryReimagined_r5.6.zip' },
 ]
 const colors = ['#7a4b2a', '#5b6b8a', '#3f6e4e', '#6a3f8a', '#8a3f3f', '#4a6a2a', '#2a5a6a', '#9a6a2a', '#2a4a7a']
@@ -370,9 +373,12 @@ function moveEntry(from: string, to: string) {
 
 // A pretend mod jar, so you can try archive browsing, the image viewer and decompiling.
 const jar: Record<string, [string, boolean][]> = {
-  '': [['assets', true], ['com', true], ['META-INF', true], ['fabric.mod.json', false], ['README.md', false]],
+  '': [['assets', true], ['com', true], ['data', true], ['META-INF', true], ['fabric.mod.json', false], ['README.md', false]],
   assets: [['example', true]],
   'assets/example': [['lang', true], ['textures', true]],
+  data: [['example', true]],
+  'data/example': [['recipe', true]],
+  'data/example/recipe': [['fire_charge.json', false], ['stone_bricks.json', false]],
   'assets/example/lang': [['en_us.json', false]],
   'assets/example/textures': [['block', true]],
   'assets/example/textures/block': [['fire.png', false], ['fire.png.mcmeta', false], ['stone.png', false]],
@@ -403,6 +409,67 @@ function listDir(path: string) {
   if (path === '' && !listed.some((e) => e.name === 'huge-recipes.json')) listed.push({ name: 'huge-recipes.json', path: 'huge-recipes.json', isDir: false, size: 72e6, ignored: false })
   if (path === '' && !listed.some((e) => e.name === 'README.md')) listed.push({ name: 'README.md', path: 'README.md', isDir: false, size: 2048, ignored: false })
   return listed.map((e) => ({ ...e, archive: !e.isDir && /\.(jar|zip)$/i.test(e.name), archived: false }))
+}
+
+const packLoaderIds = { paxi: [418881, 515708, 1015157], openloader: [354339], globalpacks: [317134] }
+
+// The fixtures list the pack folders in resourcepacks without their contents, so we count every
+// folder there as a pack, and pretend options.txt turns on only Raven's Resources.
+const enabledResourcePacks = new Set(["Raven's Resources"])
+
+function packFolder(path: string, canCreate = true) {
+  const isPack = (e: MockEntry) => e.isDir && (path === 'resourcepacks' || listDir(e.path).some((f) => f.name === 'pack.mcmeta'))
+  const packs = fx.dirs[path] ? listDir(path).filter((e) => isPack(e) || /\.zip$/i.test(e.name)) : []
+  const enabled = (name: string) => (path === 'resourcepacks' ? enabledResourcePacks.has(name) : undefined)
+  return { path, exists: !!fx.dirs[path], canCreate, packs: packs.map((e) => ({ path: e.path, name: e.name, zipped: !e.isDir, enabled: enabled(e.name) })) }
+}
+
+function packLoaders(kind: 'data' | 'resource') {
+  const installed = (ids: number[]) => installedMods.some((m) => ids.includes(m.projectId))
+  const folders = {
+    paxi: kind === 'data' ? ['config/paxi/datapacks'] : ['config/paxi/resourcepacks'],
+    openloader: kind === 'data' ? ['config/openloader/data'] : ['config/openloader/resources'],
+    globalpacks: kind === 'data' ? ['global_packs/required_data', 'global_packs/optional_data'] : ['global_packs/required_resources'],
+  }
+  const names = { paxi: 'Paxi', openloader: 'Open Loader', globalpacks: 'Global Packs' }
+  return (Object.keys(names) as (keyof typeof names)[]).map((id) => ({ id, name: names[id], installed: installed(packLoaderIds[id]), projectIds: packLoaderIds[id], folders: folders[id].map((f) => packFolder(f)) }))
+}
+
+function ensureDir(path: string, created: string[]) {
+  const parts = path.split('/')
+  for (let end = 1; end <= parts.length; end++) {
+    const dir = parts.slice(0, end).join('/')
+    const parent = parts.slice(0, end - 1).join('/')
+    if (listDir(parent).some((e) => e.path === dir)) continue
+    addEntry(dir, true)
+    created.push(dir)
+  }
+}
+
+function copyIntoPack(source: string, pack: string, create: boolean) {
+  const inside = source.slice(source.lastIndexOf('.jar/') + 5)
+  const created: string[] = []
+  const exists = (path: string) => listDir(path.slice(0, path.lastIndexOf('/'))).some((e) => e.path === path)
+  if (!exists(`${pack}/pack.mcmeta`)) {
+    if (!create) throw `${pack} isn't a pack: it has no pack.mcmeta`
+    ensureDir(pack, created)
+    addEntry(`${pack}/pack.mcmeta`, false)
+    const text = JSON.stringify({ pack: { description: pack.split('/').pop(), pack_format: 48 } }, null, 2) + '\n'
+    fx.files[`${pack}/pack.mcmeta`] = { text, size: text.length, unreadable: null, crlf: false, bom: false, archived: false, compressed: false, large: false }
+  }
+  const innerFiles = (inner: string): string[] => (jar[inner] ? jar[inner].flatMap(([name, isDir]) => (isDir ? innerFiles(`${inner}/${name}`) : [`${inner}/${name}`])) : [inner])
+  let existing = 0
+  for (const file of innerFiles(inside)) {
+    const target = `${pack}/${file}`
+    if (exists(target)) {
+      existing++
+      continue
+    }
+    ensureDir(target.slice(0, target.lastIndexOf('/')), created)
+    addEntry(target, false)
+    fx.files[target] = { ...(readFile(source.slice(0, source.lastIndexOf('.jar/') + 5) + file) as object), archived: false }
+  }
+  return new Promise((resolve) => setTimeout(() => resolve({ path: `${pack}/${inside}`, created, existing }), 200))
 }
 
 // Exercises headings, tables, task lists, raw HTML, relative images and every kind of link.
@@ -452,6 +519,11 @@ function readFile(path: string) {
   const binary = { text: null, size: 2048, unreadable: "This is a binary file, so packraven can't edit it.", crlf: false, bom: false, archived }
   if (path.endsWith('fire.png.mcmeta')) return { text: '{ "animation": { "frametime": 4, "interpolate": true } }', size: 60, unreadable: null, crlf: false, bom: false, archived }
   if (path.endsWith('.mcmeta') && archived) throw `${path} isn't in the archive`
+  if (/\/recipe\/[^/]+\.json$/.test(path)) {
+    const recipe = { type: 'minecraft:crafting_shapeless', ingredients: ['minecraft:blaze_powder', 'minecraft:coal', 'minecraft:gunpowder'], result: { id: 'minecraft:fire_charge', count: 3 } }
+    const text = JSON.stringify(recipe, null, 2) + '\n'
+    return (fx.files[path] as object | undefined) ?? { text, size: text.length, unreadable: null, crlf: false, bom: false, archived, compressed: false, large: false }
+  }
   if (/\.(png|jar|zip|nbt|dat|class|ogg|mp4)$/.test(path)) return binary
   return (fx.files[path] as object | undefined) ?? { text: `// ${path}\n`, size: 0, unreadable: null, crlf: false, bom: false, archived }
 }
@@ -816,6 +888,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     return { text: `[12:00:${String(5 + logReads).padStart(2, '0')}] [Server thread/INFO] [net.minecraft.server.MinecraftServer/]: Tick ${logReads}\n`, offset: 1 + logReads, reset: false, truncated: false, followable: true }
   },
   media_path: (a) => `${pack.dir}/${a.path}`,
+  pack_loaders: (a) => new Promise((resolve) => setTimeout(() => resolve(packLoaders(a.kind as 'data' | 'resource')), 150)),
+  pack_folder: (a) => packFolder(String(a.path).replace(/^\/+|\/+$/g, '')),
+  copy_into_pack: (a) => copyIntoPack(String(a.source), String(a.pack), Boolean(a.create)),
   decompile_class: (a) =>
     new Promise((resolve) =>
       setTimeout(() => resolve(`package com.example;\n\n// Decompiled from ${a.path}\npublic class ExampleMod {\n    public static final String ID = "example";\n\n    static class Inner {\n    }\n}\n`), 600),

@@ -613,3 +613,29 @@ test('Format tidies a KubeJS script with Prettier, and the linter flags its synt
   await page.keyboard.insertText('event.shaped(\n')
   await expect(page.locator('.cm-lint-marker-error')).toHaveCount(1)
 })
+
+test('a file in a mod jar can be overridden in a new data pack after adding Paxi', async ({ page }) => {
+  await openApp(page, 'files', 'dirty')
+  const tree = page.getByRole('tree', { name: 'Pack files' })
+  const jar = 'mods/example-mod.jar'
+  for (const path of ['mods', jar, `${jar}/data`, `${jar}/data/example`, `${jar}/data/example/recipe`, `${jar}/data/example/recipe/fire_charge.json`]) {
+    await tree.locator(`[data-path="${path}"]`).click()
+  }
+  await page.getByRole('button', { name: 'Override in a data pack…' }).click()
+
+  const dialog = page.getByRole('dialog', { name: 'Override in a data pack' })
+  await expect(dialog.getByRole('button', { name: 'Add Paxi' })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(dialog.getByText("Paxi requires YUNG's API, so we'll add it too.")).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Add 2 mods' })).toBeFocused()
+  await page.keyboard.press('Enter')
+
+  await expect(dialog.getByRole('textbox', { name: 'Name' })).toBeFocused()
+  await dialog.getByRole('textbox', { name: 'Name' }).fill('Overrides')
+  await dialog.getByRole('button', { name: 'Copy and open' }).click()
+
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('status').filter({ hasText: 'Copied into Overrides.' })).toBeAttached()
+  await expect(tree.locator('[data-path="config/paxi/datapacks/Overrides/data/example/recipe/fire_charge.json"]')).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('button', { name: /^Saved/ })).toBeVisible()
+})

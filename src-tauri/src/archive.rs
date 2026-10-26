@@ -116,6 +116,40 @@ pub fn read(file: &Path, inner: &str, limit: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Reads a file inside an archive, or every file under a folder inside it, keyed by each file's
+/// path inside the innermost archive. Refuses to read more than `limit` bytes in all.
+pub fn read_tree(file: &Path, inner: &str, limit: u64) -> Result<Vec<(String, Vec<u8>)>> {
+    let (mut archive, name) = open(file, inner, false)?;
+    let prefix = format!("{name}/");
+    let mut names = Vec::new();
+    for index in 0..archive.len() {
+        let Ok(entry) = archive.by_index_data(index) else { continue };
+        if entry.is_dir() {
+            continue;
+        }
+        let Some(clean) = entry.name().ok().and_then(|n| clean_name(&n)) else { continue };
+        if clean == name || clean.starts_with(&prefix) {
+            names.push((index, clean));
+        }
+    }
+    if names.is_empty() {
+        bail!("{name} isn't in {}", file.display());
+    }
+    let mut total = 0;
+    let mut files = Vec::with_capacity(names.len());
+    for (index, clean) in names {
+        let mut entry = archive.by_index(index)?;
+        total += entry.size();
+        if total > limit {
+            bail!("{name} is too large to copy");
+        }
+        let mut bytes = Vec::with_capacity(entry.size() as usize);
+        entry.read_to_end(&mut bytes)?;
+        files.push((clean, bytes));
+    }
+    Ok(files)
+}
+
 pub fn size(file: &Path, inner: &str) -> Result<u64> {
     let (mut archive, name) = open(file, inner, false)?;
     Ok(archive.by_name(&name).with_context(|| format!("{name} isn't in {}", file.display()))?.size())

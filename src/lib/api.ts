@@ -385,6 +385,37 @@ export interface FileContent {
   large: boolean
 }
 
+export type PackKind = 'data' | 'resource'
+
+export interface PackEntry {
+  path: string
+  name: string
+  zipped: boolean
+  /** Whether options.txt turns on a pack in the instance's resourcepacks folder. */
+  enabled?: boolean
+}
+
+export interface PackFolder {
+  path: string
+  exists: boolean
+  canCreate: boolean
+  packs: PackEntry[]
+}
+
+export interface PackLoader {
+  id: 'paxi' | 'openloader' | 'globalpacks'
+  name: string
+  installed: boolean
+  projectIds: number[]
+  folders: PackFolder[]
+}
+
+export interface CopiedIntoPack {
+  path: string
+  created: string[]
+  existing: number
+}
+
 export type NbtTag =
   | { type: 'byte' | 'short' | 'int' | 'float' | 'double'; value: number }
   | { type: 'long' | 'string'; value: string }
@@ -491,6 +522,9 @@ export const api = {
   extractArchive: (path: string) => invoke<string>('extract_archive', { path }),
   compressPaths: (paths: string[]) => invoke<string>('compress_paths', { paths }),
   mediaPath: (path: string) => invoke<string>('media_path', { path }),
+  packLoaders: (kind: PackKind) => invoke<PackLoader[]>('pack_loaders', { kind }),
+  packFolder: (path: string) => invoke<PackFolder>('pack_folder', { path }),
+  copyIntoPack: (source: string, pack: string, create: boolean) => invoke<CopiedIntoPack>('copy_into_pack', { source, pack, create }),
   indexFiles: () => invoke<{ paths: string[]; truncated: boolean }>('index_files'),
   searchText: (query: TextQuery) => invoke<TextResults | null>('search_text', { query }),
   replaceText: (query: TextQuery, targets: { path: string; matches: [number, number][] }[]) => invoke<Replaced>('replace_text', { query, targets }),

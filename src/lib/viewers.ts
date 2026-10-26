@@ -68,6 +68,16 @@ export function outerArchive(path: string) {
   return end < 0 ? path : parts.slice(0, end + 1).join('/')
 }
 
+/** Returns the kind of pack that can override a path inside a mod's jar, and the path the pack uses. */
+export function packTarget(path: string): { kind: 'data' | 'resource'; inside: string } | null {
+  const parts = path.split('/')
+  const last = parts.findLastIndex((part) => /\.(jar|zip)$/i.test(part))
+  const inside = parts.slice(last + 1)
+  if (last < 0 || inside.length < 2) return null
+  const kind = inside[0] === 'data' ? 'data' : inside[0] === 'assets' ? 'resource' : null
+  return kind && { kind, inside: inside.join('/') }
+}
+
 const mimeTypes: Record<string, string> = { svg: 'image/svg+xml', ogg: 'audio/ogg', oga: 'audio/ogg', mp3: 'audio/mpeg', wav: 'audio/wav' }
 
 export function blobUrl(path: string, bytes: ArrayBuffer) {
