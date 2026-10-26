@@ -499,8 +499,10 @@ pub struct PullPreview {
     pub conflicts: Vec<ModConflict>,
 }
 
+// git status reports a file whose size changed as modified without comparing content, so a lockfile
+// checked out with CRLF and rewritten with LF would count as changed. git diff compares content.
 fn has_lock_changes(dir: &Path) -> bool {
-    git::changed_files(dir).iter().any(|path| path == LOCKFILE)
+    git::run(dir, &["diff", "--quiet", "HEAD", "--", LOCKFILE]).is_err()
 }
 
 pub async fn pull_preview(dir: &Path) -> Result<PullPreview> {

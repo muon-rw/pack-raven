@@ -2,6 +2,13 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+### Fixed
+- Pulling remote mod changes on Windows always saying you had local mod changes, even if you didn't.
+
 ## [0.1.5] - 2026-10-25
 ### Added
 - Individual rows in git view can now be unstaged

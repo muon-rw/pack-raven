@@ -86,8 +86,9 @@ impl Repo {
 
     fn write_lock(&self, lock: &mut Lockfile, stage: bool) -> Result<()> {
         let text = render_lock(lock)?;
-        // The watcher reports every write, so we skip identical ones to avoid a refresh loop.
-        if std::fs::read_to_string(self.root.join(LOCKFILE)).ok().as_deref() != Some(text.as_str()) {
+        // The watcher reports every write, so we skip identical ones to avoid a refresh loop. Without
+        // `eol=lf` in .gitattributes, git may check the lockfile out with CRLF, which still counts as identical.
+        if std::fs::read_to_string(self.root.join(LOCKFILE)).ok().map(|existing| existing.replace("\r\n", "\n")).as_deref() != Some(text.as_str()) {
             std::fs::write(self.root.join(LOCKFILE), text)?;
         }
         if stage {
