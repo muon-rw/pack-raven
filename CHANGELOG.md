@@ -2,10 +2,11 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.6]
 
 ### Added
 - Ability to create datapacks/resourcepacks targeting a file when viewing inside a mod
+- Side-by-side view panes! Right click a tab on the left to open more than one at a time. 
 
 ### Fixed
 - Pulling remote mod changes on Windows always saying you had local mod changes, even if you didn't.
