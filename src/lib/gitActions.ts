@@ -1,5 +1,5 @@
 import { ask } from '@tauri-apps/plugin-dialog'
-import { api, errorText, type FileChange, type GitStatus } from './api'
+import { api, errorText, type FileChange, type GitStatus, type UntrackPreview } from './api'
 import { LOCKFILE } from './modsync'
 import { showDiff } from './nav.svelte'
 import { openIgnoreDialog, type IgnoreRequest } from './ignoreDialog.svelte'
@@ -30,7 +30,8 @@ export async function discardChanges(changes: FileChange[]) {
   if (files.length < changes.length) await api.revertMods()
 }
 
-export type Feedback = { ondone: () => void; onerror: (message: string) => void; onnotice: (message: string) => void }
+// Pass onuntracked to confirm untracking with an undo; without it we report it as a notice.
+export type Feedback = { ondone: () => void; onerror: (message: string) => void; onnotice: (message: string) => void; onuntracked?: (paths: string[]) => void }
 
 export async function gitMenu(paths: string[], status: GitStatus | null, ignored: (path: string) => boolean, feedback: Feedback): Promise<Submenu | null> {
   if (!status || !paths.length) return null
@@ -46,6 +47,7 @@ export async function gitMenu(paths: string[], status: GitStatus | null, ignored
       : []),
     'separator',
     ...(await ignoreItems(ignorable, feedback)),
+    ...(await untrackItems(paths, feedback)),
   ]
   return items.some((item) => item !== 'separator') ? { label: 'Git', items } : null
 }
@@ -91,5 +93,47 @@ async function ignoreWith(request: IgnoreRequest) {
     request.feedback.ondone()
   } catch (e) {
     request.feedback.onerror(errorText(e))
+  }
+}
+
+export function untrackConsequence(count: number) {
+  return count === 1
+    ? 'The file stays on disk here, and we stage its removal for your next commit. When you or a collaborator pull that commit on another machine, git deletes the copy there.'
+    : 'The files stay on disk here, and we stage their removal for your next commit. When you or a collaborator pull that commit on another machine, git deletes the copies there.'
+}
+
+export function untrackedNotice(paths: string[]) {
+  const one = paths.length === 1
+  return `Stopped tracking ${one ? paths[0] : `${paths.length} files`}. ${one ? 'It stays' : 'They stay'} on disk here. Once you commit, git deletes the ${one ? 'copy' : 'copies'} on other machines when you or a collaborator pull.`
+}
+
+export function reportUntracked(feedback: Feedback, paths: string[]) {
+  if (feedback.onuntracked) feedback.onuntracked(paths)
+  else feedback.onnotice(untrackedNotice(paths))
+}
+
+export function untrackLabel(preview: UntrackPreview) {
+  const count = preview.ignored.length + preview.uncovered.length
+  return `Stop tracking${count > 1 ? ` ${count} files` : ''}${preview.uncovered.length ? '…' : ''}`
+}
+
+export async function untrackItems(paths: string[], feedback: Feedback): Promise<MenuItem[]> {
+  const preview = paths.length ? await api.gitUntrackPreview(paths).catch(() => null) : null
+  if (!preview || !(preview.ignored.length || preview.uncovered.length)) return []
+  return [{ label: untrackLabel(preview), run: () => stopTracking(paths, feedback, preview) }]
+}
+
+// A file .gitignore doesn't cover would come back as a new file, so for those we open the ignore
+// dialog to add a pattern as we untrack them.
+export async function stopTracking(paths: string[], feedback: Feedback, known?: UntrackPreview) {
+  try {
+    const { ignored, uncovered } = known ?? (await api.gitUntrackPreview(paths))
+    if (uncovered.length) return openIgnoreDialog({ paths, options: await api.gitIgnoreOptions(paths), chosen: 0, feedback, untrack: true })
+    if (!ignored.length) return feedback.onnotice("Git doesn't track any of these files.")
+    await api.gitUntrack(ignored)
+    feedback.ondone()
+    reportUntracked(feedback, ignored)
+  } catch (e) {
+    feedback.onerror(errorText(e))
   }
 }

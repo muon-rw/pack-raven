@@ -27,6 +27,12 @@ const DOWNLOAD_ATTEMPTS: usize = 3;
 
 type FileSource = (u64, u64, String);
 
+pub fn is_binary(relative: &str) -> bool {
+    FOLDERS.iter().any(|folder| {
+        relative.strip_prefix(folder).and_then(|rest| rest.strip_prefix('/')).is_some_and(|name| !name.contains('/') && EXTENSIONS.iter().any(|e| name.ends_with(e)))
+    })
+}
+
 pub fn affects_mod_list(relative: &str) -> bool {
     relative == INSTANCE_JSON || FOLDERS.iter().any(|folder| relative.strip_prefix(folder).is_some_and(|rest| rest.starts_with('/')))
 }

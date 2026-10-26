@@ -2,6 +2,7 @@
   import { tick } from 'svelte'
   import { api, errorText, type IgnorePreview } from '../lib/api'
   import { ignoreDialog } from '../lib/ignoreDialog.svelte'
+  import { reportUntracked, untrackConsequence } from '../lib/gitActions'
 
   const PREVIEW_DELAY = 200
   const MAX_LISTED = 100
@@ -20,6 +21,8 @@
   let request = $derived(ignoreDialog.request)
   let patterns = $derived(text.split('\n').filter((line) => line.trim()))
   let chosen = $derived(request?.options.findIndex((o) => o.patterns.join('\n') === patterns.join('\n')) ?? -1)
+  let untrackMode = $derived(!!request?.untrack)
+  let matchesNothing = $derived(untrackMode && !!preview && !preview.tracked.length)
 
   $effect(() => {
     if (!request) return
@@ -56,10 +59,11 @@
     busy = true
     try {
       const tracked = await api.gitIgnore(patterns)
-      if (tracked.length && untrackMatches) await api.gitUntrack(tracked)
+      if (tracked.length && (untrackMatches || untrackMode)) await api.gitUntrack(tracked)
       close()
       feedback.ondone()
-      if (tracked.length && !untrackMatches) {
+      if (tracked.length && untrackMode) reportUntracked(feedback, tracked)
+      else if (tracked.length && !untrackMatches) {
         const names = tracked.length === 1 ? tracked[0] : `${tracked.length} matching files`
         feedback.onnotice(`Git still tracks ${names}, so .gitignore won't apply until you stop tracking ${tracked.length === 1 ? 'it' : 'them'}.`)
       }
@@ -77,7 +81,12 @@
   let previewSummary = $derived(
     !preview || !patterns.length
       ? ''
-      : [
+      : untrackMode
+        ? [
+            preview.tracked.length ? `Git will stop tracking ${count(preview.tracked.length, 'matching file')}.` : "These patterns don't match any tracked files.",
+            preview.untracked.length ? `Git will also stop showing ${count(preview.untracked.length, 'new file')}.` : '',
+          ].join(' ')
+        : [
           preview.untracked.length ? `Git will stop showing ${count(preview.untracked.length, 'new file')}.` : "These patterns don't match any new files.",
           preview.tracked.length ? `Git already tracks ${count(preview.tracked.length, 'matching file')}.` : '',
         ].join(' '),
@@ -94,7 +103,13 @@
 <dialog bind:this={dialog} aria-labelledby="ignore-title" oncancel={close} onclose={() => ignoreDialog.request && close()}>
   {#if request}
     <form method="dialog" onsubmit={(e) => { e.preventDefault(); submit() }}>
-      <h2 id="ignore-title">Add to .gitignore</h2>
+      <h2 id="ignore-title">{untrackMode ? 'Stop tracking' : 'Add to .gitignore'}</h2>
+      {#if untrackMode}
+        <p class="lede">
+          Your .gitignore doesn't cover {request.paths.length === 1 ? 'this file' : 'every file you picked'} yet, so git would list {request.paths.length === 1 ? 'it' : 'them'} as new
+          again. Choose a pattern to add as we stop tracking.
+        </p>
+      {/if}
 
       {#if request.options.length > 1}
         <fieldset class="options">
@@ -123,6 +138,17 @@
           <p class="muted">Enter a pattern to see which files it matches.</p>
         {:else if !preview}
           <p class="muted">Checking which files these patterns match.</p>
+        {:else if untrackMode}
+          {#if preview.tracked.length}
+            <p>Git will stop tracking {count(preview.tracked.length, 'matching file')}:</p>
+            {@render pathList(preview.tracked, 'Tracked files these patterns match')}
+            <p>{untrackConsequence(preview.tracked.length)}</p>
+          {:else}
+            <p class="muted">These patterns don't match any tracked files.</p>
+          {/if}
+          {#if preview.untracked.length}
+            <p class="muted">Git will also stop showing {count(preview.untracked.length, 'new file')} these patterns match.</p>
+          {/if}
         {:else}
           {#if preview.untracked.length}
             <p>Git will stop showing {count(preview.untracked.length, 'new file')}:</p>
@@ -136,11 +162,7 @@
             {@render pathList(preview.tracked, 'Tracked files these patterns match')}
             <label class="check untrack">
               <input type="checkbox" bind:checked={untrackMatches} />
-              <span>
-                {one
-                  ? 'Stop tracking it. The file stays on disk, and we stage its removal for your next commit.'
-                  : 'Stop tracking them. The files stay on disk, and we stage their removal for your next commit.'}
-              </span>
+              <span>Stop tracking {one ? 'it' : 'them'}. {untrackConsequence(preview.tracked.length)}</span>
             </label>
           {/if}
         {/if}
@@ -150,7 +172,7 @@
 
       <div class="actions">
         <button type="button" class="quiet" onclick={close}>Cancel</button>
-        <button type="submit" class="primary" class:busy disabled={busy || !patterns.length}>Add to .gitignore</button>
+        <button type="submit" class="primary" class:busy disabled={busy || !patterns.length || matchesNothing}>{untrackMode ? 'Stop tracking and ignore' : 'Add to .gitignore'}</button>
       </div>
     </form>
   {/if}
@@ -180,6 +202,11 @@
 
   h2 {
     font-size: var(--step-1);
+  }
+
+  .lede {
+    margin-top: -6px;
+    font-size: var(--step--1);
   }
 
   .options {
@@ -245,9 +272,15 @@
     margin-top: 0.2em;
   }
 
+  /* At high zoom the dialog scrolls, and the actions stay in view. */
   .actions {
+    position: sticky;
+    bottom: 0;
     display: flex;
     justify-content: end;
     gap: 6px;
+    margin: 0 -20px -20px;
+    padding: 12px 20px 20px;
+    background: var(--paper);
   }
 </style>

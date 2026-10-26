@@ -2,6 +2,13 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- "Stop Tracking" + warning for when `.gitignored` files are still tracked
+
+### Changed
+- Template gitignore now also ignores `.bak.n` files (JEI)
+
 ## [0.1.6] - 2026-10-26
 
 ### Added

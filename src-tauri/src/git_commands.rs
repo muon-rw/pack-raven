@@ -2,7 +2,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
-use crate::gitops::{self, Commit, Diff, IgnoreOption, IgnorePreview, LineAction, PullPreview, Status, Version};
+use crate::gitops::{self, Commit, Diff, IgnoreOption, IgnorePreview, LineAction, PullPreview, Status, UntrackPreview, Version};
 use crate::modsync::Prefer;
 
 type CmdResult<T> = Result<T, String>;
@@ -67,6 +67,16 @@ pub fn git_ignore_preview(state: State<'_, AppState>, patterns: Vec<String>) -> 
 #[tauri::command(async)]
 pub fn git_ignore(state: State<'_, AppState>, patterns: Vec<String>) -> CmdResult<Vec<String>> {
     gitops::ignore(&state.settings().instance_dir, &patterns).map_err(err)
+}
+
+#[tauri::command(async)]
+pub fn git_untrack_preview(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<UntrackPreview> {
+    gitops::untrack_preview(&state.settings().instance_dir, &paths).map_err(err)
+}
+
+#[tauri::command(async)]
+pub fn git_keep_tracking(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<Vec<String>> {
+    gitops::keep_tracking(&state.settings().instance_dir, &paths).map_err(err)
 }
 
 #[tauri::command(async)]

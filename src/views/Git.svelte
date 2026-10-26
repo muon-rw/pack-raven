@@ -3,10 +3,10 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
   import { ask } from '@tauri-apps/plugin-dialog'
-  import { api, errorText, type FileChange, type GitCommit, type GitDiff, type GitStatus, type LineAction, type ModConflict, type Prefer } from '../lib/api'
+  import { api, errorText, type FileChange, type GitCommit, type GitDiff, type GitStatus, type LineAction, type ModConflict, type Prefer, type UntrackPreview } from '../lib/api'
   import { job, onJobEnd } from '../lib/jobs.svelte'
   import { nav, showInFiles } from '../lib/nav.svelte'
-  import { confirmDiscard, discardChanges, ignoreItems, type Feedback } from '../lib/gitActions'
+  import { confirmDiscard, discardChanges, ignoreItems, stopTracking, untrackItems, untrackLabel, untrackedNotice, type Feedback } from '../lib/gitActions'
   import { LOCKFILE } from '../lib/modsync'
   import { viewerFor } from '../lib/viewers'
   import { openIgnoreDialog } from '../lib/ignoreDialog.svelte'
@@ -22,6 +22,7 @@
   import Splitter from '../components/Splitter.svelte'
   import DiffView from '../components/DiffView.svelte'
   import ImageDiff from '../components/ImageDiff.svelte'
+  import UntrackIgnoredDialog, { type UntrackResult } from '../components/UntrackIgnoredDialog.svelte'
   import { StoredSplit, clamp } from '../lib/storedSplit.svelte'
 
   let { onchange }: { onchange: () => void } = $props()
@@ -50,6 +51,11 @@
   let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
   let conflicts = $state<ModConflict[] | null>(null)
   let checkingPull = $state(false)
+  let reviewingIgnored = $state<string[] | null>(null)
+  let untracked = $state<string[] | null>(null)
+  let untrackedNoticeEl = $state<HTMLElement>()
+  let changesHeading = $state<HTMLElement>()
+  let summaryUntrack = $state<UntrackPreview | null>(null)
 
   const statusNames: Record<string, string> = {
     M: 'Modified',
@@ -198,6 +204,7 @@
     try {
       error = null
       notice = null
+      untracked = null
       await action()
       await load()
       onchange()
@@ -222,6 +229,39 @@
     ondone: () => (load(), onchange()),
     onerror: (text) => (error = text),
     onnotice: (text) => (notice = text),
+    onuntracked: showUntracked,
+  }
+
+  // Untracking acts on the changed files you picked, not every tracked file under a folder row.
+  function selectedChangePaths() {
+    return [...new Set([...selectedStaged, ...selectedUnstaged].map((c) => c.path))]
+  }
+
+  // The control you used to get here may be gone after untracking, so we move focus to the result.
+  function showUntracked(paths: string[]) {
+    notice = null
+    untracked = paths
+    tick().then(() => untrackedNoticeEl?.focus())
+  }
+
+  function undoUntrack() {
+    const paths = untracked
+    if (paths) run(() => api.gitUnstage(paths))
+  }
+
+  function untrackedIgnored({ untracked: paths, stillIgnored }: UntrackResult) {
+    reviewingIgnored = null
+    if (paths.length) showUntracked(paths)
+    else {
+      untracked = null
+      tick().then(() => changesHeading?.focus())
+    }
+    if (stillIgnored.length) {
+      const one = stillIgnored.length === 1
+      notice = `Git can't keep ${one ? stillIgnored[0] : `${stillIgnored.length} files`} tracked with an exception, because your .gitignore leaves out ${one ? 'its folder' : 'their folders'}. In .gitignore, leave out the folder's contents instead, like config/spark/* rather than config/spark/.`
+    }
+    load()
+    onchange()
   }
 
   async function ignoreSelection() {
@@ -346,7 +386,7 @@
     const exists = single?.isDir || (!!only && changesFor(only)[0]?.status !== 'D')
     const mixed = staged.length > 0 && unstaged.length > 0
     const files = (n: number) => (n === 1 && !mixed ? '' : ` ${n} ${n === 1 ? 'file' : 'files'}`)
-    const ignore = await ignoreItems(paths, feedback)
+    const [ignore, untrack] = await Promise.all([ignoreItems(paths, feedback), untrackItems(selectedChangePaths(), feedback)])
     menu = {
       x,
       y,
@@ -366,6 +406,7 @@
         { label: paths.length > 1 ? 'Copy relative paths' : 'Copy relative path', run: () => attempt(() => api.copyPaths(paths, false)) },
         'separator',
         ...(ignore.length ? [{ label: 'Add to .gitignore', items: ignore }] : []),
+        ...untrack,
         ...(unstaged.length
           ? ['separator' as const, { label: `Discard changes${unstaged.length === 1 ? '' : ` to ${unstaged.length} files`}`, shortcut: shortcut('Delete'), danger: true, run: () => discard(unstaged) }]
           : []),
@@ -493,6 +534,21 @@
     const { group, path } = parseKey(diffKey)
     const [status, origPath] = selectedChange?.split('\0') ?? [null, null]
     return { path, staged: group === 'staged', untracked: status === '?', status, origPath: origPath || null }
+  })
+
+  // Keyed by status too, so the label catches up once untracking changes a file's status.
+  let summaryKey = $derived(!selected && keys.size ? [...selectedStaged, ...selectedUnstaged].map((c) => `${c.status} ${c.path}`).join('\n') : '')
+
+  $effect(() => {
+    const key = summaryKey
+    summaryUntrack = null
+    if (!key) return
+    let stale = false
+    api
+      .gitUntrackPreview(selectedChangePaths())
+      .then((preview) => !stale && (summaryUntrack = preview))
+      .catch(() => {})
+    return () => (stale = true)
   })
   let gitJob = $derived(job('git'))
 </script>
@@ -623,9 +679,23 @@
     {#if error}<Notice tone="error"><p>{error}</p></Notice>{/if}
     {#if loadError}<Notice tone="error"><p>Couldn't read the repository: {loadError}</p></Notice>{/if}
     {#if notice}<Notice tone="warn"><p>{notice}</p></Notice>{/if}
+    {#if untracked}
+      <div class="focus-target" tabindex="-1" bind:this={untrackedNoticeEl}>
+        <Notice tone="ok"><p>{untrackedNotice(untracked)} <button class="link" onclick={undoUntrack}>Undo</button></p></Notice>
+      </div>
+    {/if}
     {#if gitJob.phase === 'failed'}<Notice tone="error"><p><LinkedText text={gitJob.message ?? ''} /></p></Notice>{/if}
     {#if status?.conflicted.length}
       <Notice tone="warn"><p>{status.conflicted.length === 1 ? '1 file has a merge conflict' : `${status.conflicted.length} files have merge conflicts`}. Resolve them in an editor, then stage them.</p></Notice>
+    {/if}
+    {#if status?.trackedIgnored.length}
+      {@const ignoredCount = status.trackedIgnored.length}
+      <Notice tone="warn">
+        <p>
+          Git still tracks {ignoredCount === 1 ? '1 file' : `${ignoredCount} files`} your .gitignore leaves out.
+          <button class="link" onclick={() => (reviewingIgnored = [...status!.trackedIgnored])}>Review…</button>
+        </p>
+      </Notice>
     {/if}
 
     <div class="layout-row">
@@ -651,7 +721,7 @@
 
     <section class="group" aria-labelledby="changes-heading">
       <div class="group-head">
-        <h3 id="changes-heading">Changes <span class="count">{status?.unstaged.length ?? 0}</span></h3>
+        <h3 id="changes-heading" tabindex="-1" bind:this={changesHeading}>Changes <span class="count">{status?.unstaged.length ?? 0}</span></h3>
         {#if status?.unstaged.length}
           <button class="link" onclick={() => run(() => api.gitStage(status!.unstaged.map((c) => c.path)))}>Stage all</button>
         {/if}
@@ -703,6 +773,10 @@
           {#if selectedUnstaged.length}<button class="primary" onclick={() => stage(selectedUnstaged)}>Stage {selectedUnstaged.length === 1 ? '1 file' : `${selectedUnstaged.length} files`}</button>{/if}
           {#if selectedStaged.length}<button onclick={() => unstage(selectedStaged)}>Unstage {selectedStaged.length === 1 ? '1 file' : `${selectedStaged.length} files`}</button>{/if}
           <button onclick={ignoreSelection}>Add to .gitignore…</button>
+          {#if summaryUntrack && (summaryUntrack.ignored.length || summaryUntrack.uncovered.length)}
+            {@const preview = summaryUntrack}
+            <button onclick={() => stopTracking(selectedChangePaths(), feedback, preview)}>{untrackLabel(preview)}</button>
+          {/if}
           {#if selectedUnstaged.length}<button class="danger" onclick={() => discard(selectedUnstaged)}>Discard changes{selectedUnstaged.length === 1 ? '' : ` to ${selectedUnstaged.length} files`}</button>{/if}
         </div>
         <ul class="summary-list" aria-label="Selected files">
@@ -742,6 +816,8 @@
   </div>
 </div>
 
+<UntrackIgnoredDialog paths={reviewingIgnored} ondone={untrackedIgnored} oncancel={() => (reviewingIgnored = null)} />
+
 {#if menu}
   <ContextMenu x={menu.x} y={menu.y} label="Change actions" items={menu.items} onclose={() => (menu = null)} />
 {/if}
@@ -775,6 +851,10 @@
 
   .conflict-list dd {
     margin: 0;
+  }
+
+  .focus-target {
+    border-radius: var(--radius-panel);
   }
 
   .conflict-actions {

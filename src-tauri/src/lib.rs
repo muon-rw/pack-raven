@@ -240,6 +240,8 @@ pub fn run() {
             git_commands::git_ignore,
             git_commands::git_ignore_options,
             git_commands::git_ignore_preview,
+            git_commands::git_untrack_preview,
+            git_commands::git_keep_tracking,
             git_commands::git_untrack,
             git_commands::git_commit,
             git_commands::git_sync,

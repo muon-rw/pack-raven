@@ -295,6 +295,7 @@ export interface GitStatus {
   staged: FileChange[]
   unstaged: FileChange[]
   conflicted: FileChange[]
+  trackedIgnored: string[]
 }
 
 export interface GitCommit {
@@ -442,6 +443,11 @@ export interface IgnoreOption {
   patterns: string[]
 }
 
+export interface UntrackPreview {
+  ignored: string[]
+  uncovered: string[]
+}
+
 export interface IgnorePreview {
   untracked: string[]
   tracked: string[]
@@ -544,6 +550,8 @@ export const api = {
   gitIgnoreOptions: (paths: string[]) => invoke<IgnoreOption[]>('git_ignore_options', { paths }),
   gitIgnorePreview: (patterns: string[]) => invoke<IgnorePreview>('git_ignore_preview', { patterns }),
   gitIgnore: (patterns: string[]) => invoke<string[]>('git_ignore', { patterns }),
+  gitUntrackPreview: (paths: string[]) => invoke<UntrackPreview>('git_untrack_preview', { paths }),
+  gitKeepTracking: (paths: string[]) => invoke<string[]>('git_keep_tracking', { paths }),
   gitUntrack: (paths: string[]) => invoke<void>('git_untrack', { paths }),
   gitDiscard: (tracked: string[], untracked: string[]) => invoke<void>('git_discard', { tracked, untracked }),
   gitCommit: (message: string) => invoke<void>('git_commit', { message }),

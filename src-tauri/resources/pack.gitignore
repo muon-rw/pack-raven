@@ -7,6 +7,7 @@ minecraftinstance.json
 # Minecraft runtime
 *.log
 *.bak
+*.bak.*
 *.dat
 backups
 cache/
@@ -45,6 +46,8 @@ config/jade/jade.json
 config/jade/sort-order.json
 config/jei/jei-client.ini
 config/jei/ingredient-list-mod-sort-order.ini
+config/jei/client/**/jei-client.ini
+config/jei/client/**/ingredient-list-mod-sort-order.ini
 config/sodium-fingerprint.json
 config/xenon-fingerprint.json
 kubejs/*/jsconfig.json

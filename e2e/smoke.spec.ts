@@ -712,3 +712,24 @@ test('views open side by side and keep their shortcuts to the focused pane', asy
   await page.keyboard.press('ControlOrMeta+Backslash')
   await expect(page.getByRole('region', { name: /pane$/ })).toHaveCount(0)
 })
+
+test('tracked files your .gitignore covers can be untracked, or kept with an exception', async ({ page }) => {
+  await openApp(page, 'git', 'dirty')
+  await page.getByRole('button', { name: 'Review…' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Stop tracking ignored files' })
+  const all = dialog.getByRole('checkbox', { name: 'All 4 files' })
+  await expect(all).toBeChecked()
+  // We open on a checkbox, so Enter right away doesn't untrack everything.
+  await expect(all).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(dialog).toBeVisible()
+
+  await dialog.getByRole('checkbox', { name: 'config/jei/jei-colors.ini.bak.1' }).uncheck()
+  await expect(dialog.getByRole('checkbox', { name: /Keep the unchecked file tracked/ })).toBeChecked()
+  await dialog.getByRole('button', { name: 'Stop tracking 3 files' }).click()
+  await expect(dialog).toBeHidden()
+  const done = page.getByRole('status').filter({ hasText: 'Stopped tracking 3 files.' })
+  await expect(done).toBeVisible()
+  await expect(done.getByRole('button', { name: 'Undo' })).toBeVisible()
+  await expect(page.getByText('your .gitignore leaves out.')).toBeHidden()
+})

@@ -42,6 +42,12 @@ if (scenario === 'empty') {
 
 const staged = fx.status.staged.length ? fx.status.staged : fx.status.unstaged.slice(0, 2)
 const unstaged = fx.status.staged.length ? fx.status.unstaged : fx.status.unstaged.slice(2)
+// JEI backups from before the pack's .gitignore covered *.bak.*, so the Git view can offer to stop tracking them.
+let trackedIgnored =
+  scenario === 'dirty'
+    ? ['config/jei/client/jei-client.ini.bak.1', 'config/jei/client/jei-client.ini.bak.2', 'config/jei/jei-colors.ini.bak.1', 'config/jei/recipe-category-sort-order.ini.bak.1']
+    : []
+
 // Texture changes, so the dirty scenario covers the side-by-side image diff.
 if (scenario === 'dirty') {
   const texture = (path: string) => ({ text: `diff --git a/${path} b/${path}\nindex 3f2a1b0..9c8d7e6 100644\nBinary files a/${path} and b/${path} differ\n`, binary: true, truncated: false })
@@ -869,7 +875,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   credentials_status: () => ({ builtInApiKey: true, upload: { source: { kind: 'env', name: 'CURSEFORGE_TOKEN' }, present: true }, github: { source: { kind: 'stored' }, present: true }, keychain: 'Windows Credential Manager' }),
   env_var_names: () => ['APPDATA', 'CF_DOWNLOAD_TOKEN', 'CURSEFORGE_TOKEN', 'PATH'],
   defender_status: () => ({ active: true, exclusionsReadable: false, missing: [], prompt: false }),
-  git_overview: () => ({ status: { branch: 'master', upstream: 'origin/master', ahead: 1, behind: 0, hasCommits: true, hasRemote: true, conflicted: [], ...fx.status, staged, unstaged }, commits: fx.commits }),
+  git_overview: () => ({ status: { branch: 'master', upstream: 'origin/master', ahead: 1, behind: 0, hasCommits: true, hasRemote: true, conflicted: [], ...fx.status, trackedIgnored, staged, unstaged }, commits: fx.commits }),
   git_diff: (a) => diffFor(String(a.path), Boolean(a.staged)),
   git_blob: (a) => dataUrlBytes(mockImage(String(a.path), a.version === 'head' || String(a.path).includes('feather'))),
   git_apply_lines: (a) => console.info('[mock] applied lines', a.action, a.path, a.selected),
@@ -938,7 +944,17 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     ]
   },
   git_ignore_preview: (a) => ({ untracked: (a.patterns as string[]).filter((p) => p.trim()).map((p) => p.replace(/^\//, '')), tracked: ['config/tracked.json'] }),
-  git_untrack: () => undefined,
+  git_untrack_preview: (a) => {
+    const paths = a.paths as string[]
+    return { ignored: paths.filter((p) => trackedIgnored.includes(p)), uncovered: paths.filter((p) => !trackedIgnored.includes(p)) }
+  },
+  git_keep_tracking: (a) => {
+    trackedIgnored = trackedIgnored.filter((p) => !(a.paths as string[]).includes(p))
+    return []
+  },
+  git_untrack: (a) => {
+    trackedIgnored = trackedIgnored.filter((p) => !(a.paths as string[]).includes(p))
+  },
   copy_files: () => null,
   copy_paths: (a) => console.info('[mock] copied paths', a),
   open_with_default_app: (a) => console.info('[mock] opened', a.path),

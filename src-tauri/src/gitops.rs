@@ -33,6 +33,7 @@ pub struct Status {
     pub staged: Vec<FileChange>,
     pub unstaged: Vec<FileChange>,
     pub conflicted: Vec<FileChange>,
+    pub tracked_ignored: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -99,6 +100,7 @@ pub fn status(dir: &Path) -> Result<Status> {
             _ => {}
         }
     }
+    status.tracked_ignored = tracked_ignored(dir, &[])?.into_iter().filter(|p| !modsync::is_binary(p)).collect();
     Ok(status)
 }
 
@@ -448,6 +450,42 @@ pub fn ignore(dir: &Path, patterns: &[String]) -> Result<Vec<String>> {
     tracked_matching(dir, &excludes)
 }
 
+// Git keeps tracking a file after a .gitignore pattern starts to match it. We leave out the jars
+// you commit directly, since mods/*.jar matches those on purpose.
+fn tracked_ignored(dir: &Path, paths: &[String]) -> Result<Vec<String>> {
+    let mut args = vec!["--literal-pathspecs", "ls-files", "-z", "-c", "-i", "--exclude-standard", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    listed(dir, &args)
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UntrackPreview {
+    pub ignored: Vec<String>,
+    pub uncovered: Vec<String>,
+}
+
+/// Splits the tracked files under `paths` by whether .gitignore covers them, since an uncovered
+/// file would show up again as a new file once you stop tracking it.
+pub fn untrack_preview(dir: &Path, paths: &[String]) -> Result<UntrackPreview> {
+    if paths.is_empty() {
+        return Ok(UntrackPreview::default());
+    }
+    let mut args = vec!["--literal-pathspecs", "ls-files", "-z", "-c", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    let ignored: HashSet<String> = tracked_ignored(dir, paths)?.into_iter().collect();
+    let (ignored, uncovered) = listed(dir, &args)?.into_iter().partition(|p| ignored.contains(p));
+    Ok(UntrackPreview { ignored, uncovered })
+}
+
+/// Returns the paths .gitignore still leaves out, since git can't re-include a file whose folder
+/// a pattern excludes.
+pub fn keep_tracking(dir: &Path, paths: &[String]) -> Result<Vec<String>> {
+    let lines: Vec<String> = paths.iter().map(|p| format!("!{}", ignore_pattern(p, false))).collect();
+    crate::setup::ensure_lines(&dir.join(".gitignore"), &lines.iter().map(String::as_str).collect::<Vec<_>>())?;
+    tracked_ignored(dir, paths)
+}
+
 pub fn untrack(dir: &Path, paths: &[String]) -> Result<()> {
     for chunk in paths.chunks(200) {
         let mut args = vec!["rm", "-r", "--cached", "--quiet", "--"];
@@ -749,6 +787,35 @@ mod tests {
         untrack(&dir, &["config/a.json".into()]).unwrap();
         assert!(git::run(&dir, &["ls-files"]).unwrap().is_empty());
         assert!(dir.join("config/a.json").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn finds_tracked_files_gitignore_covers() {
+        let dir = std::env::temp_dir().join(format!("packraven-tracked-ignored-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for file in ["config/jei/a.ini.bak.1", "config/jei/a.ini", "config/[x].toml", "mods/local.jar"] {
+            let path = dir.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "x").unwrap();
+        }
+        git::run(&dir, &["init", "-q"]).unwrap();
+        git::run(&dir, &["add", "-A"]).unwrap();
+        std::fs::write(dir.join(".gitignore"), "*.bak.*
+mods/*.jar
+/config/[[]x].toml
+").unwrap();
+
+        assert_eq!(status(&dir).unwrap().tracked_ignored, ["config/[x].toml", "config/jei/a.ini.bak.1"]);
+        let preview = untrack_preview(&dir, &["config/jei".into()]).unwrap();
+        assert_eq!((preview.ignored, preview.uncovered), (vec!["config/jei/a.ini.bak.1".to_string()], vec!["config/jei/a.ini".to_string()]));
+        let literal = untrack_preview(&dir, &["config/[x].toml".into()]).unwrap();
+        assert_eq!(literal.ignored, ["config/[x].toml"]);
+
+        assert!(keep_tracking(&dir, &["config/[x].toml".into(), "config/jei/a.ini.bak.1".into()]).unwrap().is_empty());
+        assert!(status(&dir).unwrap().tracked_ignored.is_empty());
+        std::fs::write(dir.join(".gitignore"), "/config/jei/\n").unwrap();
+        assert_eq!(keep_tracking(&dir, &["config/jei/a.ini".into()]).unwrap(), ["config/jei/a.ini"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
