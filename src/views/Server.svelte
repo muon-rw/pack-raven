@@ -10,6 +10,7 @@
   import { trackSave } from '../lib/launch.svelte'
   import { serverView } from '../lib/nav.svelte'
   import { commandKey, shortcut } from '../lib/platform'
+  import { paneFocus } from '../lib/panes.svelte'
 
   let { overview }: { overview: Overview | null } = $props()
 
@@ -132,7 +133,10 @@
 
   let searchField = $state<HTMLInputElement>()
 
+  const inFocusedPane = paneFocus()
+
   function onKey(event: KeyboardEvent) {
+    if (!inFocusedPane()) return
     if (serverView.tab !== 'mods' || event.key.toLowerCase() !== 'f' || event.shiftKey || !commandKey(event) || event.defaultPrevented) return
     event.preventDefault()
     searchField?.focus()
@@ -230,19 +234,23 @@
     </div>
   </div>
 
+  {#snippet sideChip(mod: ModSide)}
+    <span class="chip {mod.side === 'client' ? 'change' : 'ok'}">{mod.side === 'client' ? 'Excluded' : mod.side === 'server' ? 'Included, server-side' : 'Included'}</span>
+  {/snippet}
+
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div class="table" role="region" aria-label="Mods" tabindex="0">
     <table aria-busy={loading && !mods.length}>
       <thead>
-        <tr><th>Mod</th><th>Server</th><th>Why</th><th>Override</th></tr>
+        <tr><th>Mod</th><th class="side">Server</th><th class="why">Why</th><th>Override</th></tr>
       </thead>
       <tbody>
         {#if loading && !mods.length}
           {#each { length: 8 } as _, row (row)}
             <tr class="skeleton" aria-hidden="true">
               <td><span style="width: {55 + ((row * 37) % 35)}%"></span><span class="short"></span></td>
-              <td><span></span></td>
-              <td><span style="width: {60 + ((row * 23) % 30)}%"></span></td>
+              <td class="side"><span></span></td>
+              <td class="why"><span style="width: {60 + ((row * 23) % 30)}%"></span></td>
               <td><span></span></td>
             </tr>
           {/each}
@@ -252,9 +260,10 @@
               <td>
                 {#if mod.url}<a href={mod.url} onclick={(e) => { e.preventDefault(); openUrl(mod.url!) }}>{mod.name}</a>{:else}{mod.name}{/if}
                 <div class="file muted">{mod.path.slice(5)}</div>
+                <div class="folded">{@render sideChip(mod)} <span class="muted">{mod.reason}</span></div>
               </td>
-              <td><span class="chip {mod.side === 'client' ? 'change' : 'ok'}">{mod.side === 'client' ? 'Excluded' : mod.side === 'server' ? 'Included, server-side' : 'Included'}</span></td>
-              <td class="muted">{mod.reason}</td>
+              <td class="side">{@render sideChip(mod)}</td>
+              <td class="why muted">{mod.reason}</td>
               <td>
                 <select value={mod.override} onchange={(e) => setOverride(mod, e.currentTarget)} aria-label="Override for {mod.name}">
                   <option value="auto">Automatic</option>
@@ -477,6 +486,24 @@
 
   td .file {
     overflow-wrap: anywhere;
+  }
+
+  .folded {
+    display: none;
+    margin-top: 4px;
+    font-size: var(--step--1);
+  }
+
+  /* A narrow table, such as half of a split, folds Server and Why under each mod so Override keeps its room. */
+  @container (max-width: 560px) {
+    .side,
+    .why {
+      display: none;
+    }
+
+    .folded {
+      display: block;
+    }
   }
 
 </style>

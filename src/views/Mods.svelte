@@ -17,6 +17,7 @@
   import { sanitizeRemoteHtml } from '../lib/markdown'
   import type { MenuItem } from '../lib/menu'
   import { commandKey, shortcut, trashName } from '../lib/platform'
+  import { paneFocus } from '../lib/panes.svelte'
 
   let { pack, game, clientRunning, ontest }: { pack: string | null; game: string; clientRunning: boolean; ontest: () => void } = $props()
 
@@ -539,7 +540,10 @@
     document.getElementById(`mods-tab-${browse.tab}`)?.focus()
   }
 
+  const inFocusedPane = paneFocus()
+
   function onKey(event: KeyboardEvent) {
+    if (!inFocusedPane()) return
     if (event.key.toLowerCase() !== 'f' || event.shiftKey || !commandKey(event) || event.defaultPrevented) return
     event.preventDefault()
     if (browse.tab === 'browse') browser?.focusSearch()
@@ -1462,6 +1466,17 @@
     }
   }
 
+  /* Half of a split at the minimum window still has to fit every control column. */
+  @container (max-width: 440px) {
+    td {
+      padding-inline: 4px;
+    }
+
+    .update {
+      white-space: normal;
+    }
+  }
+
   /* In a short window a second scroller inside the page would show only a few rows, so the
      table grows with the page instead and its header sticks to the page's scroller. */
   @media (max-height: 700px) {
@@ -1496,14 +1511,22 @@
     }
   }
 
+  /* Every control column stays even in half of a split, so there the table scrolls sideways in its
+     own frame rather than widening the view. This comes after the short-window rule on purpose. */
+  @container (max-width: 440px) {
+    .table {
+      overflow-x: auto;
+    }
+  }
+
   .update {
     text-align: right;
     white-space: nowrap;
   }
 
-  /* Wide enough for the busy label, so queueing an update doesn't shift the columns. A zoomed-in
-     minimum window has no room to spare for it. */
-  @media (min-width: 800px) {
+  /* Wide enough for the busy label, so queueing an update doesn't shift the columns. A narrow pane,
+     such as a zoomed-in minimum window or half a split, has no room to spare for it. */
+  @container pane (min-width: 532px) {
     td.update button {
       min-width: 8.5em;
     }

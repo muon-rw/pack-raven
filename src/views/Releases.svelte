@@ -108,6 +108,8 @@
   {#if discordError}<p class="failed" role="alert">{discordError}</p>{/if}
 
   {#if releases.length}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex (a scrollable region needs focus so you can scroll it with keys) -->
+    <div class="scroll" role="region" aria-label="Releases" tabindex="0">
     <table>
       <thead>
         <tr><th>Version</th><th>Published</th><th>Client pack</th><th>Server pack</th><th>Discord</th></tr>
@@ -139,6 +141,7 @@
         {/each}
       </tbody>
     </table>
+    </div>
     <p class="muted small" id="discohook-hint">
       Discohook is a web editor for Discord messages. packraven opens the announcement there, so you can change it and post it yourself.
     </p>
@@ -177,6 +180,11 @@
 
   .small {
     font-size: var(--step--1);
+  }
+
+  /* In a narrow pane the table scrolls sideways on its own, so the rest of the view keeps its width. */
+  .scroll {
+    overflow-x: auto;
   }
 
   table {

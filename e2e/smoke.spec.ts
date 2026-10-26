@@ -639,3 +639,76 @@ test('a file in a mod jar can be overridden in a new data pack after adding Paxi
   await expect(tree.locator('[data-path="config/paxi/datapacks/Overrides/data/example/recipe/fire_charge.json"]')).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('button', { name: /^Saved/ })).toBeVisible()
 })
+
+test('a link in one pane opens its target in the other', async ({ page }) => {
+  await openApp(page, 'test', 'dirty', 'files')
+  await page.getByRole('region', { name: 'Run, left pane' }).getByRole('button', { name: 'Change in App settings' }).click()
+  await expect(page.getByRole('region', { name: 'Run, left pane' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'App settings, right pane' })).toBeVisible()
+})
+
+test.describe('at 125% zoom of the minimum window', () => {
+  test.use({ deviceScaleFactor: 1.25, viewport: { width: 768, height: 512 } })
+
+  test('a split shows its panes as tabs', async ({ page }) => {
+    await openApp(page, 'git', 'dirty', 'files')
+    const tabs = page.getByRole('tablist', { name: 'Panes' })
+    await expect(tabs.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByRole('heading', { level: 2, name: 'Git', exact: true })).toBeHidden()
+    await tabs.getByRole('tab', { name: 'Files' }).press('ArrowLeft')
+    await expect(tabs.getByRole('tab', { name: 'Git' })).toBeFocused()
+    await expect(page.getByRole('heading', { level: 2, name: 'Git', exact: true })).toBeVisible()
+    await page.keyboard.press('F6')
+    await expect(tabs.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true')
+  })
+})
+
+for (const [left, right] of [['git', 'files'], ['mods', 'test'], ['changes', 'test'], ['server', 'test']] as [View, View][]) {
+  test(`${left} and ${right} render side by side`, async ({ page }) => {
+    const problems: string[] = []
+    page.on('pageerror', (error) => problems.push(`uncaught: ${error.message}`))
+    page.on('console', (message) => message.type() === 'error' && !message.location().url.endsWith('/favicon.ico') && problems.push(message.text()))
+    await openApp(page, left, 'dirty', right)
+    await page.waitForTimeout(500)
+    expect(problems).toEqual([])
+  })
+}
+
+test('views open side by side and keep their shortcuts to the focused pane', async ({ page }) => {
+  await openApp(page, 'mods', 'dirty')
+  const rail = page.getByRole('navigation', { name: 'Pack' })
+  await rail.getByRole('button', { name: /^Git/ }).click({ modifiers: ['ControlOrMeta'] })
+  const left = page.getByRole('region', { name: 'Mods, left pane' })
+  const right = page.getByRole('region', { name: 'Git, right pane' })
+  await expect(left).toBeVisible()
+  await expect(right).toBeVisible()
+  await expect(rail.getByRole('button', { name: /^Git/ })).toHaveAttribute('aria-current', 'page')
+
+  // Ctrl+F finds in Mods only while its pane has focus.
+  await right.getByRole('heading', { name: 'Git', exact: true }).click()
+  await page.keyboard.press('ControlOrMeta+f')
+  await expect(left.getByRole('searchbox', { name: 'Find a mod or author' })).not.toBeFocused()
+  await left.getByRole('heading', { name: 'Mods', exact: true }).click()
+  await page.keyboard.press('ControlOrMeta+f')
+  await expect(left.getByRole('searchbox', { name: 'Find a mod or author' })).toBeFocused()
+
+  // A rail click replaces the focused pane's view, and a view already on screen just takes focus.
+  await rail.getByRole('button', { name: /^Changes/ }).click()
+  await expect(page.getByRole('region', { name: 'Changes, left pane' })).toBeVisible()
+  await rail.getByRole('button', { name: /^Git/ }).click()
+  await expect(page.getByRole('region', { name: 'Changes, left pane' })).toBeVisible()
+
+  await page.locator('.bar', { hasText: 'Git' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Swap sides' }).click()
+  await expect(page.getByRole('region', { name: 'Git, left pane' })).toBeVisible()
+  // The close button leaves with its pane, so focus moves to the pane that stays.
+  await page.getByRole('button', { name: 'Close Changes' }).click()
+  await expect(page.getByRole('region', { name: /pane$/ })).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 2, name: 'Git', exact: true })).toBeVisible()
+  await expect(page.locator('#pane-0')).toBeFocused()
+
+  await page.keyboard.press('ControlOrMeta+Backslash')
+  await expect(page.getByRole('region', { name: /pane$/ })).toHaveCount(2)
+  await page.keyboard.press('ControlOrMeta+Backslash')
+  await expect(page.getByRole('region', { name: /pane$/ })).toHaveCount(0)
+})

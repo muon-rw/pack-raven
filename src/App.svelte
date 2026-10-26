@@ -1,7 +1,7 @@
 <script lang="ts">
   import { loaderName } from './lib/loader'
   import Notice from './components/Notice.svelte'
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { listen } from '@tauri-apps/api/event'
   import { api, errorText, type MinecraftAccount, type Overview, type PackList } from './lib/api'
   import { job, jobs, serverPack, startListening, testState } from './lib/jobs.svelte'
@@ -29,21 +29,30 @@
   import ThemeToggle from './components/ThemeToggle.svelte'
   import VersionEditor from './components/VersionEditor.svelte'
   import { modCountsSummary, notOnCurseforgeSummary } from './lib/modsync'
-  import { shortcut } from './lib/platform'
+  import { commandKey, isMac, shortcut } from './lib/platform'
+  import Pane from './components/Pane.svelte'
+  import Splitter from './components/Splitter.svelte'
+  import ContextMenu from './components/ContextMenu.svelte'
+  import type { MenuItem } from './lib/menu'
+  import { clamp } from './lib/storedSplit.svelte'
+  import { closePane, focusedView, isSplit, layout, only, openBeside, paneSplit, show, showFrom, splitCompanion, swapPanes, titles, toggleSplit, views, type View } from './lib/panes.svelte'
 
-  type View = (typeof views)[number]
   type Tone = 'ok' | 'warn' | 'bad' | 'busy' | 'idle'
   type NavItem = { id: View; title: string; key?: string; alias?: string; status?: string; tone?: Tone; count?: number; countText?: string }
 
-  const views = ['changes', 'test', 'mods', 'server', 'files', 'git', 'publish', 'releases', 'pack', 'settings', 'add'] as const
-
   // In dev builds, `?view=publish` opens straight to a view, so screenshot scripts don't have to click there.
-  function initialView(): View {
-    const requested = import.meta.env.DEV ? new URLSearchParams(location.search).get('view') : null
-    return views.find((v) => v === requested) ?? 'mods'
+  // `&beside=git` opens a second view in a split.
+  function initialLayout() {
+    const params = import.meta.env.DEV ? new URLSearchParams(location.search) : null
+    const pick = (name: string) => views.find((v) => v === params?.get(name))
+    only(pick('view') ?? 'mods')
+    const beside = pick('beside')
+    if (beside) openBeside(beside)
   }
 
-  let view: View = $state(initialView())
+  initialLayout()
+  let view = $derived(focusedView())
+  let split = $derived(isSplit())
   let overview = $state<Overview | null>(null)
   let loadError: string | null = $state(null)
   let packs = $state<PackList | null>(null)
@@ -78,7 +87,7 @@
     if (packs && !packs.active) {
       overview = null
       loadError = null
-      if (view !== 'settings') view = 'add'
+      only(view === 'settings' ? 'settings' : 'add')
       return
     }
     try {
@@ -143,7 +152,8 @@
     }
     try {
       await api.switchPack(dir, killTests)
-      view = 'mods'
+      // A split you set up is a layout for your work, not for one pack, so we keep it.
+      if (!split) show('mods')
       hookMessage = null
       hooksDismissed = false
       await refresh()
@@ -262,36 +272,133 @@
     if (job('server-pack').phase === 'done' || publishPhase === 'done') serverPack.changedSinceBuild = false
   })
 
-  // Every view shares one scroller, so we reset it to the top on each view change.
-  let scroller = $state<HTMLElement>()
-  $effect(() => {
-    void view
-    if (scroller) scroller.scrollTop = 0
-  })
-
+  // A link inside a view asks for nav.view, and in a split it opens in the other pane.
   $effect(() => {
     if (!nav.view) return
-    view = nav.view
+    showFrom(nav.view, layout.focused)
     nav.view = null
   })
 
+  let navItems = $derived(groups.flatMap((group) => group.items))
+
   function onKey(event: KeyboardEvent) {
+    if (event.key === 'F6' && split && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault()
+      layout.focused = 1 - layout.focused
+      if (tabbed) document.getElementById(`pane-${layout.focused}-tab`)?.focus()
+      return
+    }
     if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+    if (event.code === 'Backslash' && !event.shiftKey) {
+      if (!packs?.active) return
+      event.preventDefault()
+      toggleSplit()
+      return
+    }
     if (event.shiftKey) {
+      // Shift changes event.key for the digits, so we match the physical key.
+      const digit = /^Digit([1-9])$/.exec(event.code)?.[1]
+      const beside = digit && packs?.active ? navItems.find((item) => item.key === digit) : undefined
+      if (beside) {
+        event.preventDefault()
+        openBeside(beside.id)
+        return
+      }
       const key = event.key.toLowerCase()
       if (!packs?.active || (key !== 'f' && key !== 'h')) return
       event.preventDefault()
       nav.textSearch = key === 'h' ? 'replace' : 'find'
-      view = 'files'
+      show('files')
       return
     }
     const key = event.key.toUpperCase()
     // Files and Git keep their old letter shortcuts as aliases.
-    const item = packs?.active ? groups.flatMap((group) => group.items).find((item) => item.key === key || item.alias === key) : undefined
-    if (item) view = item.id
-    else if (event.key === ',') view = 'settings'
+    const item = packs?.active ? navItems.find((item) => item.key === key || item.alias === key) : undefined
+    if (item) show(item.id)
+    else if (event.key === ',') show('settings')
     else return
     event.preventDefault()
+  }
+
+  function onRailClick(event: MouseEvent, id: View) {
+    if (commandKey(event) && packs?.active) openBeside(id)
+    else show(id)
+  }
+
+  let railMenu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
+
+  function onRailMenu(event: MouseEvent, id: View, key?: string) {
+    event.preventDefault()
+    if (!packs?.active) return
+    const at = layout.panes.indexOf(id)
+    const other = 1 - layout.focused
+    const besideShortcut = key ? shortcut(`Ctrl+Shift+${key}`) : undefined
+    const items: MenuItem[] = split
+      ? [
+          ...(at < 0
+            ? [0, 1].map((pane) => ({ label: `Open in ${pane ? 'right' : 'left'} pane`, shortcut: pane === other ? besideShortcut : undefined, run: () => show(id, pane) }))
+            : [{ label: 'Close pane', run: () => closeAndFocus(at) }]),
+          'separator',
+          { label: 'Swap sides', run: swapPanes },
+          { label: `Close split, keep ${titles[view]}`, shortcut: shortcut('Ctrl+\\'), run: toggleSplit },
+        ]
+      : at < 0
+        ? [
+            { label: 'Open', run: () => show(id) },
+            { label: 'Open beside', shortcut: besideShortcut, run: () => openBeside(id) },
+          ]
+        : [{ label: `Split with ${titles[splitCompanion()]}`, shortcut: shortcut('Ctrl+\\'), run: toggleSplit }]
+    openMenu(event, items)
+  }
+
+  function onPaneMenu(event: MouseEvent, pane: number) {
+    event.preventDefault()
+    openMenu(event, [
+      { label: 'Swap sides', run: swapPanes },
+      { label: `Close ${titles[layout.panes[pane]]}`, run: () => closeAndFocus(pane) },
+    ])
+  }
+
+  function openMenu(event: MouseEvent, items: MenuItem[]) {
+    // The keyboard menu key fires contextmenu without pointer coordinates.
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    const fromKeyboard = !event.clientX && !event.clientY
+    railMenu = { x: fromKeyboard ? rect.left + 24 : event.clientX, y: fromKeyboard ? rect.bottom : event.clientY, items }
+  }
+
+  // The close button leaves with its pane, so we hand focus to the pane that stays.
+  async function closeAndFocus(pane: number) {
+    closePane(pane)
+    await tick()
+    document.getElementById('pane-0')?.focus({ preventScroll: true })
+  }
+
+  const openBesideHint = `${isMac ? '⌘-click' : 'Ctrl+click'} to open beside`
+
+  function railTitle(status?: string) {
+    return packs?.active ? [status, openBesideHint].filter(Boolean).join('. ') : status
+  }
+
+  function sideOf(id: View) {
+    const at = layout.panes.indexOf(id)
+    return split && at >= 0 ? (at ? 'right' : 'left') : null
+  }
+
+  const PANE_GAP = 1
+  // Views stay usable down to about this width. A narrower split, as in a zoomed-in minimum
+  // window, shows its panes as tabs instead.
+  const PANE_MIN = 360
+  let panesWidth = $state(0)
+  let splitTotal = $derived(panesWidth - PANE_GAP)
+  let tabbed = $derived(split && panesWidth > 0 && splitTotal < 2 * PANE_MIN)
+  let paneMode = $derived<'single' | 'split' | 'tabs'>(!split ? 'single' : tabbed ? 'tabs' : 'split')
+  let leftWidth = $derived(clamp(Math.round((paneSplit.value ?? 0.5) * splitTotal), PANE_MIN, splitTotal - PANE_MIN))
+
+  function onTabKey(event: KeyboardEvent) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    layout.focused = 1 - layout.focused
+    document.getElementById(`pane-${layout.focused}-tab`)?.focus()
   }
 </script>
 
@@ -303,7 +410,7 @@
 
     <section class="pack" aria-label="Current pack">
       <div class="identity">
-        <PackSwitcher list={packs} name={overview?.name ?? (packs?.active ? 'Pack unavailable' : 'No pack')} onswitch={switchPack} onadd={() => (view = 'add')} />
+        <PackSwitcher list={packs} name={overview?.name ?? (packs?.active ? 'Pack unavailable' : 'No pack')} onswitch={switchPack} onadd={() => show('add')} />
         {#if overview}
           <VersionEditor version={overview.version} lastTag={overview.lastTag} onchange={refresh} />
           <div class="game">Minecraft {overview.minecraft} with {loaderName(overview.loader)}</div>
@@ -348,18 +455,23 @@
             <ul aria-label={group.label}>
               {#if group.label}<li class="group" aria-hidden="true">{group.label}</li>{/if}
               {#each group.items as item (item.id)}
+                {@const side = sideOf(item.id)}
                 <li>
                   <button
                     class="item tone-{item.tone ?? 'idle'}"
                     class:current={view === item.id}
+                    class:beside={side && view !== item.id}
                     aria-current={view === item.id ? 'page' : undefined}
-                    aria-keyshortcuts={item.key ? `Control+${item.key}` : undefined}
-                    title={item.status}
-                    onclick={() => (view = item.id)}
+                    aria-keyshortcuts={item.key ? `Control+${item.key} Control+Shift+${item.key}` : undefined}
+                    title={railTitle(item.status)}
+                    onclick={(e) => onRailClick(e, item.id)}
+                    onauxclick={(e) => e.button === 1 && openBeside(item.id)}
+                    oncontextmenu={(e) => onRailMenu(e, item.id, item.key)}
                   >
                     <span class="dot" aria-hidden="true"></span>
-                    <span class="label">{item.title}{#if item.status}<span class="visually-hidden">, {item.status}</span>{/if}</span>
+                    <span class="label">{item.title}{#if item.status}<span class="visually-hidden">, {item.status}</span>{/if}{#if side}<span class="visually-hidden">, {side} pane</span>{/if}</span>
                     {#if item.key}<kbd aria-hidden="true">{shortcut(`Ctrl+${item.key}`)}</kbd>{/if}
+                    {#if side}{@render sideMark(side)}{/if}
                     {#if item.count}
                       <span class="pending count" aria-hidden="true">{item.count}</span>
                       <span class="visually-hidden">, {item.countText}</span>
@@ -380,8 +492,15 @@
     <button
       class="item app-settings"
       aria-describedby={[updateWaiting(selfUpdate.view) && 'rail-update', account !== undefined && 'rail-player'].filter(Boolean).join(' ') || undefined}
-      class:current={view === 'settings'} aria-current={view === 'settings' ? 'page' : undefined} aria-keyshortcuts="Control+," onclick={() => (view = 'settings')}>
-      <span class="label">App settings</span>
+      class:current={view === 'settings'}
+      class:beside={sideOf('settings') && view !== 'settings'}
+      aria-current={view === 'settings' ? 'page' : undefined}
+      aria-keyshortcuts="Control+,"
+      title={railTitle()}
+      onclick={(e) => onRailClick(e, 'settings')}
+      onauxclick={(e) => e.button === 1 && packs?.active && openBeside('settings')}
+      oncontextmenu={(e) => onRailMenu(e, 'settings')}>
+      <span class="label">App settings{#if sideOf('settings')}<span class="visually-hidden">, {sideOf('settings')} pane</span>{/if}</span>
       {#if updateWaiting(selfUpdate.view)}
         <span class="chip ok" id="rail-update" title="packraven {selfUpdate.view.status.version} is {selfUpdate.view.status.phase}">
           update<span class="visually-hidden">{` to packraven ${selfUpdate.view.status.version} ${selfUpdate.view.status.phase}`}</span>
@@ -393,71 +512,129 @@
           <span class="visually-hidden">{'Minecraft: '}</span>{account ? account.name : 'Signed out'}
         </span>
       {/if}
+      {#if sideOf('settings')}{@render sideMark(sideOf('settings')!)}{/if}
       <kbd aria-hidden="true">{shortcut('Ctrl+,')}</kbd>
     </button>
   </aside>
 
   <main>
-    <section class="view" bind:this={scroller}>
-      <GitNotice oninstalled={refresh} />
-      {#if view !== 'add'}<DefenderNotice />{/if}
-      {#if overview && overview.hooks !== 'current' && view !== 'add' && !hooksDismissed}
-        <div class="banner">
-          <Notice tone="warn">
-            <div class="hook-row">
-              <p>
-                {overview.hooks === 'missing'
-                  ? "This pack has no sync hooks, the git scripts that download mods when you pull, so pulling won't download them."
-                  : "This pack's sync hooks, the git scripts that download mods when you pull, are older than this version of packraven."}
-              </p>
-              <span class="hook-actions">
-                <button onclick={updateHooks}>Update hooks</button>
-                <button class="quiet" onclick={() => (hooksDismissed = true)}>Not now</button>
-              </span>
-            </div>
-            {#if hookMessage}<p class:muted={!hookFailed} class:failed={hookFailed}>{hookMessage}</p>{/if}
-          </Notice>
+    {#if split}<div class="banners">{@render banners()}</div>{/if}
+    {#if tabbed}
+      <div class="pane-tabs">
+        <div class="tab-list" role="tablist" aria-label="Panes">
+          {#each layout.panes as pane, index (pane)}
+            <button
+              class="pane-tab"
+              role="tab"
+              id="pane-{index}-tab"
+              aria-selected={index === layout.focused}
+              aria-controls="pane-{index}"
+              tabindex={index === layout.focused ? 0 : -1}
+              title="The window is too narrow for two panes side by side. F6 switches between them."
+              onclick={() => (layout.focused = index)}
+              onkeydown={onTabKey}
+              oncontextmenu={(e) => onPaneMenu(e, index)}
+            >{titles[pane]}</button>
+          {/each}
         </div>
-      {/if}
-      <!-- Setup activates the new pack before it reports done, so we keep Add pack outside the key
-           block. Otherwise the switch would remount it and drop the setup result. -->
-      {#if view === 'add'}
-        <AddPack first={!packs?.packs.length} onadded={() => { view = 'mods'; refresh() }} />
-      {:else}
-      {#key packs?.active}
-        {#if loadError && view !== 'settings'}
-          <Notice tone="error">
-            <p>{loadError}</p>
-            <p><button onclick={() => (view = 'settings')}>Open App settings</button></p>
-          </Notice>
-        {:else if view === 'changes'}
-          <Changes {overview} onchange={refresh} />
-        {:else if view === 'mods'}
-          <Mods pack={packs?.active ?? null} game={overview ? `${overview.minecraft} ${loaderName(overview.loader).split(' ')[0]}` : 'this pack'} clientRunning={!!overview?.clientRunning} ontest={() => (view = 'test')} />
-        {:else if view === 'server'}
-          <Server {overview} />
-        {:else if view === 'test'}
-          <TestRun {overview} onserver={() => (view = 'server')} onappsettings={() => (view = 'settings')} />
-        {:else if view === 'files'}
-          {#await loadFiles() then { default: Files }}
-            <Files pack={packs?.active ?? null} />
-          {/await}
-        {:else if view === 'git'}
-          <Git onchange={refresh} />
-        {:else if view === 'publish'}
-          <Publish {overview} onchange={refresh} onchanges={() => (view = 'changes')} onsettings={() => (view = 'pack')} onreleases={() => (view = 'releases')} />
-        {:else if view === 'releases'}
-          <Releases onsettings={() => (view = 'pack')} />
-        {:else if view === 'pack' && packs?.active}
-          <PackSettings dir={packs.active} name={overview?.name ?? 'this pack'} onserver={() => (view = 'server')} onappsettings={() => (view = 'settings')} onchange={refresh} onremoved={() => { view = 'mods'; refresh() }} />
-        {:else}
-          <SettingsView onchange={refresh} onaccount={refreshAccount} />
+        <button class="close quiet" aria-label="Close {titles[view]}" title="Close {titles[view]}" onclick={() => closeAndFocus(layout.focused)}>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
+      </div>
+    {/if}
+    <div class="panes" class:split={paneMode === 'split'} bind:clientWidth={panesWidth} style:grid-template-columns={paneMode === 'split' ? `${leftWidth}px ${PANE_GAP}px minmax(0, 1fr)` : null}>
+      {#each layout.panes as pane, index (pane)}
+        <Pane
+          view={pane}
+          id="pane-{index}"
+          mode={paneMode}
+          side={split ? (index ? 'right' : 'left') : null}
+          focused={index === layout.focused}
+          onfocus={() => (layout.focused = index)}
+          onclose={() => closeAndFocus(index)}
+          onmenu={(e) => onPaneMenu(e, index)}
+          top={split ? undefined : banners}
+        >
+          {@render content(pane, index)}
+        </Pane>
+        <!-- The divider sits between the panes in the DOM too, so Tab reaches it where you see it. -->
+        {#if index === 0 && paneMode === 'split'}
+          <Splitter value={leftWidth} min={PANE_MIN} max={splitTotal - PANE_MIN} total={splitTotal} label="Resize the panes" controls="pane-0" onresize={(px) => paneSplit.set(px / splitTotal)} onreset={() => paneSplit.reset()} />
         {/if}
-      {/key}
-      {/if}
-    </section>
+      {/each}
+    </div>
   </main>
 </div>
+
+{#snippet sideMark(side: 'left' | 'right')}
+  <svg class="side" viewBox="0 0 14 10" aria-hidden="true"><rect x="0.5" y="0.5" width="13" height="9" rx="1.5" /><rect class="fill" x={side === 'left' ? 2 : 7} y="2" width="5" height="6" rx="0.5" /></svg>
+{/snippet}
+
+{#snippet banners()}
+  <GitNotice oninstalled={refresh} />
+  {#if view !== 'add'}<DefenderNotice />{/if}
+  {#if overview && overview.hooks !== 'current' && view !== 'add' && !hooksDismissed}
+    <div class="banner">
+      <Notice tone="warn">
+        <div class="hook-row">
+          <p>
+            {overview.hooks === 'missing'
+              ? "This pack has no sync hooks, the git scripts that download mods when you pull, so pulling won't download them."
+              : "This pack's sync hooks, the git scripts that download mods when you pull, are older than this version of packraven."}
+          </p>
+          <span class="hook-actions">
+            <button onclick={updateHooks}>Update hooks</button>
+            <button class="quiet" onclick={() => (hooksDismissed = true)}>Not now</button>
+          </span>
+        </div>
+        {#if hookMessage}<p class:muted={!hookFailed} class:failed={hookFailed}>{hookMessage}</p>{/if}
+      </Notice>
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet content(pane: View, index: number)}
+  <!-- Setup activates the new pack before it reports done, so we keep Add pack outside the key
+       block. Otherwise the switch would remount it and drop the setup result. -->
+  {#if pane === 'add'}
+    <AddPack first={!packs?.packs.length} onadded={() => { only('mods'); refresh() }} />
+  {:else}
+  {#key packs?.active}
+    {#if loadError && pane !== 'settings'}
+      <Notice tone="error">
+        <p>{loadError}</p>
+        <p><button onclick={() => showFrom('settings', index)}>Open App settings</button></p>
+      </Notice>
+    {:else if pane === 'changes'}
+      <Changes {overview} onchange={refresh} />
+    {:else if pane === 'mods'}
+      <Mods pack={packs?.active ?? null} game={overview ? `${overview.minecraft} ${loaderName(overview.loader).split(' ')[0]}` : 'this pack'} clientRunning={!!overview?.clientRunning} ontest={() => showFrom('test', index)} />
+    {:else if pane === 'server'}
+      <Server {overview} />
+    {:else if pane === 'test'}
+      <TestRun {overview} onserver={() => showFrom('server', index)} onappsettings={() => showFrom('settings', index)} />
+    {:else if pane === 'files'}
+      {#await loadFiles() then { default: Files }}
+        <Files pack={packs?.active ?? null} />
+      {/await}
+    {:else if pane === 'git'}
+      <Git onchange={refresh} />
+    {:else if pane === 'publish'}
+      <Publish {overview} onchange={refresh} onchanges={() => showFrom('changes', index)} onsettings={() => showFrom('pack', index)} onreleases={() => showFrom('releases', index)} />
+    {:else if pane === 'releases'}
+      <Releases onsettings={() => showFrom('pack', index)} />
+    {:else if pane === 'pack' && packs?.active}
+      <PackSettings dir={packs.active} name={overview?.name ?? 'this pack'} onserver={() => showFrom('server', index)} onappsettings={() => showFrom('settings', index)} onchange={refresh} onremoved={() => { only('mods'); refresh() }} />
+    {:else}
+      <SettingsView onchange={refresh} onaccount={refreshAccount} />
+    {/if}
+  {/key}
+  {/if}
+{/snippet}
+
+{#if railMenu}
+  <ContextMenu x={railMenu.x} y={railMenu.y} label="Pane actions" items={railMenu.items} onclose={() => (railMenu = null)} />
+{/if}
 
 <IgnoreDialog />
 
@@ -829,14 +1006,123 @@
     outline-color: var(--rail-text);
   }
 
-  /* We use a flex column so full-height views (Run, Files, Git) fill the space below any banners. */
-  .view {
+  .panes {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .panes.split {
+    --view-inset: 20px;
+  }
+
+  /* The panes sit 1px apart so their bars meet the divider, and the handle reaches a few pixels
+     into each pane to stay easy to grab. */
+  .panes :global(.splitter) {
+    z-index: 1;
+    margin-inline: -3px;
+  }
+
+  .panes :global(.splitter:not(.dragging, :focus-visible))::before {
+    background: var(--line-strong);
+  }
+
+  .panes :global(.splitter:hover:not(.dragging, :focus-visible))::before {
+    background: var(--edge);
+  }
+
+  .pane-tabs {
+    display: flex;
+    align-items: end;
+    gap: 8px;
+    padding: 6px 6px 0 var(--view-inset);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .tab-list {
     flex: 1;
     display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow: auto;
-    padding: 28px var(--view-inset);
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .pane-tab {
+    min-width: 0;
+    margin-bottom: -1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 5px 14px;
+    font-size: var(--step--1);
+    color: var(--muted);
+    background: transparent;
+    border-color: transparent;
+    border-bottom: 0;
+    border-radius: var(--radius-control) var(--radius-control) 0 0;
+  }
+
+  .pane-tab:hover:not([aria-selected='true'], :disabled) {
+    color: var(--text);
+    background: var(--control);
+  }
+
+  .pane-tab[aria-selected='true'] {
+    color: var(--ochre-ink);
+    background: var(--here);
+    border-color: var(--here-border);
+  }
+
+  .pane-tabs .close {
+    display: grid;
+    place-items: center;
+    align-self: center;
+    margin-bottom: 2px;
+    padding: 4px;
+  }
+
+  .pane-tabs svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+  }
+
+  .banners {
+    padding: 16px var(--view-inset) 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .banners:not(:has(*)) {
+    display: none;
+  }
+
+  .item.beside {
+    box-shadow: inset 0 0 0 1px var(--rail-edge);
+  }
+
+  .side {
+    flex: none;
+    width: 14px;
+    height: 10px;
+    fill: none;
+    stroke: var(--rail-muted);
+  }
+
+  .side .fill {
+    fill: var(--rail-muted);
+    stroke: none;
+  }
+
+  .current .side {
+    stroke: var(--rail-strong);
+  }
+
+  .current .side .fill {
+    fill: var(--rail-strong);
   }
 
   /* On short windows we tighten the rhythm but keep the Work and Release labels. */

@@ -59,3 +59,36 @@ for (const zoom of zooms) {
     }
   })
 }
+
+// Pairs we expect people to keep side by side, captured as split-<left>-<right>.png. They use the
+// dirty scenario, which fills both panes, and follow SHOTS_VIEWS when either view is in it.
+const splits: [View, View][] = [
+  ['git', 'files'],
+  ['mods', 'test'],
+  ['changes', 'test'],
+  ['server', 'test'],
+]
+const pickedSplits = process.env.SHOTS_VIEWS ? splits.filter((pair) => pair.some((view) => process.env.SHOTS_VIEWS!.split(',').includes(view))) : splits
+
+if (pick(process.env.SHOTS_SCENARIOS, scenarios).includes('dirty')) {
+  for (const [left, right] of pickedSplits) {
+    for (const { width, height } of sizes) {
+      for (const theme of themes) {
+        test(`dirty-${width}-${theme}-split-${left}-${right}`, async ({ page }) => {
+          await page.setViewportSize({ width, height })
+          await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+          await openApp(page, left, 'dirty', right)
+          await page.screenshot({ path: `shots/dirty-${width}-${theme}-split-${left}-${right}.png`, animations: 'disabled' })
+        })
+      }
+    }
+    test.describe('125% zoom', () => {
+      test.use({ deviceScaleFactor: 1.25, viewport: { width: 768, height: 512 } })
+      test(`dirty-960@125-light-split-${left}-${right}`, async ({ page }) => {
+        await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+        await openApp(page, left, 'dirty', right)
+        await page.screenshot({ path: `shots/dirty-960@125-light-split-${left}-${right}.png`, animations: 'disabled' })
+      })
+    })
+  }
+}

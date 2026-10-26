@@ -30,6 +30,7 @@
   import PackOverrideDialog from '../components/PackOverrideDialog.svelte'
   import Splitter from '../components/Splitter.svelte'
   import { StoredSplit, clamp } from '../lib/storedSplit.svelte'
+  import { paneFocus } from '../lib/panes.svelte'
 
   let { pack }: { pack: string | null } = $props()
 
@@ -330,7 +331,10 @@
     return path.slice(path.lastIndexOf('/') + 1)
   }
 
+  const inFocusedPane = paneFocus()
+
   function onKey(event: KeyboardEvent) {
+    if (!inFocusedPane()) return
     // On macOS, Option changes event.key, so we match the physical key.
     if (event.code === 'KeyF' && event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey && formatTarget(event.target)) {
       event.preventDefault()

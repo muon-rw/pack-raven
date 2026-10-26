@@ -251,7 +251,7 @@
 
   <section class="removal">
     <h3>Remove pack</h3>
-    <p class="muted">Stop showing <span class="file">{dir}</span> in packraven, without deleting anything on disk.</p>
+    <p class="muted">Stop showing <span class="file path">{dir}</span> in packraven, without deleting anything on disk.</p>
     <div><button type="button" class="danger" onclick={removePack}>Remove pack</button></div>
     {#if removeError}<p class="failed" role="alert">{removeError}</p>{/if}
   </section>
@@ -341,5 +341,9 @@
   .removal {
     padding-top: 28px;
     border-top: 1px solid var(--line);
+  }
+
+  .path {
+    overflow-wrap: anywhere;
   }
 </style>

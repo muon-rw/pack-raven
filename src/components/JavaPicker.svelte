@@ -189,8 +189,11 @@
     gap: 8px;
   }
 
+  /* A select is as wide as its longest option, and a percentage width lets it shrink with a narrow pane. */
   .row select {
     flex: 1;
+    width: 100%;
+    min-width: 0;
   }
 
   .path {

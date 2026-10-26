@@ -181,6 +181,8 @@
   // Following stops only when you scroll up yourself. Content arriving or the pane resizing
   // also fire scroll events, and those shouldn't let go of the end.
   function onScroll() {
+    // A scroll event queued before the panel unmounts still arrives after.
+    if (!viewport) return
     scrollTop = viewport.scrollTop
     const nearBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < ROW * 2
     if (nearBottom) pinned = true

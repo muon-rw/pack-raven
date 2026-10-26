@@ -553,6 +553,10 @@
     cursor: pointer;
   }
 
+  .uncommitted li {
+    overflow-wrap: anywhere;
+  }
+
   .uncommitted {
     display: grid;
     gap: 2px;

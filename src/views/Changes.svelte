@@ -9,6 +9,7 @@
   import RenderedChangelog from '../components/RenderedChangelog.svelte'
   import LinkedText from '../components/LinkedText.svelte'
   import { job, onJobEnd } from '../lib/jobs.svelte'
+  import { paneFocus } from '../lib/panes.svelte'
 
   let { overview, onchange }: { overview: Overview | null; onchange: () => void } = $props()
 
@@ -159,7 +160,10 @@
     } catch {}
   }
 
+  const inFocusedPane = paneFocus()
+
   function onKey(event: KeyboardEvent) {
+    if (!inFocusedPane()) return
     if (!(event.ctrlKey || event.metaKey)) return
     const key = event.key.toLowerCase()
     if (key === 's' && !event.shiftKey) {
@@ -398,7 +402,8 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  @media (max-width: 1000px) {
+  /* 732px is the pane's width in a 1000px window with no split. */
+  @container pane (max-width: 732px) {
     .columns {
       grid-template-columns: minmax(0, 1fr);
     }

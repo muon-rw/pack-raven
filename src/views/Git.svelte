@@ -96,6 +96,9 @@
   let splitTotal = $derived(workWidth - SIDE_GAP)
   let sideMax = $derived(splitTotal - DIFF_MIN)
   let sideWidth = $derived(clamp(sideSplit.value ?? splitTotal * 0.34, SIDE_MIN, sideMax))
+  // Below this, the diff beside the list would be too narrow to read, as in half of a split, so we
+  // stack the diff under the list.
+  let stacked = $derived(workWidth > 0 && workWidth < SIDE_MIN + SIDE_GAP + 200)
 
   function storedLayout(): Layout {
     try {
@@ -596,7 +599,7 @@
     </Notice>
   {/if}
 
-  <div class="work" bind:clientWidth={workWidth} style:grid-template-columns={workWidth ? `${sideWidth}px ${SIDE_GAP}px minmax(0, 1fr)` : null}>
+  <div class="work" class:stacked bind:clientWidth={workWidth} style:grid-template-columns={workWidth && !stacked ? `${sideWidth}px ${SIDE_GAP}px minmax(0, 1fr)` : null}>
   <div class="side" id="git-side">
 
     <form class="commit" onsubmit={(e) => { e.preventDefault(); commit() }}>
@@ -684,7 +687,9 @@
     </section>
   </div>
 
-  <Splitter value={sideWidth} min={SIDE_MIN} max={sideMax} total={splitTotal} label="Resize the changes list" controls="git-side" onresize={(px) => sideSplit.set(px)} onreset={() => sideSplit.reset()} />
+  {#if !stacked}
+    <Splitter value={sideWidth} min={SIDE_MIN} max={sideMax} total={splitTotal} label="Resize the changes list" controls="git-side" onresize={(px) => sideSplit.set(px)} onreset={() => sideSplit.reset()} />
+  {/if}
 
   <section class="diff" aria-label="Diff">
     {#if !selected && keys.size}
@@ -803,6 +808,12 @@
     display: grid;
     grid-template-columns: minmax(260px, 34%) 24px minmax(0, 1fr);
     min-height: 0;
+  }
+
+  .work.stacked {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 16px;
   }
 
   .side {
