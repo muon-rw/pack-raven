@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::keychain;
+
 // Matches `identifier` in tauri.conf.json, so the git hooks find the same config folder as the app.
 const APP_IDENTIFIER: &str = "dev.muon.packraven";
 pub(crate) const KEYCHAIN_SERVICE: &str = APP_IDENTIFIER;
@@ -95,14 +97,10 @@ fn source(credential: Credential) -> Source {
     })
 }
 
-fn keychain(credential: Credential) -> Result<keyring::Entry> {
-    Ok(keyring::Entry::new(KEYCHAIN_SERVICE, credential.keychain_user())?)
-}
-
 pub fn get(credential: Credential) -> Option<String> {
     let value = match source(credential) {
         Source::None => None,
-        Source::Stored => keychain(credential).ok()?.get_password().ok(),
+        Source::Stored => keychain::get(credential.keychain_user()),
         Source::Env { name } => env_value(&name),
     };
     value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
@@ -117,7 +115,7 @@ pub fn store(credential: Credential, secret: &str) -> Result<()> {
     if secret.is_empty() {
         bail!("Paste a key first.");
     }
-    keychain(credential)?.set_password(secret).context("saving to the system keychain")?;
+    keychain::set(credential.keychain_user(), secret)?;
     save_source(credential, Source::Stored)
 }
 
@@ -132,10 +130,7 @@ pub fn clear(credential: Credential) -> Result<()> {
 }
 
 fn forget_stored(credential: Credential) -> Result<()> {
-    match keychain(credential)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e).context("removing the key from the system keychain"),
-    }
+    keychain::remove(credential.keychain_user()).context("removing the key from the system keychain")
 }
 
 pub fn keychain_name() -> &'static str {

@@ -11,8 +11,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{oneshot, Mutex};
 
-use crate::credentials::{config_dir, KEYCHAIN_SERVICE};
+use crate::credentials::config_dir;
 use crate::http::CLIENT;
+use crate::keychain;
 use crate::launch::Player;
 
 const CLIENT_ID: &str = "758fd383-0e8c-4dee-8d47-e529cb8ddf2b";
@@ -62,12 +63,8 @@ fn account_path() -> PathBuf {
     config_dir().join("minecraft-account.json")
 }
 
-fn keychain() -> Result<keyring::Entry> {
-    Ok(keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER)?)
-}
-
 fn stored_refresh_token() -> Option<String> {
-    keychain().ok()?.get_password().ok().filter(|t| !t.is_empty())
+    keychain::get(KEYCHAIN_USER).filter(|t| !t.is_empty())
 }
 
 pub fn account() -> Option<Account> {
@@ -120,10 +117,7 @@ pub async fn session(cache: &SessionCache) -> Result<Session> {
 
 pub async fn sign_out(cache: &SessionCache) -> Result<()> {
     cache.lock().await.take();
-    match keychain()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => {}
-        Err(e) => return Err(e).context("removing your Microsoft sign-in from the system keychain"),
-    }
+    keychain::remove(KEYCHAIN_USER).context("removing your Microsoft sign-in from the system keychain")?;
     match std::fs::remove_file(account_path()) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e).context("removing minecraft-account.json"),
         _ => Ok(()),
@@ -185,7 +179,7 @@ async fn microsoft_tokens(grant: &[(&str, &str)]) -> Result<MicrosoftTokens> {
 // Microsoft rotates the refresh token on every use, so we save the new one each time.
 async fn finish(tokens: MicrosoftTokens) -> Result<Session> {
     let session = minecraft_session(&tokens.access_token).await?;
-    keychain()?.set_password(&tokens.refresh_token).context("saving your Microsoft sign-in to the system keychain")?;
+    keychain::set(KEYCHAIN_USER, &tokens.refresh_token).context("saving your Microsoft sign-in to the system keychain")?;
     let path = account_path();
     std::fs::create_dir_all(path.parent().context("the config folder has no parent")?)?;
     std::fs::write(path, serde_json::to_string_pretty(&session.account)?).context("writing minecraft-account.json")?;

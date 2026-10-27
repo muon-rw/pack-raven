@@ -98,6 +98,14 @@ impl Settings {
         settings
     }
 
+    // macOS raises one privacy prompt per access to a protected folder like Documents until you answer,
+    // so we touch them once here before the watcher and the UI read them in parallel.
+    pub fn request_folder_access(&self) {
+        for dir in self.packs.iter().chain([&self.install_dir]) {
+            let _ = std::fs::read_dir(dir);
+        }
+    }
+
     pub fn save(&self, path: &PathBuf) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;

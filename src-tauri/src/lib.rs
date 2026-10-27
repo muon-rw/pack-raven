@@ -22,6 +22,7 @@ mod gitops;
 mod http;
 mod instance_locks;
 mod jobs;
+mod keychain;
 mod join;
 mod launch;
 mod minecraft_auth;
@@ -121,8 +122,10 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             let settings_path = config_dir.join("settings.json");
             let _ = java::DOWNLOAD_DIR.set(app.path().app_data_dir()?.join("java"));
+            let settings = Settings::load(&settings_path);
+            settings.request_folder_access();
             app.manage(AppState {
-                settings: Mutex::new(Settings::load(&settings_path)),
+                settings: Mutex::new(settings),
                 settings_path,
                 data_dir: app.path().app_data_dir()?,
                 jobs: jobs::Jobs::default(),

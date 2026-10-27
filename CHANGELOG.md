@@ -2,6 +2,11 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9]
+### Fixed
+- Reduced number of permission prompt popups on MacOS.
+- Note: Until packraven is officially signed (it costs money), you'll still have security warnings when installing
+
 ## [0.1.8] - 2026-10-26
 
 ### Added
