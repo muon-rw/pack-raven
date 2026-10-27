@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline/promises'
 
-const REPO_URL = 'https://github.com/muon-rw/pack-raven'
+const REPO_URL = 'https://github.com/muon-rw/packraven'
 const CHANGELOG = 'CHANGELOG.md'
 const CARGO_TOML = 'src-tauri/Cargo.toml'
 const CARGO_LOCK = 'src-tauri/Cargo.lock'

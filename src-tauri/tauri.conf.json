@@ -33,7 +33,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMzODlBNzg5QzQ3MkUwNTQKUldSVTRITEVpYWVKTTdTNmRiZThHMDVLSlVleFFtMFZwRVE2Zjd3cGZWU20yYVZOTGZudDc5Zk8K",
-      "endpoints": ["https://github.com/muon-rw/pack-raven/releases/latest/download/latest.json"]
+      "endpoints": ["https://github.com/muon-rw/packraven/releases/latest/download/latest.json"]
     }
   },
   "bundle": {

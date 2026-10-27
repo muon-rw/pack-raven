@@ -195,7 +195,7 @@
     }
   }
 
-  const RELEASES_PAGE = 'https://github.com/muon-rw/pack-raven/releases'
+  const RELEASES_PAGE = 'https://github.com/muon-rw/packraven/releases'
 
   let autoUpdateError: string | null = $state(null)
   let checkingUpdate = $state(false)
