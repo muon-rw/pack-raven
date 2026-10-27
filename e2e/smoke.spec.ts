@@ -242,12 +242,32 @@ test('clicking a version shows its changelog', async ({ page }) => {
   await openApp(page, 'mods', 'ready')
   await page.getByRole('button', { name: 'Apotheosis', exact: true }).click()
   const versions = page.getByRole('list', { name: 'Versions of Apotheosis' })
-  const first = versions.getByRole('button', { name: /changelog$/ }).first()
-  await first.click()
-  await expect(first).toHaveAttribute('aria-expanded', 'true')
-  await expect(versions.locator('.changelog')).toContainText('Fixed a crash with Iris')
-  await first.click()
-  await expect(versions.locator('.changelog')).toHaveCount(0)
+  const picks = versions.locator('button.pick')
+  const changelog = page.getByRole('region', { name: /^Changelog of / })
+  // The newest file's changelog shows first, since that's the one you'd update to.
+  await expect(picks.first()).toHaveAttribute('aria-current', 'true')
+  await expect(changelog).toContainText('Fixed a crash with Iris')
+  const fileName = (await picks.nth(1).locator('.visually-hidden').textContent())!
+  await picks.nth(1).click()
+  await expect(picks.nth(1)).toHaveAttribute('aria-current', 'true')
+  await expect(picks.first()).not.toHaveAttribute('aria-current')
+  await expect(changelog).toHaveAccessibleName(`Changelog of ${fileName}`)
+  // Arrow keys move the selection, and only the selected version takes a Tab stop.
+  await page.keyboard.press('ArrowDown')
+  await expect(picks.nth(2)).toBeFocused()
+  await expect(picks.nth(2)).toHaveAttribute('aria-current', 'true')
+  await expect(picks.nth(1)).toHaveAttribute('tabindex', '-1')
+})
+
+test('clicking a Browse result shows its description in place', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  await page.getByRole('tab', { name: 'Browse' }).click()
+  const name = page.getByRole('button', { name: 'Create', exact: true })
+  await name.click()
+  await expect(name).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByRole('region', { name: 'Description of Create' })).toContainText('content mod')
+  await name.click()
+  await expect(page.getByRole('region', { name: 'Description of Create' })).toHaveCount(0)
 })
 
 test('test servers wait until you accept the Minecraft EULA', async ({ page }) => {

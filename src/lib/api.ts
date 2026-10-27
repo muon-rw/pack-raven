@@ -167,6 +167,7 @@ export interface Overview {
   addons: { mods: number; resourcePacks: number; shaderPacks: number; dataPacks: number; other: number }
   notOnCurseforge: string[]
   modListError: string | null
+  watchError: string | null
   branch: string | null
   ahead: number
   behind: number
@@ -542,6 +543,7 @@ export const api = {
   renamePaths: (renames: [string, string][]) => invoke<[string, string][]>('rename_paths', { renames }),
   movePaths: (paths: string[], dir: string) => invoke<[string, string][]>('move_paths', { paths, dir }),
   gitOverview: () => invoke<{ status: GitStatus; commits: GitCommit[] }>('git_overview'),
+  gitStatus: () => invoke<GitStatus>('git_status'),
   gitDiff: (path: string, staged: boolean, untracked: boolean) => invoke<GitDiff>('git_diff', { path, staged, untracked }),
   gitBlob: (path: string, version: 'head' | 'index') => invoke<ArrayBuffer>('git_blob', { path, version }),
   gitApplyLines: (path: string, diff: string, selected: number[], action: LineAction) => invoke<void>('git_apply_lines', { path, diff, selected, action }),
@@ -579,6 +581,7 @@ export const api = {
   changelogPreview: () => invoke<{ diff: ModDiff; markdown: string }>('changelog_preview'),
   setCompareBaseline: (zip: string) => invoke<void>('set_compare_baseline', { zip }),
   clearCompareBaseline: () => invoke<void>('clear_compare_baseline'),
+  resyncModList: (fresh: boolean) => invoke<void>('resync_mod_list', { fresh }),
   trackDirectly: (paths: string[]) => invoke<void>('track_directly', { paths }),
   revertMods: () => invoke<void>('revert_mods'),
   serverSides: () => invoke<ModSide[]>('server_sides'),

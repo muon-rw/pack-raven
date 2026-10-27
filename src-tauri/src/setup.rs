@@ -90,7 +90,7 @@ pub struct FirstCommit {
     pub author: Option<String>,
 }
 
-fn hooks_state(dir: &Path) -> HooksState {
+pub fn hooks_state(dir: &Path) -> HooksState {
     let hooks = dir.join(".githooks");
     let mut any = false;
     let mut all_current = true;

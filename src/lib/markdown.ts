@@ -126,8 +126,9 @@ function clean(parent: Element, context: Context) {
       if (!ALLOWED_ATTRIBUTES.has(name.toLowerCase())) node.removeAttribute(name)
     }
     if (context.curseforge && node instanceof HTMLElement) keepCurseforgeLayout(node, original.get('style'), original.get('class'))
-    if (tag === 'a') rewriteLink(node, original.get('href') ?? '', context)
-    else if (tag === 'img') rewriteImage(node, original.get('src') ?? '', context)
+    const url = (name: string) => (context.curseforge ? curseforgeUrl(original.get(name) ?? '') : (original.get(name) ?? ''))
+    if (tag === 'a') rewriteLink(node, url('href'), context)
+    else if (tag === 'img') rewriteImage(node, url('src'), context)
     else if (tag === 'input') {
       // Markdown task lists render checkboxes, which only show state here.
       if (original.get('type') === 'checkbox') node.setAttribute('type', 'checkbox')
@@ -147,6 +148,14 @@ function decodeOrKeep(text: string) {
   } catch {
     return text
   }
+}
+
+// Authors can link to CurseForge pages from the site root, and to files without a scheme. Neither
+// means anything inside packraven, so we resolve both against CurseForge.
+function curseforgeUrl(url: string) {
+  if (url.startsWith('//')) return `https:${url}`
+  if (url.startsWith('/')) return `https://www.curseforge.com${url}`
+  return url
 }
 
 function rewriteLink(link: Element, href: string, context: Context) {

@@ -1,16 +1,16 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
   import { motdLines } from '../lib/motd'
 
   let { icon, name, motd, maxPlayers }: { icon: string | null; name: string; motd: string; maxPlayers: string } = $props()
 
   // Vanilla wraps the MOTD to the row and shows the first two lines, so later lines never matter.
   let lines = $derived(motdLines(motd).slice(0, 2))
+  let obfuscated = $derived(lines.some((runs) => runs.some((run) => run.obfuscated)))
 
   const noise = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&?'
   let tick = $state(0)
-  onMount(() => {
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  $effect(() => {
+    if (!obfuscated || matchMedia('(prefers-reduced-motion: reduce)').matches) return
     const timer = setInterval(() => tick++, 90)
     return () => clearInterval(timer)
   })

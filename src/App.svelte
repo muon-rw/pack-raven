@@ -66,20 +66,63 @@
     account = await api.minecraftAccount().catch(() => account)
   }
 
-  // We skip ticks while the window is hidden in the tray, or while the last refresh is still running.
+  // We refresh when files, git refs or the mod list change, so the timer only catches changes with no
+  // event. A test client can rewrite configs every second, and each refresh runs git several times,
+  // so we refresh at most every 5 seconds and run one more after the last change.
+  const FALLBACK_POLL_MS = 30_000
+  const REFRESH_GAP_MS = 5_000
   let refreshing = false
+  let queued = false
+  let lastRefresh = 0
+  let pending: ReturnType<typeof setTimeout> | null = null
 
+  // We skip while the window is hidden in the tray and catch up when it's shown again.
   function poll() {
-    if (!document.hidden && !refreshing) refresh()
+    if (document.hidden) return
+    if (refreshing) queued = true
+    if (refreshing || pending) return
+    pending = setTimeout(
+      () => {
+        pending = null
+        if (refreshing) queued = true
+        else refresh()
+      },
+      Math.max(0, lastRefresh + REFRESH_GAP_MS - Date.now()),
+    )
   }
 
   async function refresh() {
     refreshing = true
+    lastRefresh = Date.now()
     try {
       await Promise.all([load(), refreshSelfUpdate()])
     } finally {
       refreshing = false
+      if (queued) {
+        queued = false
+        poll()
+      }
     }
+  }
+
+  let resyncing = false
+
+  // The file watcher can miss changes, so we check the mods folder again when you come back to packraven.
+  async function resync() {
+    if (resyncing || document.hidden) return
+    resyncing = true
+    try {
+      await api.resyncModList(false)
+    } catch {
+      // The rail already reports a mod list that can't update.
+    } finally {
+      resyncing = false
+    }
+  }
+
+  function returned() {
+    resync()
+    poll()
   }
 
   async function load() {
@@ -104,16 +147,27 @@
     startWatching()
     refreshAccount()
     const stopSelfUpdates = startSelfUpdates()
-    const timer = setInterval(poll, 5000)
+    // When CurseForge approves a jar you uploaded, nothing changes on disk, so while one is waiting we
+    // check again on the timer. In the background we ask CurseForge about it at most once a minute.
+    const timer = setInterval(() => {
+      if (overview?.notOnCurseforge.length) resync()
+      poll()
+    }, FALLBACK_POLL_MS)
     const unlisten = listen<{ kind: string }>('test-event', ({ payload }) => {
       if (payload.kind.endsWith('-started') || payload.kind.endsWith('-stopped')) refresh()
     })
-    const unlistenModList = listen('mod-list-changed', poll)
+    const unlistenChanges = ['mod-list-changed', 'fs-change', 'git-change'].map((event) => listen(event, poll))
+    window.addEventListener('focus', returned)
+    document.addEventListener('visibilitychange', returned)
+    resync()
     return () => {
       stopSelfUpdates()
       clearInterval(timer)
+      if (pending) clearTimeout(pending)
       unlisten.then((stop) => stop())
-      unlistenModList.then((stop) => stop())
+      for (const unlistenChange of unlistenChanges) unlistenChange.then((stop) => stop())
+      window.removeEventListener('focus', returned)
+      document.removeEventListener('visibilitychange', returned)
     }
   })
 
@@ -188,7 +242,13 @@
   )
 
   let modListStatus = $derived(
-    overview?.modListError ? "Couldn't update the mod list" : overview?.notOnCurseforge.length ? notOnCurseforgeSummary(overview.notOnCurseforge) : undefined,
+    overview?.modListError
+      ? "Couldn't update the mod list"
+      : overview?.notOnCurseforge.length
+        ? notOnCurseforgeSummary(overview.notOnCurseforge)
+        : overview?.watchError
+          ? "Can't watch the pack folder"
+          : undefined,
   )
   let incomingSummary = $derived(overview?.incoming ? modCountsSummary(overview.incoming) : null)
 

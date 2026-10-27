@@ -13,7 +13,7 @@ use crate::modsync;
 // files and placing downloads, so we wait for the folder to settle before we read it.
 const QUIET_PERIOD: Duration = Duration::from_secs(3);
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, PartialEq)]
 pub struct ModListState {
     pub dir: PathBuf,
     pub not_on_curseforge: Vec<String>,
@@ -23,18 +23,36 @@ pub struct ModListState {
 #[derive(Serialize, Clone)]
 struct ModListChanged;
 
-pub fn record(app: &AppHandle, dir: &Path, result: Result<Vec<String>>) {
-    let state = match result {
-        Ok(unknown) => ModListState { dir: dir.to_path_buf(), not_on_curseforge: unknown, error: None },
-        Err(error) => ModListState { dir: dir.to_path_buf(), not_on_curseforge: Vec::new(), error: Some(format!("{error:#}")) },
+// Listeners reload the whole list, so we only tell them when the lockfile or what we report changed.
+pub fn record(app: &AppHandle, dir: &Path, result: Result<modsync::Refresh>) {
+    let (state, lock_changed) = match result {
+        Ok(refresh) => (ModListState { dir: dir.to_path_buf(), not_on_curseforge: refresh.unknown, error: None }, refresh.changed),
+        Err(error) => (ModListState { dir: dir.to_path_buf(), not_on_curseforge: Vec::new(), error: Some(format!("{error:#}")) }, false),
     };
-    *app.state::<AppState>().mod_list.lock().unwrap() = state;
-    let _ = app.emit("mod-list-changed", ModListChanged);
+    let app_state = app.state::<AppState>();
+    let state_changed = {
+        let mut current = app_state.mod_list.lock().unwrap();
+        let changed = *current != state;
+        *current = state;
+        changed
+    };
+    if lock_changed || state_changed {
+        let _ = app.emit("mod-list-changed", ModListChanged);
+    }
 }
 
-pub async fn refresh_now(app: &AppHandle, dir: &Path) {
+pub async fn refresh_now(app: &AppHandle, dir: &Path, lookup: modsync::Lookup) {
     let _guard = modsync::MOD_LIST_GUARD.lock().await;
-    record(app, dir, modsync::refresh_mod_list(dir).await);
+    record(app, dir, modsync::refresh(dir, lookup).await);
+}
+
+// The watcher can miss changes (notify drops them on Windows when its buffer overflows), so we also
+// resync when you come back to packraven or check for updates. During a git hook's restore we leave
+// the folder to the watcher's refresh, which waits for the restore to finish.
+pub async fn resync(app: &AppHandle, dir: &Path, lookup: modsync::Lookup) {
+    if !modsync::restore_in_progress(dir) {
+        refresh_now(app, dir, lookup).await;
+    }
 }
 
 /// Starts the thread that keeps mods.lock.json matching the mods folder. Send on the returned
@@ -48,7 +66,7 @@ pub fn spawn_updater(app: AppHandle, root: PathBuf) -> mpsc::Sender<()> {
                 std::thread::sleep(QUIET_PERIOD);
             }
             let _guard = modsync::MOD_LIST_GUARD.blocking_lock();
-            record(&app, &root, tauri::async_runtime::block_on(modsync::refresh_mod_list(&root)));
+            record(&app, &root, tauri::async_runtime::block_on(modsync::refresh(&root, modsync::Lookup::Cached)));
         }
     });
     let _ = sender.send(());

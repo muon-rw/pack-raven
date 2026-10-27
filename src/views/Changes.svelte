@@ -276,6 +276,14 @@
   {#if overview?.modListError}
     <Notice tone="error"><p>Couldn't update the mod list: <LinkedText text={overview.modListError} /></p></Notice>
   {/if}
+  {#if overview?.watchError}
+    <Notice tone="warn">
+      <p>
+        packraven can't watch this pack's folder, so the mod list only catches up when you switch back to packraven, pull or publish. Restart packraven to
+        try again. <LinkedText text={overview.watchError} />
+      </p>
+    </Notice>
+  {/if}
   {#if unknownResult}
     <p class:muted={unknownResult.ok} class:failed={!unknownResult.ok} role="status">
       <LinkedText text={unknownResult.text} />

@@ -2,6 +2,23 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8]
+
+### Added
+- Warning in Changes when packraven can't watch the pack folder
+- Once CurseForge approves a jar you uploaded, packraven picks it up within about a minute and clears its "not on CurseForge" warning
+
+### Changed
+- Clicking on a mod name in "Browse" view now renders the description in-app rather than opening a browser window
+- Cleaner layout for subviews (descriptions/changelog) in Mods and Browse
+- Improved responsiveness to changes from external git
+- Reduced performance impact (~33%) of background scanning for changes
+
+### Fixed
+- Mod descriptions/changelog text rendering in tiny boxes with lots of space available at larger window sizes
+- Mod list could stay out of date if the file watcher missed a change; packraven now re-checks the mods folder when you switch back to it
+- Background `git status` could make your own git commands fail with "index.lock: File exists"
+
 ## [0.1.7] - 2026-10-26
 ### Added
 - "Stop Tracking" + warning for when `.gitignored` files are still tracked

@@ -41,9 +41,17 @@ pub fn override_files(pack: &Pack, extra_exclude: &[String]) -> Result<Vec<Strin
     Ok(git::tracked_files(&pack.dir)?.into_iter().filter(|path| !excluded.is_match(path) && pack.dir.join(path).is_file()).collect())
 }
 
+// We check these on every overview refresh, so we ask git for tracked jars instead of checking
+// every override file.
 pub fn unallowed_override_jars(pack: &Pack) -> Result<Vec<String>> {
+    let excluded = globs(&pack.config.export.exclude)?;
     let allowed = globs(&pack.config.export.allowed_override_jars)?;
-    Ok(override_files(pack, &[])?.into_iter().filter(|p| p.ends_with(".jar") && !allowed.is_match(p)).collect())
+    let jars = git::run(&pack.dir, &["ls-files", "-z", "--", "*.jar"])?;
+    Ok(jars
+        .split('\0')
+        .filter(|path| path.ends_with(".jar") && !excluded.is_match(path) && !allowed.is_match(path) && pack.dir.join(path).is_file())
+        .map(String::from)
+        .collect())
 }
 
 // The CurseForge app can leave the old jar behind when it can't delete it during an update, and

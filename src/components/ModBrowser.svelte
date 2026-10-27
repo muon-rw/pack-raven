@@ -2,7 +2,9 @@
   import { onMount } from 'svelte'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import Notice from './Notice.svelte'
+  import RemoteHtml from './RemoteHtml.svelte'
   import { api, errorText, type AddonKind, type ModPreview, type ModRequest, type SearchResult, type SearchSort } from '../lib/api'
+  import { sanitizeRemoteHtml } from '../lib/markdown'
   import { browse, cancelChange, changeFor, modUpdates, point, projectKey, queuedButton } from '../lib/modUpdates.svelte'
 
   let { installedIds, game, install }: { installedIds: Set<number>; game: string; install: (requests: ModRequest[], projects: number[], names: string[]) => Promise<void> } = $props()
@@ -21,6 +23,8 @@
   // until focus leaves it and comes back.
   let pressed: number | null = $state(null)
   let previewError: { projectId: number; text: string } | null = $state(null)
+  let reading: number | null = $state(null)
+  let descriptions: Record<number, string | { error: string }> = $state({})
 
   let searchField: HTMLInputElement
   let resultsRegion: HTMLElement
@@ -72,6 +76,16 @@
     run(false)
     return () => clearTimeout(timer)
   })
+
+  async function toggleDescription(projectId: number) {
+    reading = reading === projectId ? null : projectId
+    if (reading === null || descriptions[projectId] !== undefined) return
+    try {
+      descriptions[projectId] = sanitizeRemoteHtml(await api.modDescription(projectId)) || '<p>The author left this description empty.</p>'
+    } catch (error) {
+      descriptions[projectId] = { error: `Couldn't load the description from CurseForge: ${errorText(error)}` }
+    }
+  }
 
   async function startInstall(result: SearchResult) {
     const requests = [{ fileId: result.file.fileId, replaces: null }]
@@ -184,7 +198,7 @@
           {#if result.logo}<img src={result.logo} alt="" width="44" height="44" loading="lazy" />{:else}<span class="logo" aria-hidden="true"></span>{/if}
           <div class="about">
             <div class="title">
-              {#if result.url}<a href={result.url} onclick={(e) => { e.preventDefault(); openUrl(result.url!) }}>{result.name}</a>{:else}<strong>{result.name}</strong>{/if}
+              <button class="name" aria-expanded={reading === result.projectId} aria-controls="about-{result.projectId}" onclick={() => toggleDescription(result.projectId)}>{result.name}</button>
               {#if result.authors.length}<span class="muted">by {result.authors.join(', ')}</span>{/if}
             </div>
             <p class="summary">{result.summary}</p>
@@ -242,6 +256,22 @@
               </button>
             {/if}
           </div>
+          {#if reading === result.projectId}
+            {@const description = descriptions[result.projectId]}
+            <div class="reading" id="about-{result.projectId}">
+              {#if description === undefined}
+                <p class="muted">Loading the description from CurseForge.</p>
+              {:else if typeof description !== 'string'}
+                <p class="failed">{description.error}</p>
+              {:else}
+                <!-- svelte-ignore a11y_no_noninteractive_tabindex (a long description needs to scroll by keyboard even when it has no links) -->
+                <section class="description" aria-label="Description of {result.name}" tabindex="0">
+                  <RemoteHtml html={description} topHeading={3} />
+                </section>
+              {/if}
+              {#if result.url}<button class="link" onclick={() => openUrl(result.url!)}>Open on CurseForge</button>{/if}
+            </div>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -378,9 +408,42 @@
     gap: 2px 8px;
   }
 
-  .title a {
-    color: var(--text);
+  .name {
+    padding: 0;
+    font: inherit;
     font-weight: 700;
+    color: var(--text);
+    text-align: left;
+    background: transparent;
+    border: 0;
+  }
+
+  .name:hover:not(:disabled) {
+    background: transparent;
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+
+  .reading {
+    grid-column: 2 / -1;
+    display: grid;
+    justify-items: start;
+    gap: 8px;
+    max-width: 90ch;
+  }
+
+  .reading p {
+    margin: 0;
+  }
+
+  .description {
+    justify-self: stretch;
+    max-height: clamp(280px, 55vh, 720px);
+    overflow: auto;
+    padding: 14px 18px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-panel);
+    background: var(--field);
   }
 
   .about p {

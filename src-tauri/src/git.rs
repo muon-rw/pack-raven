@@ -43,9 +43,12 @@ fn candidates() -> Vec<PathBuf> {
     found
 }
 
+// We poll `git status`, which otherwise takes index.lock to refresh the index and can make your
+// own git commands fail with "index.lock: File exists". Required locks still apply.
 pub fn command() -> Command {
     let mut command = Command::new(program());
     crate::process::hide_window_std(&mut command);
+    command.env("GIT_OPTIONAL_LOCKS", "0");
     command
 }
 

@@ -27,6 +27,7 @@ pub struct AppState {
     pub mod_changes: Arc<Mutex<JobQueue<crate::mod_commands::ModChange>>>,
     pub test: Arc<TestRun>,
     pub watcher: Mutex<Option<crate::watcher::PackWatcher>>,
+    pub watch_error: Mutex<Option<String>>,
     pub history: Mutex<crate::history::History>,
     pub mod_list: Mutex<crate::mod_list::ModListState>,
     pub minecraft: Arc<crate::minecraft_auth::SessionCache>,
@@ -43,8 +44,9 @@ impl AppState {
         if crate::setup::has_hooks(&dir) {
             let _ = crate::setup::link_hooks(&dir);
         }
-        let watcher = (!dir.as_os_str().is_empty()).then(|| crate::watcher::watch(app.clone(), dir).ok()).flatten();
-        *self.watcher.lock().unwrap() = watcher;
+        let watched = (!dir.as_os_str().is_empty()).then(|| crate::watcher::watch(app.clone(), dir));
+        *self.watch_error.lock().unwrap() = watched.as_ref().and_then(|w| w.as_ref().err()).map(|e| format!("{e:#}"));
+        *self.watcher.lock().unwrap() = watched.and_then(Result::ok);
     }
 
     pub(crate) fn data_dir(&self) -> PathBuf {
@@ -117,6 +119,7 @@ pub struct Overview {
     addons: AddonCounts,
     not_on_curseforge: Vec<String>,
     mod_list_error: Option<String>,
+    watch_error: Option<String>,
     branch: Option<String>,
     ahead: u32,
     behind: u32,
@@ -161,7 +164,7 @@ fn incoming_mods(dir: &std::path::Path) -> Option<ModCounts> {
     Some(modsync::mod_counts(&modsync::lock_at(dir, "HEAD").ok()?, &modsync::lock_at(dir, "@{upstream}").ok()?))
 }
 
-// The shell polls this every few seconds, and it runs git, so we keep it off the main thread.
+// We call this after file, git and job changes, and it runs git, so we keep it off the main thread.
 #[tauri::command(async)]
 pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
     let pack = state.pack().map_err(err)?;
@@ -178,6 +181,7 @@ pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
         addons: addon_counts(&pack),
         not_on_curseforge: mod_list.not_on_curseforge,
         mod_list_error: mod_list.error,
+        watch_error: state.watch_error.lock().unwrap().clone(),
         branch: git::branch(&pack.dir),
         ahead,
         behind,
@@ -190,7 +194,7 @@ pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
         running_jobs: state.jobs.running(),
         server_running: state.test.server.lock().unwrap().is_some(),
         client_running: state.test.client.lock().unwrap().is_some(),
-        hooks: crate::setup::inspect(&pack.dir, &[]).map(|i| i.hooks).unwrap_or(crate::setup::HooksState::Missing),
+        hooks: crate::setup::hooks_state(&pack.dir),
     })
 }
 
@@ -251,11 +255,22 @@ pub async fn changelog_preview(state: State<'_, AppState>) -> CmdResult<Changelo
     Ok(ChangelogPreview { diff, markdown })
 }
 
+// `fresh` asks CurseForge again about every jar it didn't recognize, which you want when you check
+// for updates right after uploading one.
+#[tauri::command]
+pub async fn resync_mod_list(app: AppHandle, state: State<'_, AppState>, fresh: bool) -> CmdResult<()> {
+    let dir = state.settings().instance_dir;
+    if !dir.as_os_str().is_empty() {
+        crate::mod_list::resync(&app, &dir, if fresh { modsync::Lookup::Fresh } else { modsync::Lookup::Cached }).await;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn track_directly(app: AppHandle, state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<()> {
     let dir = state.settings().instance_dir;
     modsync::track_directly(&dir, &paths).map_err(err)?;
-    crate::mod_list::refresh_now(&app, &dir).await;
+    crate::mod_list::refresh_now(&app, &dir, modsync::Lookup::Cached).await;
     Ok(())
 }
 

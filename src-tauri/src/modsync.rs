@@ -22,6 +22,9 @@ const LOCAL_BUILD_SUFFIX: &str = "-dev.jar";
 const INSTANCE_JSON: &str = "minecraftinstance.json";
 const CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 86400);
 const NOT_ON_CURSEFORGE_RECHECK: Duration = Duration::from_secs(86400);
+// A jar you haven't committed may be one you just uploaded, and CurseForge takes 5 to 10 minutes to
+// approve a file, so in the background we ask again about these far sooner.
+const UNCOMMITTED_RECHECK: Duration = Duration::from_secs(60);
 const PARALLEL_DOWNLOADS: usize = 6;
 const DOWNLOAD_ATTEMPTS: usize = 3;
 
@@ -33,30 +36,33 @@ pub fn is_binary(relative: &str) -> bool {
     })
 }
 
+// Mods write their own files into subfolders of mods/ while the game runs, and the mod list only
+// records the folders' top-level files, so only those trigger a refresh.
 pub fn affects_mod_list(relative: &str) -> bool {
-    relative == INSTANCE_JSON || FOLDERS.iter().any(|folder| relative.strip_prefix(folder).is_some_and(|rest| rest.starts_with('/')))
+    relative == INSTANCE_JSON || is_binary(relative)
 }
 
 pub fn managed_files(root: &Path) -> Result<Vec<String>> {
-    binary_files(root, false)
+    Ok(binary_files(root)?.untracked)
 }
 
-fn committed_binaries(root: &Path) -> Result<Vec<String>> {
-    binary_files(root, true)
+struct BinaryFiles {
+    untracked: Vec<String>,
+    committed: Vec<String>,
 }
 
-fn binary_files(root: &Path, committed: bool) -> Result<Vec<String>> {
+fn binary_files(root: &Path) -> Result<BinaryFiles> {
     let tracked: HashSet<String> = git::tracked_files(root)?.into_iter().collect();
-    let mut found = Vec::new();
+    let mut found = BinaryFiles { untracked: Vec::new(), committed: Vec::new() };
     for folder in FOLDERS {
         let Ok(entries) = std::fs::read_dir(root.join(folder)) else { continue };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = format!("{folder}/{name}");
-            let wanted = EXTENSIONS.iter().any(|e| name.ends_with(e)) && !name.ends_with(LOCAL_BUILD_SUFFIX) && tracked.contains(&path) == committed;
-            if wanted && entry.metadata().is_ok_and(|m| m.is_file()) {
-                found.push(path);
+            if !EXTENSIONS.iter().any(|e| name.ends_with(e)) || name.ends_with(LOCAL_BUILD_SUFFIX) || !entry.metadata().is_ok_and(|m| m.is_file()) {
+                continue;
             }
+            if tracked.contains(&path) { found.committed.push(path) } else { found.untracked.push(path) }
         }
     }
     Ok(found)
@@ -67,10 +73,22 @@ struct Repo {
     state_dir: PathBuf,
 }
 
+// Every mod list refresh opens the repo, and asking git costs two process starts, so we remember
+// where each pack's repo is for as long as its git dir exists.
+static REPOS: std::sync::Mutex<Option<HashMap<PathBuf, (PathBuf, PathBuf)>>> = std::sync::Mutex::new(None);
+
 impl Repo {
     fn open(dir: &Path) -> Result<Self> {
-        let root = PathBuf::from(git::run(dir, &["rev-parse", "--show-toplevel"])?.trim());
-        let git_dir = PathBuf::from(git::run(dir, &["rev-parse", "--absolute-git-dir"])?.trim());
+        let cached = REPOS.lock().unwrap().as_ref().and_then(|repos| repos.get(dir).cloned()).filter(|(_, git_dir)| git_dir.is_dir());
+        let (root, git_dir) = match cached {
+            Some(found) => found,
+            None => {
+                let root = PathBuf::from(git::run(dir, &["rev-parse", "--show-toplevel"])?.trim());
+                let git_dir = PathBuf::from(git::run(dir, &["rev-parse", "--absolute-git-dir"])?.trim());
+                REPOS.lock().unwrap().get_or_insert_default().insert(dir.to_path_buf(), (root.clone(), git_dir.clone()));
+                (root, git_dir)
+            }
+        };
         Ok(Self { root, state_dir: git_dir.join("modsync") })
     }
 
@@ -90,17 +108,19 @@ impl Repo {
         }
     }
 
-    fn write_lock(&self, lock: &mut Lockfile, stage: bool) -> Result<()> {
+    /// Returns whether the lockfile's contents changed.
+    fn write_lock(&self, lock: &mut Lockfile, stage: bool) -> Result<bool> {
         let text = render_lock(lock)?;
         // The watcher reports every write, so we skip identical ones to avoid a refresh loop. Without
         // `eol=lf` in .gitattributes, git may check the lockfile out with CRLF, which still counts as identical.
-        if std::fs::read_to_string(self.root.join(LOCKFILE)).ok().map(|existing| existing.replace("\r\n", "\n")).as_deref() != Some(text.as_str()) {
+        let changed = std::fs::read_to_string(self.root.join(LOCKFILE)).ok().map(|existing| existing.replace("\r\n", "\n")).as_deref() != Some(text.as_str());
+        if changed {
             std::fs::write(self.root.join(LOCKFILE), text)?;
         }
         if stage {
             git::run(&self.root, &["add", LOCKFILE])?;
         }
-        Ok(())
+        Ok(changed)
     }
 
     fn restoring_marker(&self) -> PathBuf {
@@ -214,8 +234,9 @@ impl HashCache {
     }
 }
 
-// We ask CurseForge about every jar you committed directly in case it has since been published there.
-// Remembering the misses keeps that request off most mod list refreshes.
+// We ask CurseForge about every jar the mod list can't place, in case it has since been published
+// there. Remembering the misses keeps that request, and a full read of each jar, off most background
+// refreshes.
 struct NotOnCurseforge {
     path: PathBuf,
     checked_at: HashMap<String, u64>,
@@ -232,8 +253,8 @@ impl NotOnCurseforge {
         Self { path, dirty: checked_at.len() != loaded, checked_at }
     }
 
-    fn contains(&self, sha1: &str) -> bool {
-        self.checked_at.contains_key(sha1)
+    fn checked_within(&self, sha1: &str, max_age: Duration) -> bool {
+        self.checked_at.get(sha1).is_some_and(|at| unix_now().saturating_sub(*at) < max_age.as_secs())
     }
 
     fn insert(&mut self, sha1: String) {
@@ -354,7 +375,16 @@ struct BuiltLock {
     now_on_curseforge: Vec<String>,
 }
 
-async fn build_lock(repo: &Repo) -> Result<BuiltLock> {
+/// How to treat a jar you haven't committed that CurseForge didn't recognize last time we asked.
+#[derive(Clone, Copy)]
+pub enum Lookup {
+    /// Ask again. Publish, pull and commits stop on these jars, so they never trust an old answer.
+    Fresh,
+    /// Ask again once UNCOMMITTED_RECHECK has passed.
+    Cached,
+}
+
+async fn build_lock(repo: &Repo, lookup: Lookup) -> Result<BuiltLock> {
     let mut hashes = HashCache::load(repo);
     let mut not_on_curseforge = NotOnCurseforge::load(repo);
     let old = repo.read_lock()?;
@@ -362,13 +392,16 @@ async fn build_lock(repo: &Repo) -> Result<BuiltLock> {
     let mut known: HashMap<String, FileSource> = old.files.iter().map(|e| (e.sha1.clone(), (e.project_id, e.file_id, e.url.clone()))).collect();
     known.extend(instance.by_sha1);
 
+    let binaries = binary_files(&repo.root)?;
     let mut files = Vec::new();
     let mut unknown = Vec::new();
-    for path in managed_files(&repo.root)? {
+    let mut unknown_unchecked = Vec::new();
+    for path in binaries.untracked {
         let sha1 = hashes.sha1(&repo.root, &path)?;
         match known.get(&sha1) {
             Some(source) => files.push((path, sha1, source.clone())),
-            None => unknown.push(path),
+            None if matches!(lookup, Lookup::Cached) && not_on_curseforge.checked_within(&sha1, UNCOMMITTED_RECHECK) => unknown.push(path),
+            None => unknown_unchecked.push(path),
         }
     }
 
@@ -376,40 +409,48 @@ async fn build_lock(repo: &Repo) -> Result<BuiltLock> {
     // .gitignore only applies to untracked files. We move those jars into the mod list.
     let mut now_on_curseforge = Vec::new();
     let mut committed_unchecked = Vec::new();
-    for path in committed_binaries(&repo.root)? {
+    for path in binaries.committed {
         let sha1 = hashes.sha1(&repo.root, &path)?;
         match known.get(&sha1) {
             Some(source) => {
                 files.push((path.clone(), sha1, source.clone()));
                 now_on_curseforge.push(path);
             }
-            None if !not_on_curseforge.contains(&sha1) => committed_unchecked.push(path),
+            None if !not_on_curseforge.checked_within(&sha1, NOT_ON_CURSEFORGE_RECHECK) => committed_unchecked.push(path),
             None => {}
         }
     }
 
-    let lookup: Vec<String> = unknown.iter().chain(&committed_unchecked).cloned().collect();
-    if !lookup.is_empty() && curseforge::core_key().is_some() {
+    let lookup: Vec<String> = unknown_unchecked.iter().chain(&committed_unchecked).cloned().collect();
+    let resolved = if lookup.is_empty() || curseforge::core_key().is_none() {
+        None
+    } else {
         match resolve_by_fingerprint(&repo.root, &lookup).await {
-            Ok(mut resolved) => {
-                unknown.retain(|p| !resolved.contains_key(p));
-                for path in lookup {
-                    let sha1 = hashes.sha1(&repo.root, &path)?;
-                    let Some(source) = resolved.remove(&path) else {
-                        not_on_curseforge.insert(sha1);
-                        continue;
-                    };
-                    if committed_unchecked.contains(&path) {
-                        now_on_curseforge.push(path.clone());
-                    }
-                    files.push((path, sha1, source));
-                }
-            }
+            Ok(resolved) => Some(resolved),
             // Jars you committed directly don't need a lock entry, so a failed lookup for only those
             // shouldn't fail the whole refresh. We'll ask again next time.
-            Err(_) if unknown.is_empty() => {}
+            Err(_) if unknown_unchecked.is_empty() => None,
             Err(e) => return Err(e),
         }
+    };
+    match resolved {
+        Some(mut resolved) => {
+            for path in lookup {
+                let sha1 = hashes.sha1(&repo.root, &path)?;
+                let Some(source) = resolved.remove(&path) else {
+                    not_on_curseforge.insert(sha1);
+                    if unknown_unchecked.contains(&path) {
+                        unknown.push(path);
+                    }
+                    continue;
+                };
+                if committed_unchecked.contains(&path) {
+                    now_on_curseforge.push(path.clone());
+                }
+                files.push((path, sha1, source));
+            }
+        }
+        None => unknown.extend(unknown_unchecked),
     }
     hashes.save()?;
     not_on_curseforge.save()?;
@@ -442,7 +483,7 @@ fn log_now_on_curseforge(log: &Log, paths: &[String]) {
 
 pub async fn lock(dir: &Path, log: &Log) -> Result<()> {
     let repo = Repo::open(dir)?;
-    let mut built = build_lock(&repo).await?;
+    let mut built = build_lock(&repo, Lookup::Fresh).await?;
     if !built.unknown.is_empty() {
         log.stream("err", "modsync: these files are not on CurseForge, so you must commit them directly (git add -f <path>) or remove them:");
         for path in &built.unknown {
@@ -459,15 +500,24 @@ pub async fn lock(dir: &Path, log: &Log) -> Result<()> {
     Ok(())
 }
 
+pub async fn refresh_mod_list(dir: &Path) -> Result<Vec<String>> {
+    Ok(refresh(dir, Lookup::Fresh).await?.unknown)
+}
+
+pub struct Refresh {
+    pub unknown: Vec<String>,
+    pub changed: bool,
+}
+
 // Unlike the pre-commit hook's lock, we leave mods.lock.json unstaged. Untracking a jar that's now on
 // CurseForge does stage its removal, since git has no unstaged form of that. We record every file we
 // can resolve and return the rest, so one unknown jar doesn't hold back the whole list.
-pub async fn refresh_mod_list(dir: &Path) -> Result<Vec<String>> {
+pub async fn refresh(dir: &Path, lookup: Lookup) -> Result<Refresh> {
     let repo = Repo::open(dir)?;
-    let mut built = build_lock(&repo).await?;
-    repo.write_lock(&mut built.lock, false)?;
+    let mut built = build_lock(&repo, lookup).await?;
+    let changed = repo.write_lock(&mut built.lock, false)?;
     untrack(&repo.root, &built.now_on_curseforge)?;
-    Ok(built.unknown)
+    Ok(Refresh { unknown: built.unknown, changed: changed || !built.now_on_curseforge.is_empty() })
 }
 
 pub async fn update_mod_list(dir: &Path) -> Result<()> {
@@ -484,7 +534,8 @@ pub fn lock_at(dir: &Path, rev: &str) -> Result<Lockfile> {
 }
 
 pub fn write_lock(dir: &Path, lock: &mut Lockfile) -> Result<()> {
-    Repo::open(dir)?.write_lock(lock, false)
+    Repo::open(dir)?.write_lock(lock, false)?;
+    Ok(())
 }
 
 pub fn track_directly(dir: &Path, paths: &[String]) -> Result<()> {
@@ -624,12 +675,12 @@ pub fn merge_locks(base: &Lockfile, mine: &Lockfile, theirs: &Lockfile, prefer: 
 }
 
 pub async fn folder_lock(dir: &Path) -> Result<Lockfile> {
-    Ok(build_lock(&Repo::open(dir)?).await?.lock)
+    Ok(build_lock(&Repo::open(dir)?, Lookup::Cached).await?.lock)
 }
 
 pub async fn adopt(dir: &Path, log: &Log) -> Result<Vec<String>> {
     let repo = Repo::open(dir)?;
-    let mut built = build_lock(&repo).await?;
+    let mut built = build_lock(&repo, Lookup::Fresh).await?;
     for path in &built.unknown {
         git::run(&repo.root, &["add", "-f", "--", path])?;
         log.info(format!("modsync: not on CurseForge, committing directly: {path}"));
@@ -774,14 +825,16 @@ pub fn rename_locked_file(dir: &Path, from: &str, to: &str) -> Result<()> {
     for entry in lock.files.iter_mut().filter(|e| e.path == from) {
         entry.path = to.to_string();
     }
-    repo.write_lock(&mut lock, false)
+    repo.write_lock(&mut lock, false)?;
+    Ok(())
 }
 
 pub fn drop_from_lock(dir: &Path, paths: &[String]) -> Result<()> {
     let repo = Repo::open(dir)?;
     let mut lock = repo.read_lock()?;
     lock.files.retain(|e| !paths.contains(&e.path));
-    repo.write_lock(&mut lock, false)
+    repo.write_lock(&mut lock, false)?;
+    Ok(())
 }
 
 pub fn missing_count(dir: &Path) -> usize {
@@ -1048,7 +1101,21 @@ mod tests {
         std::fs::write(repo.state_dir.join("not-on-curseforge.json"), serde_json::json!({ "old": stale, "new": unix_now() }).to_string()).unwrap();
 
         let misses = NotOnCurseforge::load(&repo);
-        assert!(!misses.contains("old"));
-        assert!(misses.contains("new"));
+        assert!(!misses.checked_within("old", NOT_ON_CURSEFORGE_RECHECK));
+        assert!(misses.checked_within("new", NOT_ON_CURSEFORGE_RECHECK));
+    }
+
+    #[test]
+    fn uncommitted_misses_expire_within_approval_time() {
+        let dir = test_repo("uncommitted-misses");
+        let repo = Repo::open(&dir).unwrap();
+        let two_minutes_ago = unix_now() - 120;
+        std::fs::create_dir_all(&repo.state_dir).unwrap();
+        std::fs::write(repo.state_dir.join("not-on-curseforge.json"), serde_json::json!({ "uploaded": two_minutes_ago, "new": unix_now() }).to_string()).unwrap();
+
+        let misses = NotOnCurseforge::load(&repo);
+        assert!(!misses.checked_within("uploaded", UNCOMMITTED_RECHECK));
+        assert!(misses.checked_within("uploaded", NOT_ON_CURSEFORGE_RECHECK));
+        assert!(misses.checked_within("new", UNCOMMITTED_RECHECK));
     }
 }

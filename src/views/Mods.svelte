@@ -4,6 +4,7 @@
   import ModBrowser from '../components/ModBrowser.svelte'
   import ContextMenu from '../components/ContextMenu.svelte'
   import Tip from '../components/Tip.svelte'
+  import RemoteHtml from '../components/RemoteHtml.svelte'
   import ClientLaunch from '../components/ClientLaunch.svelte'
   import DisableDialog, { type Dependent } from '../components/DisableDialog.svelte'
   import UpdateReview, { type PendingUpdate } from '../components/UpdateReview.svelte'
@@ -128,7 +129,11 @@
     if (mods.some((m) => !modUpdates.checks?.has(m.path))) await check()
   }
 
+  // You may have just uploaded a jar that CurseForge has since approved, so we ask about every jar it
+  // didn't recognize before we reload the list.
   async function checkAgain() {
+    checking = true
+    await api.resyncModList(true).catch(() => {})
     await load()
     await check()
   }
@@ -257,14 +262,24 @@
     if (chosen.length) update(chosen.map((u) => ({ fileId: u.file.fileId, replaces: u.mod.path })))
   }
 
-  async function toggleChangelog(projectId: number, fileId: number) {
-    openChangelog = openChangelog === fileId ? null : fileId
-    if (openChangelog === null || changelogs[fileId] !== undefined) return
+  async function showChangelog(projectId: number, fileId: number) {
+    openChangelog = fileId
+    if (changelogs[fileId] !== undefined) return
     try {
       changelogs[fileId] = sanitizeRemoteHtml(await api.modChangelog(projectId, fileId)) || '<p>The author left this changelog empty.</p>'
     } catch (error) {
       changelogs[fileId] = { error: `Couldn't load the changelog from CurseForge: ${errorText(error)}` }
     }
+  }
+
+  function pickByArrow(event: KeyboardEvent, projectId: number) {
+    if (!versions?.length || !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const at = Math.max(0, versions.findIndex((f) => f.fileId === openChangelog))
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? versions.length - 1 : Math.min(versions.length - 1, Math.max(0, at + (event.key === 'ArrowDown' ? 1 : -1)))
+    showChangelog(projectId, versions[next].fileId)
+    const list = event.currentTarget as HTMLElement
+    requestAnimationFrame(() => list.querySelectorAll<HTMLButtonElement>('.pick')[next]?.focus())
   }
 
   // The button you pressed is disabled or gone once a change starts, so we keep keyboard focus
@@ -335,14 +350,20 @@
       versions = null
       versionsError = null
       descriptionError = null
+      openChangelog = null
       api.modVersions(mod.path, mod.projectId).then(
-        (files) => expanded === mod.path && (versions = files),
+        (files) => {
+          if (expanded !== mod.path) return
+          versions = files
+          // The newest file is the one you'd update to, so its changelog is the likeliest question.
+          if (files.length) showChangelog(mod.projectId, files[0].fileId)
+        },
         (error) => expanded === mod.path && (versionsError = `Couldn't list the versions on CurseForge: ${errorText(error)}`),
       )
     }
     if (show === 'description' && descriptions[mod.projectId] === undefined) {
       try {
-        descriptions[mod.projectId] = sanitizeRemoteHtml(await api.modDescription(mod.projectId))
+        descriptions[mod.projectId] = sanitizeRemoteHtml(await api.modDescription(mod.projectId)) || '<p>The author left this description empty.</p>'
       } catch (error) {
         if (expanded === mod.path) descriptionError = `Couldn't load the description from CurseForge: ${errorText(error)}`
       }
@@ -353,14 +374,6 @@
   function onRowClick(event: MouseEvent, mod: InstalledMod) {
     if ((event.target as HTMLElement).closest('button, a, input, select')) return
     expand(mod)
-  }
-
-  function onDescriptionClick(event: MouseEvent) {
-    const link = (event.target as HTMLElement).closest('a')
-    if (!link) return
-    event.preventDefault()
-    const external = link.getAttribute('data-external')
-    if (external) openUrl(external)
   }
 
   function openMenu(event: MouseEvent, mod: InstalledMod) {
@@ -411,6 +424,12 @@
     while (end > 0 && !/[-_+ .]/.test(to[to.length - end])) end--
     const part = to.slice(start, to.length - end).replace(/^[-_+ .]+|[-_+ .]+$/g, '')
     return part.length >= 2 ? part : to
+  }
+
+  // Every file of a mod shares most of its name, so we show only the part that sets it apart.
+  function versionLabel(file: ModFile, files: ModFile[]) {
+    const other = files.find((f) => f.fileName !== file.fileName)
+    return other ? changedPart(other.fileName, file.fileName) : file.fileName
   }
 
   function fileName(path: string) {
@@ -789,7 +808,7 @@
                       {#if logo}<img src={logo} alt="" width="32" height="32" loading="lazy" />{:else}<span class="logo" aria-hidden="true"></span>{/if}
                       <div class="about">
                         <div class="title-line">
-                          <button class="expand" aria-expanded={expanded === mod.path} aria-controls="details-{mod.projectId}" onclick={() => expand(mod)}>{mod.name}</button>
+                          <button class="expand" aria-expanded={expanded === mod.path} aria-controls="details-{mod.projectId}-{mod.fileId}" onclick={() => expand(mod)}>{mod.name}</button>
                           {#if duplicatePaths.has(mod.path)}<span class="chip fail">Two versions</span>{/if}
                         </div>
                         <!-- The installed file and its update share a line, so a pack of hundreds stays scannable. -->
@@ -873,65 +892,76 @@
                   </td>
                 </tr>
                 {#if expanded === mod.path}
-                  <tr class="details" id="details-{mod.projectId}">
+                  <tr class="details" id="details-{mod.projectId}-{mod.fileId}">
                     <td colspan="7">
-                      <div class="detail-head">
-                        <div class="modes" role="group" aria-label="Show">
-                          <button class="mode" aria-pressed={detail === 'versions'} onclick={() => expand(mod, 'versions')}>Versions</button>
-                          <button class="mode" aria-pressed={detail === 'description'} onclick={() => expand(mod, 'description')}>Description</button>
+                      <div class="detail">
+                        <div class="detail-head">
+                          <div class="modes" role="group" aria-label="Show">
+                            <button class="mode" aria-pressed={detail === 'versions'} onclick={() => expand(mod, 'versions')}>Versions</button>
+                            <button class="mode" aria-pressed={detail === 'description'} onclick={() => expand(mod, 'description')}>Description</button>
+                          </div>
+                          {#if mod.url}<button class="link" onclick={() => openUrl(mod.url!)}>Open on CurseForge</button>{/if}
                         </div>
-                        {#if mod.url}<button class="link" onclick={() => openUrl(mod.url!)}>Open on CurseForge</button>{/if}
-                      </div>
-                      {#if detail === 'versions'}
-                        {#if versionsError}
-                          <p class="failed">{versionsError}</p>
-                        {:else if !versions}
-                          <p class="muted">Listing files on CurseForge.</p>
-                        {:else if !versions.length}
-                          <p class="muted">CurseForge has no files of {mod.name} for {game}.</p>
-                        {:else}
-                          <ul class="files" aria-label="Versions of {mod.name}">
-                            {#each versions as file (file.fileId)}
-                              {@const changelog = changelogs[file.fileId]}
-                              <li>
-                                <button class="changelog-toggle" aria-expanded={openChangelog === file.fileId} aria-controls="changelog-{file.fileId}" onclick={() => toggleChangelog(mod.projectId, file.fileId)}>
-                                  <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3.5 2 6.5 5 3.5 8" /></svg>
-                                  {@render fileText(file.fileName)}
-                                  <span class="visually-hidden">changelog</span>
-                                </button>
-                                <span class="chip {file.releaseType === 'release' ? 'ok' : 'pending'}">{typeLabels[file.releaseType]}</span>
-                                <span class="muted">{date(file.fileDate)}</span>
-                                {#if file.fileId === mod.fileId}
-                                  <span class="muted current">Installed</span>
+                        {#if detail === 'versions'}
+                          {#if versionsError}
+                            <p class="failed">{versionsError}</p>
+                          {:else if !versions}
+                            <p class="muted">Listing files on CurseForge.</p>
+                          {:else if !versions.length}
+                            <p class="muted">CurseForge has no files of {mod.name} for {game}.</p>
+                          {:else}
+                            {@const reading = versions.find((f) => f.fileId === openChangelog) ?? versions[0]}
+                            {@const changelog = changelogs[reading.fileId]}
+                            <div class="versions">
+                              <!-- svelte-ignore a11y_no_noninteractive_element_interactions (arrow keys move the selection between the buttons inside) -->
+                              <ul class="files" aria-label="Versions of {mod.name}" onkeydown={(e) => pickByArrow(e, mod.projectId)}>
+                                {#each versions as file (file.fileId)}
+                                  {@const reads = file === reading}
+                                  <li class:reading={reads}>
+                                    <button class="pick" tabindex={reads ? 0 : -1} aria-current={reads || undefined} aria-controls="changelog-{mod.projectId}" onclick={() => showChangelog(mod.projectId, file.fileId)}>
+                                      <span class="visually-hidden">{file.fileName}</span>
+                                      <span class="file" aria-hidden="true" title={file.fileName}>{versionLabel(file, versions)}</span>
+                                      {#if file.releaseType !== 'release'}<span class="chip pending">{typeLabels[file.releaseType]}</span>{/if}
+                                      <span class="muted date">{date(file.fileDate)}</span>
+                                    </button>
+                                    {#if file.fileId === mod.fileId}
+                                      <span class="muted current">Installed</span>
+                                    {:else}
+                                      {@const why = whyNoUpdate ?? (changeFor(mod.path) ? 'Wait for this change to finish' : null)}
+                                      <Tip tip={why}>
+                                        {#snippet children(described)}
+                                          <button tabindex={reads ? 0 : -1} aria-disabled={!!why} aria-describedby={described} onclick={() => !why && update([{ fileId: file.fileId, replaces: mod.path }])} aria-label="{file.fileId > mod.fileId ? 'Update to' : 'Roll back to'} {file.fileName}">{file.fileId > mod.fileId ? 'Update' : 'Roll back'}</button>
+                                        {/snippet}
+                                      </Tip>
+                                    {/if}
+                                  </li>
+                                {/each}
+                              </ul>
+                              <!-- svelte-ignore a11y_no_noninteractive_tabindex (a long changelog needs to scroll by keyboard even when it has no links) -->
+                              <section class="changelog" id="changelog-{mod.projectId}" aria-labelledby="changelog-title-{mod.projectId}" tabindex="0">
+                                <h3 id="changelog-title-{mod.projectId}">Changelog of {@render fileText(reading.fileName)}</h3>
+                                <p class="visually-hidden" role="status">{changelog === undefined ? `Loading the changelog of ${reading.fileName}.` : typeof changelog === 'string' ? `Showing the changelog of ${reading.fileName}.` : changelog.error}</p>
+                                {#if changelog === undefined}
+                                  <p class="muted" aria-hidden="true">Loading the changelog from CurseForge.</p>
+                                {:else if typeof changelog !== 'string'}
+                                  <p class="failed" aria-hidden="true">{changelog.error}</p>
                                 {:else}
-                                  <button onclick={() => update([{ fileId: file.fileId, replaces: mod.path }])} disabled={whyNoUpdate !== null || !!changeFor(mod.path)} title={whyNoUpdate ?? (changeFor(mod.path) ? 'Wait for this change to finish' : undefined)} aria-label="{file.fileId > mod.fileId ? 'Update to' : 'Roll back to'} {file.fileName}">{file.fileId > mod.fileId ? 'Update to this' : 'Roll back'}</button>
+                                  <RemoteHtml html={changelog} topHeading={4} />
                                 {/if}
-                              </li>
-                              {#if openChangelog === file.fileId}
-                                <li class="changelog" id="changelog-{file.fileId}">
-                                  {#if changelog === undefined}
-                                    <p class="muted">Loading the changelog from CurseForge.</p>
-                                  {:else if typeof changelog !== 'string'}
-                                    <p class="failed">{changelog.error}</p>
-                                  {:else}
-                                    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (links inside are real links; this only routes their clicks) -->
-                                    <div class="description" onclick={onDescriptionClick}>{@html changelog}</div>
-                                  {/if}
-                                </li>
-                              {/if}
-                            {/each}
-                          </ul>
+                              </section>
+                            </div>
+                          {/if}
+                        {:else if descriptionError}
+                          <p class="failed">{descriptionError}</p>
+                        {:else if descriptions[mod.projectId] === undefined}
+                          <p class="muted">Loading the description from CurseForge.</p>
+                        {:else}
+                          <!-- svelte-ignore a11y_no_noninteractive_tabindex (a long description needs to scroll by keyboard even when it has no links) -->
+                          <section class="description" aria-label="Description of {mod.name}" tabindex="0">
+                            <RemoteHtml html={descriptions[mod.projectId]} topHeading={3} />
+                          </section>
                         {/if}
-                      {:else if descriptionError}
-                        <p class="failed">{descriptionError}</p>
-                      {:else if descriptions[mod.projectId] === undefined}
-                        <p class="muted">Loading the description from CurseForge.</p>
-                      {:else}
-                        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (links inside are real links; this only routes their clicks) -->
-                        <div class="description" onclick={onDescriptionClick}>
-                          {@html descriptions[mod.projectId]}
-                        </div>
-                      {/if}
+                      </div>
                     </td>
                   </tr>
                 {/if}
@@ -1631,74 +1661,110 @@
     width: fit-content;
   }
 
+  .detail {
+    container-type: inline-size;
+  }
+
+  .versions {
+    display: grid;
+    gap: 12px;
+  }
+
+  .files,
+  .changelog,
+  .description {
+    min-width: 0;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-panel);
+    background: var(--field);
+  }
+
   .files {
     list-style: none;
     margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 2px;
-    max-height: 280px;
-    overflow: auto;
+    padding: 4px;
+    max-height: 220px;
   }
 
   .files li {
     display: flex;
+    align-items: center;
+    gap: 6px 10px;
+    padding: 2px 4px 2px 0;
+    border-radius: var(--radius-control);
+  }
+
+  .files li.reading {
+    background: var(--here);
+  }
+
+  .pick {
+    flex: 1;
+    min-width: 0;
+    display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 4px 10px;
-    padding: 4px 0;
-  }
-
-  .files li > button:last-child,
-  .files .current {
-    margin-left: auto;
-  }
-
-  .changelog-toggle {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 6px;
-    padding: 2px 4px;
-    margin-left: -4px;
+    gap: 2px 10px;
+    padding: 6px 8px;
     font: inherit;
     color: inherit;
     text-align: left;
     background: transparent;
     border: 0;
+    border-radius: var(--radius-control);
   }
 
-  .changelog-toggle:hover:not(:disabled) {
+  .pick:hover:not(:disabled) {
+    background: transparent;
+  }
+
+  .files li:not(.reading):has(.pick:hover) {
     background: var(--control-hi);
   }
 
-  .changelog-toggle svg {
-    flex: none;
-    width: 10px;
-    height: 10px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.5;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    transition: transform 120ms ease-out;
-  }
-
-  .changelog-toggle[aria-expanded='true'] svg {
-    transform: rotate(90deg);
-  }
-
-  .changelog-toggle .file {
+  .pick .file {
     margin-right: 0;
   }
 
-  .files li.changelog {
-    display: block;
-    padding: 4px 0 10px 18px;
+  .pick .date {
+    font-size: var(--step--1);
+    font-variant-numeric: tabular-nums;
   }
 
-  .changelog .description {
-    max-height: 240px;
+  .files .current {
+    padding-inline: 8px;
+    white-space: nowrap;
+  }
+
+  .changelog {
+    padding: 14px 18px;
+    max-height: clamp(240px, 45vh, 560px);
+  }
+
+  .changelog h3 {
+    margin: 0 0 10px;
     font-size: var(--step--1);
+    font-weight: 400;
+    color: var(--muted);
+  }
+
+  .changelog h3 .file {
+    color: var(--text);
+  }
+
+  /* With room for both, the changelog sits beside the versions and shares their height, so a long
+     one reads in place instead of scrolling inside the list. The changelog stops at a reading
+     width, and a wide window gives the rest to the list. */
+  @container (min-width: 760px) {
+    .versions {
+      grid-template-columns: minmax(280px, 1fr) minmax(0, 84ch);
+    }
+
+    .files,
+    .changelog {
+      max-height: clamp(260px, 50vh, 620px);
+    }
   }
 
   .details p {
@@ -1706,44 +1772,8 @@
   }
 
   .description {
-    max-height: 360px;
-    max-width: 80ch;
-    overflow: auto;
-    overflow-wrap: anywhere;
-  }
-
-  .description :global(img) {
-    max-width: 100%;
-    height: auto;
-  }
-
-  .description :global(h1),
-  .description :global(h2),
-  .description :global(h3) {
-    font-size: var(--step-1);
-    margin: 14px 0 6px;
-  }
-
-  .description :global(p) {
-    margin: 0 0 8px;
-  }
-
-  .description :global(a) {
-    color: var(--forest);
-  }
-
-  .description :global(.center),
-  .description :global(.aligncenter) {
-    text-align: center;
-  }
-
-  .description :global(.alignleft) {
-    float: left;
-    margin-right: 12px;
-  }
-
-  .description :global(.alignright) {
-    float: right;
-    margin-left: 12px;
+    max-width: 90ch;
+    max-height: clamp(320px, 60vh, 760px);
+    padding: 14px 18px;
   }
 </style>

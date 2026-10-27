@@ -5,6 +5,7 @@
   import type { Text } from '@codemirror/state'
   import { openLintPanel } from '@codemirror/lint'
   import { ask } from '@tauri-apps/plugin-dialog'
+  import { listen } from '@tauri-apps/api/event'
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
   import { api, errorText, type GitStatus } from '../lib/api'
   import { drag } from '../lib/drag.svelte'
@@ -54,21 +55,42 @@
 
   $effect.pre(() => resetFor(pack))
 
+  let loadingChanges = false
+  let changesQueued = false
+
+  // We reload after file and git changes, so the timer only catches what has no event. While the
+  // window is hidden we skip, and catch up when it's shown again.
   async function loadChanges() {
+    if (document.hidden) return
+    if (loadingChanges) {
+      changesQueued = true
+      return
+    }
+    loadingChanges = true
     try {
-      status = (await api.gitOverview()).status
+      status = await api.gitStatus()
     } catch {
       status = null
+    } finally {
+      loadingChanges = false
+      if (changesQueued) {
+        changesQueued = false
+        loadChanges()
+      }
     }
   }
 
   onMount(() => {
     loadChanges()
-    const timer = setInterval(loadChanges, 5000)
+    const timer = setInterval(loadChanges, 30_000)
+    const unlistenGit = listen('git-change', loadChanges)
+    document.addEventListener('visibilitychange', loadChanges)
     const pinActive = () => workspace.active && pin(workspace.active)
     host.addEventListener('mousedown', pinActive)
     return () => {
       clearInterval(timer)
+      unlistenGit.then((stop) => stop())
+      document.removeEventListener('visibilitychange', loadChanges)
       host.removeEventListener('mousedown', pinActive)
       const current = activeTab()
       if (view && current?.state) current.state = view.state

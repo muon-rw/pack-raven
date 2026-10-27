@@ -25,6 +25,11 @@ pub fn git_overview(state: State<'_, AppState>) -> CmdResult<GitOverview> {
 }
 
 #[tauri::command(async)]
+pub fn git_status(state: State<'_, AppState>) -> CmdResult<Status> {
+    gitops::status(&state.settings().instance_dir).map_err(err)
+}
+
+#[tauri::command(async)]
 pub fn git_diff(state: State<'_, AppState>, path: String, staged: bool, untracked: bool) -> CmdResult<Diff> {
     gitops::diff(&state.settings().instance_dir, &path, staged, untracked).map_err(err)
 }
