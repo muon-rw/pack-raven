@@ -2,7 +2,7 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.8]
+## [0.1.8] - 2026-10-26
 
 ### Added
 - Warning in Changes when packraven can't watch the pack folder
@@ -116,7 +116,8 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 - Mod updates skip jars Minecraft is currently holding open instead of stopping partway
 - Failed downloads will retry up to three times
 
-[Unreleased]: https://github.com/muon-rw/pack-raven/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/muon-rw/pack-raven/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/muon-rw/pack-raven/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/muon-rw/pack-raven/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/muon-rw/pack-raven/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/muon-rw/pack-raven/compare/v0.1.4...v0.1.5
