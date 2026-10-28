@@ -402,6 +402,9 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, recopy_all: bool, 
     if !settings.minecraft_eula_accepted {
         return Err("Accept the Minecraft EULA before you start a test server.".into());
     }
+    if connect && crate::minecraft_auth::account().is_none() {
+        return Err(crate::minecraft_commands::SIGN_IN_FIRST.into());
+    }
     let pack = state.pack().map_err(err)?;
     let java = launch::java(&settings).map_err(err)?;
     let (data_dir, cache_path) = (state.data_dir.clone(), state.cache_path());
@@ -413,19 +416,21 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, recopy_all: bool, 
     let minecraft = state.minecraft.clone();
     let job_app = app.clone();
     state.jobs.start(&app, "test", move |log| async move {
+        // We check the sign-in before building anything, so a lapsed one fails fast.
+        let player = if connect { Some(crate::minecraft_commands::signed_in_player(&minecraft).await?) } else { None };
+        if let Some(player) = &player {
+            testrun::announce_player(&job_app, player);
+        }
         let version = pack.version().unwrap_or_else(|| "dev".into());
         let sides = classify_cached(&cache_path, &pack).await?;
         let plan = export::test_server_plan(&pack, &sides, &version, &java, &data_dir, &log).await?;
-        // We decide here, so the server's mode matches the account the client joins with.
-        let resolved = crate::minecraft_commands::test_player(&minecraft, &pack, &log).await;
-        let player = resolved.player;
-        let online = settings.minecraft_online_mode && !player.is_offline();
-        testrun::announce_player(&job_app, &player, Some(online), resolved.renewal_failure.as_deref());
-        if online {
-            log.info(format!("Running the test server in online mode, so the client joins as {}", player.name));
-        }
         log.info(if recopy_all { "Recopying every file in the test server folder" } else { "Syncing changed files to the test server folder" });
-        let report = testrun::sync_server_dir(plan, &pack, &test_dir, recopy_all, online, &log)?;
+        let report = testrun::sync_server_dir(plan, &pack, &test_dir, recopy_all, &log)?;
+        let online = testrun::online_mode(&test_dir);
+        testrun::announce_server_online(&job_app, online);
+        if !online {
+            log.info("This pack's server.properties turns online mode off, so the test server won't check accounts");
+        }
         log.info(report.to_string());
         let (ready_tx, mut ready_rx) = watch::channel(false);
         let server_pack = Pack::open(&pack.dir)?;
@@ -434,9 +439,7 @@ pub fn start_test(app: AppHandle, state: State<'_, AppState>, recopy_all: bool, 
             testrun::run_server(server_app, server_run, &server_pack, java, test_dir, run_args, ready_tx, server_log).await
         })
         .map_err(anyhow::Error::msg)?;
-        if !connect {
-            return Ok("Server starting".into());
-        }
+        let Some(player) = player else { return Ok("Server starting".into()) };
         log.info("Waiting for the server to finish starting");
         while !*ready_rx.borrow() {
             if ready_rx.changed().await.is_err() {
@@ -458,6 +461,9 @@ pub fn start_client(app: AppHandle, state: State<'_, AppState>, join: bool) -> C
     if mods_changing(&state) {
         return Err(MODS_CHANGING.into());
     }
+    if crate::minecraft_auth::account().is_none() {
+        return Err(crate::minecraft_commands::SIGN_IN_FIRST.into());
+    }
     let settings = state.settings();
     let pack = state.pack().map_err(err)?;
     let natives = state.pack_data().join("natives");
@@ -465,9 +471,9 @@ pub fn start_client(app: AppHandle, state: State<'_, AppState>, join: bool) -> C
     let minecraft = state.minecraft.clone();
     let job_app = app.clone();
     state.jobs.start(&app, "client", move |log| async move {
-        let resolved = crate::minecraft_commands::test_player(&minecraft, &pack, &log).await;
-        testrun::announce_player(&job_app, &resolved.player, None, resolved.renewal_failure.as_deref());
-        testrun::run_client(job_app, run, &settings, &pack, natives, join, resolved.player, log).await
+        let player = crate::minecraft_commands::signed_in_player(&minecraft).await?;
+        testrun::announce_player(&job_app, &player);
+        testrun::run_client(job_app, run, &settings, &pack, natives, join, player, log).await
     })
 }
 

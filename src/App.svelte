@@ -3,8 +3,9 @@
   import Notice from './components/Notice.svelte'
   import { onMount, tick } from 'svelte'
   import { listen } from '@tauri-apps/api/event'
-  import { api, errorText, type MinecraftAccount, type Overview, type PackList } from './lib/api'
-  import { job, jobs, serverPack, startListening, testState } from './lib/jobs.svelte'
+  import { api, errorText, type Overview, type PackList } from './lib/api'
+  import { minecraft, refreshAccount } from './lib/minecraft.svelte'
+  import { job, jobs, onJobEnd, serverPack, startListening, testState } from './lib/jobs.svelte'
   import Changes from './views/Changes.svelte'
   import Server from './views/Server.svelte'
   import Mods from './views/Mods.svelte'
@@ -59,12 +60,9 @@
   let hookMessage: string | null = $state(null)
   let hookFailed = $state(false)
   let hooksDismissed = $state(false)
-  // undefined until we've read it, so the rail never claims you're offline before we know.
-  let account = $state<MinecraftAccount | null | undefined>(undefined)
-
-  async function refreshAccount() {
-    account = await api.minecraftAccount().catch(() => account)
-  }
+  let account = $derived(minecraft.account)
+  // When a renewal fails at launch, the backend signs you out, so we read the account again.
+  for (const name of ['client', 'test'] as const) onJobEnd(name, (phase) => phase === 'failed' && refreshAccount())
 
   // We refresh when files, git refs or the mod list change, so the timer only catches changes with no
   // event. A test client can rewrite configs every second, and each refresh runs git several times,
@@ -686,7 +684,7 @@
     {:else if pane === 'pack' && packs?.active}
       <PackSettings dir={packs.active} name={overview?.name ?? 'this pack'} onserver={() => showFrom('server', index)} onappsettings={() => showFrom('settings', index)} onchange={refresh} onremoved={() => { only('mods'); refresh() }} />
     {:else}
-      <SettingsView onchange={refresh} onaccount={refreshAccount} />
+      <SettingsView onchange={refresh} />
     {/if}
   {/key}
   {/if}

@@ -277,14 +277,30 @@ test('test servers wait until you accept the Minecraft EULA', async ({ page }) =
   for (const name of ['Quick test', 'Start server']) {
     await expect(page.getByRole('button', { name, exact: true })).toHaveAttribute('aria-disabled', 'true')
   }
-  await expect(page.getByLabel('Join server')).not.toBeChecked()
-  await expect(page.getByRole('button', { name: 'Launch client' })).toHaveAttribute('aria-disabled', 'false')
 
   await consent.getByRole('button', { name: 'I accept the EULA' }).click()
-  await expect(consent).toHaveCount(0)
-  for (const name of ['Quick test', 'Start server']) {
-    await expect(page.getByRole('button', { name, exact: true })).toHaveAttribute('aria-disabled', 'false')
+  await expect(page.getByText('Accept the Minecraft EULA to start test servers.')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start server', exact: true })).toHaveAttribute('aria-disabled', 'false')
+})
+
+test('the client only launches once you sign in to Minecraft', async ({ page }) => {
+  await openApp(page, 'test', 'empty')
+  await expect(page.getByLabel('Join server')).toBeDisabled()
+  for (const name of ['Quick test', 'Launch client']) {
+    await expect(page.getByRole('button', { name, exact: true })).toHaveAttribute('aria-disabled', 'true')
   }
+  await page.getByRole('button', { name: 'Sign in with Microsoft' }).click()
+  await expect(page.getByText('Finish signing in with Microsoft in your browser.')).toBeVisible()
+  await expect(page.locator('#rail-player')).toHaveText('Minecraft: muonr')
+  await expect(page.getByRole('button', { name: 'Quick test' })).toBeFocused()
+  await expect(page.getByRole('button', { name: 'Launch client' })).toHaveAttribute('aria-disabled', 'false')
+  await expect(page.getByText('The client will play as muonr.')).toBeVisible()
+})
+
+test('signing in beside Run unblocks the client there too', async ({ page }) => {
+  await openApp(page, 'test', 'empty', 'settings')
+  await page.locator('#minecraft-account').getByRole('button', { name: 'Sign in with Microsoft' }).click()
+  await expect(page.getByRole('region', { name: 'Run, left pane' }).getByRole('button', { name: 'Launch client' })).toHaveAttribute('aria-disabled', 'false')
 })
 
 test('Join server stays as you left it when you come back to Run', async ({ page }) => {
@@ -379,7 +395,6 @@ test('you can sign in to Minecraft and out again', async ({ page }) => {
   await expect(section.getByRole('button', { name: 'Cancel' })).toBeFocused()
   await expect(section.getByRole('status')).toHaveText('Signed in as muonr.')
   await expect(page.locator('#rail-player')).toHaveText('Minecraft: muonr')
-  await expect(section.getByRole('switch', { name: 'Run test servers in online mode' })).toHaveAttribute('aria-checked', 'true')
   await section.getByRole('button', { name: 'Sign out' }).click()
   await expect(section.getByRole('status')).toHaveText('Signed out of Minecraft.')
   await expect(section.getByRole('button', { name: 'Sign in with Microsoft' })).toBeFocused()
@@ -662,7 +677,7 @@ test('a file in a mod jar can be overridden in a new data pack after adding Paxi
 
 test('a link in one pane opens its target in the other', async ({ page }) => {
   await openApp(page, 'test', 'dirty', 'files')
-  await page.getByRole('region', { name: 'Run, left pane' }).getByRole('button', { name: 'Change in App settings' }).click()
+  await page.getByRole('region', { name: 'Run, left pane' }).getByRole('button', { name: 'Manage your sign-in in App settings' }).click()
   await expect(page.getByRole('region', { name: 'Run, left pane' })).toBeVisible()
   await expect(page.getByRole('region', { name: 'App settings, right pane' })).toBeVisible()
 })

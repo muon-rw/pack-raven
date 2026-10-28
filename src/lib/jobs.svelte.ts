@@ -44,15 +44,8 @@ const FLUSH_MS = 50
 let nextId = 0
 
 export const jobs: Record<string, JobRecord> = $state({})
-export interface ResolvedPlayer {
-  name: string
-  offline: boolean
-  // Null when only the client launched, so this run didn't decide the server's mode.
-  serverOnline: boolean | null
-  renewalFailure: string | null
-}
-
-export const testState = $state({ serverReady: false, players: [] as string[], player: null as ResolvedPlayer | null, clientJoins: false })
+// player is the name the backend confirmed, and serverOnline the mode the test server started in.
+export const testState = $state({ serverReady: false, players: [] as string[], player: null as string | null, serverOnline: null as boolean | null, clientJoins: false })
 export const serverPack = $state({ changedSinceBuild: false, changedSinceTest: false })
 export const testOptions = $state({ recopyAll: false, joinServer: false })
 
@@ -144,11 +137,12 @@ function register(): Promise<UnlistenFn[]> {
     } else if (payload.kind === 'server-stopped') {
       testState.serverReady = false
       testState.players = []
+      testState.serverOnline = null
       for (const listener of serverStopListeners) listener()
     } else if (payload.kind === 'player-resolved') {
-      const resolved: ResolvedPlayer = JSON.parse(payload.detail)
-      // A client-only launch keeps the mode the running server was started with.
-      testState.player = { ...resolved, serverOnline: resolved.serverOnline ?? testState.player?.serverOnline ?? null }
+      testState.player = payload.detail
+    } else if (payload.kind === 'server-online') {
+      testState.serverOnline = payload.detail === 'true'
     } else if (payload.kind === 'player-joined' && !testState.players.includes(payload.detail)) {
       testState.players.push(payload.detail)
     }

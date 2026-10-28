@@ -3,6 +3,7 @@
   import { api, errorText } from '../lib/api'
   import { job, testState } from '../lib/jobs.svelte'
   import { launchClient } from '../lib/launch.svelte'
+  import { minecraft } from '../lib/minecraft.svelte'
   import { nav } from '../lib/nav.svelte'
 
   let { running }: { running: boolean } = $props()
@@ -16,7 +17,15 @@
   let launching = $derived(!running && job('client').phase === 'running')
   let failure = $derived(error ?? (launchedHere && job('client').phase === 'failed' ? job('client').message : null))
   let whyNoLaunch = $derived(
-    running ? 'The client is already running' : launching ? 'packraven is launching the client' : job('mods').phase === 'running' ? 'Wait for packraven to finish changing mods' : null,
+    running
+      ? 'The client is already running'
+      : launching
+        ? 'packraven is launching the client'
+        : job('mods').phase === 'running'
+          ? 'Wait for packraven to finish changing mods'
+          : minecraft.account === null
+            ? 'Sign in to Minecraft under App settings to launch the client'
+            : null,
   )
 
   async function act(action: () => Promise<void>) {

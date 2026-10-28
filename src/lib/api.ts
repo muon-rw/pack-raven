@@ -8,7 +8,6 @@ export interface Settings {
   defenderExcluded: string[]
   defenderDismissed: boolean
   minecraftEulaAccepted: boolean
-  minecraftOnlineMode: boolean
   editorAskMb: number
   editorMaxMb: number
   gitName: string
@@ -84,7 +83,7 @@ export interface PackConfig {
     graalvm: string
     properties: Record<string, string>
   }
-  test: { username: string; port: number; client_memory: string }
+  test: { port: number; client_memory: string }
   discord: { role_id: string; color: string; announce_on_approval: boolean; title: string; show_author: boolean; header: string; footer: string }
   updates: { channel: ReleaseType; locked: number[] }
 }
@@ -507,7 +506,6 @@ export const api = {
   minecraftSignIn: () => invoke<MinecraftAccount | null>('minecraft_sign_in'),
   minecraftSignInCancel: () => invoke<void>('minecraft_sign_in_cancel'),
   minecraftSignOut: () => invoke<void>('minecraft_sign_out'),
-  setMinecraftOnlineMode: (online: boolean) => invoke<void>('set_minecraft_online_mode', { online }),
   listDir: (path: string) => invoke<DirEntry[]>('list_dir', { path }),
   readFile: (path: string, allowLarge = false) => invoke<FileContent>('read_file', { path, allowLarge }),
   writeFile: (path: string, text: string, crlf: boolean, bom: boolean) => invoke<void>('write_file', { path, text, crlf, bom }),

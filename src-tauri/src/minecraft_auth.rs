@@ -47,7 +47,7 @@ pub struct Session {
 
 impl Session {
     pub fn player(&self) -> Player {
-        Player { name: self.account.name.clone(), uuid: self.account.uuid.clone(), access_token: self.access_token.clone(), user_type: "msa" }
+        Player { name: self.account.name.clone(), uuid: self.account.uuid.clone(), access_token: self.access_token.clone() }
     }
 }
 
@@ -58,6 +58,17 @@ struct MicrosoftTokens {
     access_token: String,
     refresh_token: String,
 }
+
+#[derive(Debug)]
+struct Refused(String);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Microsoft refused the sign-in: {}", self.0)
+    }
+}
+
+impl std::error::Error for Refused {}
 
 fn account_path() -> PathBuf {
     config_dir().join("minecraft-account.json")
@@ -92,13 +103,22 @@ pub async fn sign_in(open: impl FnOnce(&str) -> Result<()>, cancel: oneshot::Rec
         ],
     )?;
     open(url.as_str())?;
-    let code = tokio::select! {
-        code = receive_code(&listener, &state) => code?,
+    let (code, mut browser) = tokio::select! {
+        received = receive_code(&listener, &state) => received?,
         Ok(()) = cancel => return Ok(None),
         _ = tokio::time::sleep(SIGN_IN_TIMEOUT) => bail!("The Microsoft sign-in timed out. Try again."),
     };
-    let tokens = microsoft_tokens(&[("grant_type", "authorization_code"), ("code", &code), ("redirect_uri", &redirect), ("code_verifier", &verifier)]).await?;
-    finish(tokens).await.map(Some)
+    let result = async {
+        let tokens = microsoft_tokens(&[("grant_type", "authorization_code"), ("code", &code), ("redirect_uri", &redirect), ("code_verifier", &verifier)]).await?;
+        finish(tokens).await
+    }
+    .await;
+    // Xbox or Minecraft can still refuse after Microsoft accepts, so the browser waits for the whole chain.
+    match &result {
+        Ok(session) => respond(&mut browser, "200 OK", &[&format!("You're signed in as {}. You can close this tab and go back to packraven.", session.account.name)]).await,
+        Err(e) => respond(&mut browser, "200 OK", &["packraven couldn't sign you in.", &format!("{e:#}"), "Go back to packraven to try again."]).await,
+    }
+    result.map(Some)
 }
 
 pub async fn session(cache: &SessionCache) -> Result<Session> {
@@ -107,9 +127,18 @@ pub async fn session(cache: &SessionCache) -> Result<Session> {
         return Ok(session.clone());
     }
     let refresh_token = stored_refresh_token().context("You're not signed in to Minecraft. Sign in under App settings.")?;
-    let tokens = microsoft_tokens(&[("grant_type", "refresh_token"), ("refresh_token", &refresh_token)])
-        .await
-        .context("Your Microsoft sign-in has expired. Sign in again under App settings.")?;
+    let tokens = match microsoft_tokens(&[("grant_type", "refresh_token"), ("refresh_token", &refresh_token)]).await {
+        Ok(tokens) => tokens,
+        // Microsoft refuses a refresh token that expired or was revoked, and no retry fixes that, so we
+        // sign out rather than keep showing an account that can't launch.
+        Err(e) if e.is::<Refused>() => {
+            let name = account().map(|a| format!(" for {}", a.name)).unwrap_or_default();
+            cached.take();
+            forget_sign_in()?;
+            bail!("Microsoft no longer accepts your sign-in{name}, so we signed you out. Sign in again to launch the client.");
+        }
+        Err(e) => return Err(e.context("Couldn't reach Microsoft to renew your Minecraft sign-in. Check your internet connection and try again")),
+    };
     let session = finish(tokens).await?;
     *cached = Some(session.clone());
     Ok(session)
@@ -117,6 +146,10 @@ pub async fn session(cache: &SessionCache) -> Result<Session> {
 
 pub async fn sign_out(cache: &SessionCache) -> Result<()> {
     cache.lock().await.take();
+    forget_sign_in()
+}
+
+fn forget_sign_in() -> Result<()> {
     keychain::remove(KEYCHAIN_USER).context("removing your Microsoft sign-in from the system keychain")?;
     match std::fs::remove_file(account_path()) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e).context("removing minecraft-account.json"),
@@ -130,10 +163,10 @@ fn random_token() -> Result<String> {
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
 
-const SIGNED_IN_PAGE: &str = "You're signed in. You can close this tab and go back to packraven.";
 const FAILED_PAGE: &str = "Microsoft didn't sign you in. Go back to packraven to try again.";
 
-async fn receive_code(listener: &TcpListener, state: &str) -> Result<String> {
+// We answer the browser once the rest of the sign-in finishes, so this returns its connection still open.
+async fn receive_code(listener: &TcpListener, state: &str) -> Result<(String, TcpStream)> {
     loop {
         let (mut stream, _) = listener.accept().await?;
         let mut buffer = vec![0; 8192];
@@ -143,26 +176,30 @@ async fn receive_code(listener: &TcpListener, state: &str) -> Result<String> {
         let query: HashMap<String, String> = reqwest::Url::parse("http://localhost")?.join(target)?.query_pairs().into_owned().collect();
         // Browsers also ask for /favicon.ico, and anything else on this PC can reach the port.
         if query.get("state").map(String::as_str) != Some(state) {
-            respond(&mut stream, "404 Not Found", "").await;
+            respond(&mut stream, "404 Not Found", &[]).await;
             continue;
         }
         if let Some(code) = query.get("code") {
-            respond(&mut stream, "200 OK", SIGNED_IN_PAGE).await;
-            return Ok(code.clone());
+            return Ok((code.clone(), stream));
         }
-        respond(&mut stream, "200 OK", FAILED_PAGE).await;
+        respond(&mut stream, "200 OK", &[FAILED_PAGE]).await;
         let reason = query.get("error_description").or(query.get("error")).map_or("Microsoft gave no reason", String::as_str);
         bail!("Microsoft didn't sign you in: {reason}");
     }
 }
 
-async fn respond(stream: &mut TcpStream, status: &str, message: &str) {
+async fn respond(stream: &mut TcpStream, status: &str, paragraphs: &[&str]) {
+    let text: String = paragraphs.iter().map(|p| format!("<p>{}</p>", escape_html(p))).collect();
     let body = format!(
-        "<!doctype html><meta charset=utf-8><title>packraven</title><body style=\"font:16px system-ui;background:#f7f5ef;color:#1e211b;padding:48px\"><p>{message}</p>"
+        "<!doctype html><meta charset=utf-8><title>packraven</title><body style=\"font:16px system-ui;background:#f7f5ef;color:#1e211b;padding:48px;max-width:60ch\">{text}"
     );
     let response = format!("HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
     let _ = stream.write_all(response.as_bytes()).await;
     let _ = stream.shutdown().await;
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 async fn microsoft_tokens(grant: &[(&str, &str)]) -> Result<MicrosoftTokens> {
@@ -171,7 +208,8 @@ async fn microsoft_tokens(grant: &[(&str, &str)]) -> Result<MicrosoftTokens> {
     let response = CLIENT.post(TOKEN_URL).form(&form).send().await?;
     if !response.status().is_success() {
         let body: Value = response.json().await.unwrap_or_default();
-        bail!("Microsoft refused the sign-in: {}", body["error_description"].as_str().or(body["error"].as_str()).unwrap_or("no reason given"));
+        let reason = body["error_description"].as_str().or(body["error"].as_str()).unwrap_or("no reason given");
+        return Err(Refused(reason.to_string()).into());
     }
     Ok(response.json().await?)
 }
@@ -273,14 +311,18 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let browser = tokio::spawn(async move {
+            let mut reply = String::new();
             for path in ["/favicon.ico", "/?code=wrong&state=other", "/?code=abc&state=ours"] {
                 let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
                 stream.write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes()).await.unwrap();
-                let mut reply = String::new();
+                reply.clear();
                 stream.read_to_string(&mut reply).await.unwrap();
             }
+            reply
         });
-        assert_eq!(receive_code(&listener, "ours").await.unwrap(), "abc");
-        browser.await.unwrap();
+        let (code, mut stream) = receive_code(&listener, "ours").await.unwrap();
+        assert_eq!(code, "abc");
+        respond(&mut stream, "200 OK", &["Signed in as <you>."]).await;
+        assert!(browser.await.unwrap().contains("<p>Signed in as &lt;you&gt;.</p>"));
     }
 }

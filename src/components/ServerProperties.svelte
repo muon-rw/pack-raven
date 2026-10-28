@@ -69,7 +69,7 @@
       fields: [
         { key: 'white-list', label: 'Only let whitelisted players join', kind: 'bool', vanilla: 'false' },
         { key: 'enforce-whitelist', label: 'Kick players you remove from the whitelist', kind: 'bool', vanilla: 'false' },
-        { key: 'online-mode', label: 'Online mode', kind: 'bool', vanilla: 'true', hint: "Vanilla checks each player's Minecraft account. Test runs only turn it on when you're signed in to Minecraft and online mode is on in App settings." },
+        { key: 'online-mode', label: 'Online mode', kind: 'bool', vanilla: 'true', hint: "Vanilla checks each player's Minecraft account. Test servers use this value too." },
         { key: 'server-port', label: 'Port', kind: 'number', vanilla: '25565', min: 1, max: 65535, hint: `Test runs use port ${testPort} from Pack settings instead.` },
       ],
     },

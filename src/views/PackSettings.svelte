@@ -162,7 +162,6 @@
       <section>
         <h3>Test runs</h3>
         <div class="grid">
-          <label>Offline username <input bind:value={config.test.username} /></label>
           <label>
             Server port
             <input type="number" min="1" max="65535" bind:this={portField} bind:value={config.test.port} aria-invalid={portMissing} aria-describedby={portMissing ? 'pack-save-status' : undefined} />
@@ -172,10 +171,6 @@
         <p class="hint" id="test-memory-hint">
           These stay in the test loop. The test client gets the client memory as its Java heap size, such as 8G or 8192M. For the memory, Java and flags
           that ship in the server pack, open <button type="button" class="link" onclick={() => ((serverView.tab = 'startup'), onserver())}>Server, Startup</button>.
-        </p>
-        <p class="hint">
-          While you're signed out of Minecraft, test runs are offline and the client joins under the offline username.
-          <button type="button" class="link" onclick={onappsettings}>Sign in under App settings</button> to play as yourself.
         </p>
         {#if javaDefault}
           <JavaPicker

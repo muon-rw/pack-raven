@@ -1,83 +1,139 @@
-use std::collections::BTreeMap;
-use std::sync::Mutex;
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::credentials::KEYCHAIN_SERVICE;
 
-// macOS asks for permission per keychain item and per read, so every secret lives in one item that we read once per run.
+#[cfg(target_os = "macos")]
+pub use bundled::{get, remove, set};
+#[cfg(not(target_os = "macos"))]
+pub use separate::{get, remove, set};
+
 const BUNDLE_USER: &str = "secrets";
-const LEGACY_USERS: [&str; 3] = ["curseforge-upload-token", "github-token", "microsoft-refresh-token"];
-
-type Secrets = BTreeMap<String, String>;
-
-static CACHE: Mutex<Option<Secrets>> = Mutex::new(None);
 
 fn entry(user: &str) -> Result<keyring::Entry> {
     Ok(keyring::Entry::new(KEYCHAIN_SERVICE, user)?)
 }
 
-fn with_secrets<T>(f: impl FnOnce(&mut Secrets) -> T) -> Result<T> {
-    let mut cache = CACHE.lock().unwrap();
-    if cache.is_none() {
-        *cache = Some(load()?);
-    }
-    Ok(f(cache.as_mut().unwrap()))
-}
+// macOS asks for permission per keychain item and per read, so every secret lives in one item that we read once per run.
+#[cfg(target_os = "macos")]
+mod bundled {
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
 
-fn load() -> Result<Secrets> {
-    match entry(BUNDLE_USER)?.get_password() {
-        Ok(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
-        Err(keyring::Error::NoEntry) => migrate_legacy(),
-        Err(e) => Err(e).context("reading the system keychain"),
-    }
-}
+    use anyhow::{Context, Result};
 
-fn migrate_legacy() -> Result<Secrets> {
-    let mut secrets = Secrets::new();
-    for user in LEGACY_USERS {
-        if let Ok(secret) = entry(user)?.get_password() {
-            secrets.insert(user.to_string(), secret);
+    use super::{entry, BUNDLE_USER};
+
+    const LEGACY_USERS: [&str; 3] = ["curseforge-upload-token", "github-token", "microsoft-refresh-token"];
+
+    type Secrets = BTreeMap<String, String>;
+
+    static CACHE: Mutex<Option<Secrets>> = Mutex::new(None);
+
+    fn with_secrets<T>(f: impl FnOnce(&mut Secrets) -> T) -> Result<T> {
+        let mut cache = CACHE.lock().unwrap();
+        if cache.is_none() {
+            *cache = Some(load()?);
+        }
+        Ok(f(cache.as_mut().unwrap()))
+    }
+
+    fn load() -> Result<Secrets> {
+        match entry(BUNDLE_USER)?.get_password() {
+            Ok(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
+            Err(keyring::Error::NoEntry) => migrate_legacy(),
+            Err(e) => Err(e).context("reading the system keychain"),
         }
     }
-    if !secrets.is_empty() {
-        save(&secrets)?;
+
+    fn migrate_legacy() -> Result<Secrets> {
+        let mut secrets = Secrets::new();
         for user in LEGACY_USERS {
-            let _ = entry(user)?.delete_credential();
+            if let Ok(secret) = entry(user)?.get_password() {
+                secrets.insert(user.to_string(), secret);
+            }
+        }
+        if !secrets.is_empty() {
+            save(&secrets)?;
+            for user in LEGACY_USERS {
+                let _ = entry(user)?.delete_credential();
+            }
+        }
+        Ok(secrets)
+    }
+
+    fn save(secrets: &Secrets) -> Result<()> {
+        entry(BUNDLE_USER)?.set_password(&serde_json::to_string(secrets)?).context("saving to the system keychain")
+    }
+
+    pub fn get(key: &str) -> Option<String> {
+        with_secrets(|s| s.get(key).cloned()).ok().flatten()
+    }
+
+    pub fn set(key: &str, secret: &str) -> Result<()> {
+        update(|s| {
+            s.insert(key.to_string(), secret.to_string());
+        })
+    }
+
+    pub fn remove(key: &str) -> Result<()> {
+        update(|s| {
+            s.remove(key);
+        })
+    }
+
+    // Commits to the cache only once the keychain write succeeds.
+    fn update(change: impl FnOnce(&mut Secrets)) -> Result<()> {
+        with_secrets(|current| {
+            let mut next = current.clone();
+            change(&mut next);
+            if next != *current {
+                save(&next)?;
+                *current = next;
+            }
+            Ok(())
+        })?
+    }
+}
+
+// Windows caps one credential at 2560 bytes of UTF-16, too small for every secret together, so elsewhere each gets its own entry.
+#[cfg(not(target_os = "macos"))]
+mod separate {
+    use std::collections::BTreeMap;
+    use std::sync::Once;
+
+    use anyhow::{Context, Result};
+
+    use super::{entry, BUNDLE_USER};
+
+    pub fn get(key: &str) -> Option<String> {
+        unbundle();
+        entry(key).ok()?.get_password().ok()
+    }
+
+    pub fn set(key: &str, secret: &str) -> Result<()> {
+        unbundle();
+        entry(key)?.set_password(secret).context("saving to the system keychain")
+    }
+
+    pub fn remove(key: &str) -> Result<()> {
+        unbundle();
+        match entry(key)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.into()),
         }
     }
-    Ok(secrets)
-}
 
-fn save(secrets: &Secrets) -> Result<()> {
-    entry(BUNDLE_USER)?.set_password(&serde_json::to_string(secrets)?).context("saving to the system keychain")
-}
-
-pub fn get(key: &str) -> Option<String> {
-    with_secrets(|s| s.get(key).cloned()).ok().flatten()
-}
-
-pub fn set(key: &str, secret: &str) -> Result<()> {
-    update(|s| {
-        s.insert(key.to_string(), secret.to_string());
-    })
-}
-
-pub fn remove(key: &str) -> Result<()> {
-    update(|s| {
-        s.remove(key);
-    })
-}
-
-// Commits to the cache only once the keychain write succeeds.
-fn update(change: impl FnOnce(&mut Secrets)) -> Result<()> {
-    with_secrets(|current| {
-        let mut next = current.clone();
-        change(&mut next);
-        if next != *current {
-            save(&next)?;
-            *current = next;
-        }
-        Ok(())
-    })?
+    // 0.1.9 bundled secrets on every platform, so we split an existing bundle back into separate entries.
+    fn unbundle() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            let Ok(bundle) = entry(BUNDLE_USER) else { return };
+            let Ok(json) = bundle.get_password() else { return };
+            let secrets: BTreeMap<String, String> = serde_json::from_str(&json).unwrap_or_default();
+            // We keep the bundle unless every secret made it out, so a failed write loses nothing.
+            if secrets.iter().all(|(key, secret)| entry(key).and_then(|e| Ok(e.set_password(secret)?)).is_ok()) {
+                let _ = bundle.delete_credential();
+            }
+        });
+    }
 }

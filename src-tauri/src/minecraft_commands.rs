@@ -3,10 +3,8 @@ use tauri_plugin_opener::OpenerExt;
 use tokio::sync::oneshot;
 
 use crate::commands::AppState;
-use crate::jobs::Log;
 use crate::launch::Player;
 use crate::minecraft_auth::{self, Account, SessionCache};
-use crate::pack::Pack;
 
 type CmdResult<T> = Result<T, String>;
 
@@ -40,28 +38,12 @@ pub async fn minecraft_sign_out(state: State<'_, AppState>) -> CmdResult<()> {
     minecraft_auth::sign_out(&state.minecraft).await.map_err(|e| format!("{e:#}"))
 }
 
-#[tauri::command]
-pub fn set_minecraft_online_mode(state: State<'_, AppState>, online: bool) -> CmdResult<()> {
-    state.update_settings(|s| s.minecraft_online_mode = online).map_err(|e| format!("{e:#}"))
-}
-
-pub struct TestPlayer {
-    pub player: Player,
-    pub renewal_failure: Option<String>,
-}
-
-// A lapsed sign-in shouldn't block a test run, so we fall back to offline and tell you why.
-pub async fn test_player(cache: &SessionCache, pack: &Pack, log: &Log) -> TestPlayer {
-    let offline = Player::offline(&pack.config.test.username);
+// Mojang only allows launching the game for an account whose ownership we've verified, so there's no offline fallback.
+pub async fn signed_in_player(cache: &SessionCache) -> anyhow::Result<Player> {
     if minecraft_auth::account().is_none() {
-        return TestPlayer { player: offline, renewal_failure: None };
+        anyhow::bail!("{SIGN_IN_FIRST}");
     }
-    match minecraft_auth::session(cache).await {
-        Ok(session) => TestPlayer { player: session.player(), renewal_failure: None },
-        Err(e) => {
-            let reason = format!("{e:#}");
-            log.info(format!("Couldn't renew your Minecraft sign-in, so this run is offline as {}: {reason}", offline.name));
-            TestPlayer { player: offline, renewal_failure: Some(reason) }
-        }
-    }
+    Ok(minecraft_auth::session(cache).await?.player())
 }
+
+pub const SIGN_IN_FIRST: &str = "Sign in to Minecraft to launch the client.";

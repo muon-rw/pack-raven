@@ -204,6 +204,7 @@ h3 {
 p {
   margin: 0;
   max-width: 72ch;
+  text-wrap: pretty;
 }
 
 a {

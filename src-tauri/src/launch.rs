@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use md5::{Digest, Md5};
 use serde_json::Value;
 
 use crate::pack::Pack;
@@ -68,24 +67,6 @@ pub struct Player {
     pub name: String,
     pub uuid: String,
     pub access_token: String,
-    pub user_type: &'static str,
-}
-
-impl Player {
-    pub fn offline(name: &str) -> Self {
-        Self { name: name.to_string(), uuid: offline_uuid(name), access_token: "0".into(), user_type: "legacy" }
-    }
-
-    pub fn is_offline(&self) -> bool {
-        self.user_type == "legacy"
-    }
-}
-
-fn offline_uuid(name: &str) -> String {
-    let mut bytes: [u8; 16] = Md5::digest(format!("OfflinePlayer:{name}").as_bytes()).into();
-    bytes[6] = (bytes[6] & 0x0f) | 0x30;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    hex::encode(bytes)
 }
 
 pub fn split_args(text: &str) -> Vec<String> {
@@ -268,7 +249,7 @@ pub fn client(settings: &Settings, pack: &Pack, player: &Player, server: Option<
         // Vanilla only reads these two for telemetry.
         ("clientid", "0".into()),
         ("auth_xuid", "0".into()),
-        ("user_type", player.user_type.into()),
+        ("user_type", "msa".into()),
         ("version_type", "release".into()),
         ("quickPlayMultiplayer", server.unwrap_or_default().to_string()),
         ("natives_directory", natives_dir.to_string_lossy().into_owned()),

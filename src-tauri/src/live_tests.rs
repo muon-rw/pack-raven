@@ -80,7 +80,7 @@ async fn classify_sides() {
 #[ignore]
 fn client_command() {
     let (settings, pack) = pack();
-    let launch = launch::client(&settings, &pack, &launch::Player::offline("Dev"), Some("127.0.0.1:25565"), &scratch().join("natives")).unwrap();
+    let launch = launch::client(&settings, &pack, &launch::Player { name: "Dev".into(), uuid: "0".repeat(32), access_token: "0".into() }, Some("127.0.0.1:25565"), &scratch().join("natives")).unwrap();
     println!("java {}", launch.java.display());
     for arg in &launch.args {
         if arg.len() > 200 {
@@ -180,11 +180,11 @@ async fn loader_test_servers_boot() {
         let test_dir = scratch().join(format!("test-server-{name}"));
         let _ = std::fs::remove_dir_all(&test_dir);
         let plan = export::test_server_plan(&pack, &[], "test", &java, &scratch(), &log).await.unwrap();
-        println!("{name}: {}", crate::testrun::sync_server_dir(plan, &pack, &test_dir, false, false, &log).unwrap());
+        println!("{name}: {}", crate::testrun::sync_server_dir(plan, &pack, &test_dir, false, &log).unwrap());
         assert!(boots(&java, &pack, &test_dir).await, "{name} server did not finish starting");
 
         let plan = export::test_server_plan(&pack, &[], "test", &java, &scratch(), &log).await.unwrap();
-        println!("{name} resync: {}", crate::testrun::sync_server_dir(plan, &pack, &test_dir, false, false, &log).unwrap());
+        println!("{name} resync: {}", crate::testrun::sync_server_dir(plan, &pack, &test_dir, false, &log).unwrap());
     }
 }
 

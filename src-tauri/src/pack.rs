@@ -98,7 +98,6 @@ pub struct ServerConfig {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct TestConfig {
-    pub username: String,
     pub port: u16,
     pub client_memory: String,
 }
@@ -158,7 +157,7 @@ impl Default for ServerConfig {
 
 impl Default for TestConfig {
     fn default() -> Self {
-        Self { username: "Dev".into(), port: 25565, client_memory: "8G".into() }
+        Self { port: 25565, client_memory: "8G".into() }
     }
 }
 

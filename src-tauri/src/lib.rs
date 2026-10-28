@@ -292,7 +292,6 @@ pub fn run() {
             minecraft_commands::minecraft_sign_in,
             minecraft_commands::minecraft_sign_in_cancel,
             minecraft_commands::minecraft_sign_out,
-            minecraft_commands::set_minecraft_online_mode,
             system_commands::git_version,
             system_commands::install_git,
             system_commands::scan_java,

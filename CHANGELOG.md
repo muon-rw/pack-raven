@@ -2,6 +2,23 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0]
+
+### Added
+- Sign in to Minecraft right from the Run view
+
+### Changed
+- Launching a client now requires a Microsoft sign-in with an account that owns Java Edition (Mojang requires this).
+- Test servers now use the `online-mode` from your pack's server.properties instead of packraven overriding it
+
+### Removed
+- Offline test runs, along with the "Offline username" pack setting and the "Run test servers in online mode" app setting
+
+### Fixed
+- The browser said you were signed in even when Minecraft refused the sign-in
+- An expired Microsoft sign-in now signs you out with a clear message, instead of silently falling back to an offline run
+- Fixed a potential issue on Windows introduced in packraven 0.1.9, where packraven could run out of space to store credentials
+
 ## [0.1.9] - 2026-10-27
 ### Fixed
 - Reduced number of permission prompt popups on MacOS.

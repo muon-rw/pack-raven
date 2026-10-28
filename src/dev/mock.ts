@@ -91,7 +91,7 @@ const config = {
       ? { 'allow-flight': 'true', 'max-tick-time': '60000', difficulty: 'normal' }
       : { motd: '§6{name} §e{version}§r\\n§7Dragons, dungeons and §aspells', 'allow-flight': 'true', difficulty: 'hard', 'max-players': '12', 'view-distance': '12', 'max-tick-time': '-1', 'pause-when-empty-seconds': '0' }) as Record<string, string>,
   },
-  test: { username: 'Dev', port: 25565, client_memory: '8G' },
+  test: { port: 25565, client_memory: '8G' },
   discord: { role_id: '112233445566778899', color: '#4d6b2f', announce_on_approval: true, title: '{project_name} - v{version}', show_author: true, header: '', footer: '[Install]({file_url})' },
   updates: { channel: 'alpha', locked: [] as number[] },
 }
@@ -570,7 +570,7 @@ const mockJavas = [
   { path: 'C:/Users/you/.gradle/jdks/eclipse_adoptium-17-amd64-windows/jdk-17.0.16+8/bin/java.exe', major: 17, version: '17.0.16', distribution: 'Temurin', source: 'gradle', foreignArch: null },
 ]
 let minecraftAccount: { name: string; uuid: string } | null = scenario === 'empty' ? null : { name: 'muonr', uuid: '0f6c1e5a2b3d4c5e8f9a0b1c2d3e4f50' }
-let onlineMode = true
+const SIGN_IN_FIRST = 'Sign in to Minecraft to launch the client.'
 let autoUpdate = true
 // The dirty scenario has an update waiting, so screenshots cover the rail's restart button.
 let updatePhase: Record<string, unknown> = scenario === 'dirty' ? { phase: 'ready', version: '0.2.0' } : { phase: 'upToDate' }
@@ -805,12 +805,20 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     clientRunning,
     hooks: 'current',
   }),
-  start_test: ({ connect }) =>
-    mockJob('test', ['Syncing changed files to the test server folder'], 'Server starting', () => {
+  start_test: ({ connect }) => {
+    if (connect && !minecraftAccount) throw SIGN_IN_FIRST
+    if (connect) emit('test-event', { kind: 'player-resolved', detail: minecraftAccount!.name })
+    return mockJob('test', ['Syncing changed files to the test server folder'], 'Server starting', () => {
+      emit('test-event', { kind: 'server-online', detail: 'true' })
       startMockServer()
       if (connect) startMockClient()
-    }),
-  start_client: () => mockJob('client', ['Launching the client'], '', startMockClient),
+    })
+  },
+  start_client: () => {
+    if (!minecraftAccount) throw SIGN_IN_FIRST
+    emit('test-event', { kind: 'player-resolved', detail: minecraftAccount.name })
+    return mockJob('client', ['Launching the client'], '', startMockClient)
+  },
   server_command: ({ line }) => {
     emit('job-log', { job: 'server', stream: 'info', text: `> ${line}` })
     if (line === 'stop') setTimeout(stopMockServer, 300)
@@ -839,10 +847,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   minecraft_sign_out: () => {
     minecraftAccount = null
   },
-  set_minecraft_online_mode: ({ online }) => {
-    onlineMode = online as boolean
-  },
-  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: { ...javaByMajor }, defenderExcluded: [], defenderDismissed: false, minecraftEulaAccepted: eulaAccepted, minecraftOnlineMode: onlineMode, editorAskMb: 50, editorMaxMb: 100, gitName: '', gitEmail: '', autoUpdate, runArgs: appRunArgs }),
+  get_settings: () => ({ instanceDir: pack.dir, packs: [pack.dir], installDir: 'C:/curseforge/minecraft/Install', javaByMajor: { ...javaByMajor }, defenderExcluded: [], defenderDismissed: false, minecraftEulaAccepted: eulaAccepted, editorAskMb: 50, editorMaxMb: 100, gitName: '', gitEmail: '', autoUpdate, runArgs: appRunArgs }),
   save_settings: (a) => (appRunArgs = (a.settings as { runArgs: typeof appRunArgs }).runArgs),
   update_status: () => updateView(),
   check_for_update: () => updateView(),

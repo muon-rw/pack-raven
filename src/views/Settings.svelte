@@ -7,11 +7,12 @@
   import { open } from '@tauri-apps/plugin-dialog'
   import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
   import { openUrl } from '@tauri-apps/plugin-opener'
-  import { api, errorText, type CredentialsView, type DefenderView, type MinecraftAccount, type Settings, type UpdateView } from '../lib/api'
+  import { api, errorText, type CredentialsView, type DefenderView, type Settings, type UpdateView } from '../lib/api'
   import { installNow, selfUpdate, updateWaiting } from '../lib/selfUpdate.svelte'
   import { javas, scanJava } from '../lib/java.svelte'
+  import { cancelSignIn, minecraft, signIn, signOut } from '../lib/minecraft.svelte'
 
-  let { onchange, onaccount }: { onchange: () => void; onaccount: () => void } = $props()
+  let { onchange }: { onchange: () => void } = $props()
 
   let settings: Settings | null = $state(null)
   let autostart = $state(false)
@@ -39,13 +40,12 @@
     await Promise.all([loadCredentials(), loadAccount()])
   }
 
-  let account = $state<MinecraftAccount | null>(null)
-  let signingIn = $state(false)
+  let account = $derived(minecraft.account)
+  let signingIn = $derived(minecraft.signingIn)
   let accountError = $state<{ text: string; retry: () => void } | null>(null)
   // We keep one live region and change its text, since screen readers often miss a status that appears.
   let accountStatus = $state('')
   let accountButton: HTMLButtonElement | undefined = $state()
-  let onlineError: string | null = $state(null)
 
   // Each state swaps the button you just pressed for another, so we move focus to the new one.
   async function focusAccountButton() {
@@ -55,55 +55,37 @@
 
   async function loadAccount() {
     try {
-      account = await api.minecraftAccount()
+      minecraft.account = await api.minecraftAccount()
       accountError = null
     } catch (error) {
       accountError = { text: `Couldn't read your Minecraft sign-in: ${errorText(error)}`, retry: loadAccount }
     }
   }
 
-  async function signIn() {
-    signingIn = true
+  async function startSignIn() {
     accountError = null
     accountStatus = 'Waiting for you to sign in with Microsoft in your browser.'
+    const signingIn = signIn()
     focusAccountButton()
     try {
-      const signedIn = await api.minecraftSignIn()
-      account = signedIn
+      const signedIn = await signingIn
       accountStatus = signedIn ? `Signed in as ${signedIn.name}.` : 'Sign-in cancelled.'
-      if (signedIn) onaccount()
     } catch (error) {
       accountStatus = ''
-      accountError = { text: errorText(error), retry: signIn }
+      accountError = { text: errorText(error), retry: startSignIn }
     } finally {
-      signingIn = false
       focusAccountButton()
     }
   }
 
-  async function signOut() {
+  async function startSignOut() {
     accountError = null
     try {
-      await api.minecraftSignOut()
-      account = null
+      await signOut()
       accountStatus = 'Signed out of Minecraft.'
-      onaccount()
       focusAccountButton()
     } catch (error) {
-      accountError = { text: errorText(error), retry: signOut }
-    }
-  }
-
-  async function toggleOnlineMode() {
-    if (!settings) return
-    const wanted = !settings.minecraftOnlineMode
-    settings.minecraftOnlineMode = wanted
-    try {
-      onlineError = null
-      await api.setMinecraftOnlineMode(wanted)
-    } catch (error) {
-      settings.minecraftOnlineMode = !wanted
-      onlineError = `Couldn't change online mode: ${errorText(error)}`
+      accountError = { text: errorText(error), retry: startSignOut }
     }
   }
 
@@ -300,22 +282,25 @@
   <section class="account" id="minecraft-account">
     <h3>Minecraft account</h3>
     {#if account}
-      <p>Signed in as <strong>{account.name}</strong>. Test clients launch as this account on this computer.</p>
+      <p>
+        Signed in as <strong>{account.name}</strong>. Test clients on this computer launch as this account{#if credentials}, and packraven keeps your Microsoft tokens in
+          {credentials.keychain}{/if}.
+      </p>
     {:else if signingIn}
       <p class="muted">Finish signing in with Microsoft in your browser. packraven is waiting.</p>
     {:else}
       <p class="muted">
-        Sign in with a Microsoft account that owns Minecraft: Java Edition, so test clients launch as you and test servers can run in online mode. Until then,
-        test runs are offline, under each pack's offline username.
+        Mojang only lets launchers start the game for an account that owns it, so sign in with a Microsoft account that owns Minecraft: Java Edition to
+        launch test clients. You can start test servers without signing in.
       </p>
     {/if}
     <div class="identity-row">
       {#if account}
-        <button type="button" bind:this={accountButton} onclick={signOut}>Sign out</button>
+        <button type="button" bind:this={accountButton} onclick={startSignOut}>Sign out</button>
       {:else if signingIn}
-        <button type="button" bind:this={accountButton} onclick={() => api.minecraftSignInCancel()}>Cancel</button>
+        <button type="button" bind:this={accountButton} onclick={cancelSignIn}>Cancel</button>
       {:else}
-        <button type="button" class="primary" bind:this={accountButton} onclick={signIn}>Sign in with Microsoft</button>
+        <button type="button" class="primary" bind:this={accountButton} onclick={startSignIn}>Sign in with Microsoft</button>
       {/if}
     </div>
     <p class="visually-hidden" role="status">{accountStatus}</p>
@@ -324,28 +309,6 @@
         <p>{accountError.text}</p>
         <p><button type="button" onclick={accountError.retry}>Try again</button></p>
       </Notice>
-    {/if}
-    {#if account}
-      <div class="online-row">
-        <div>
-          <div id="online-label">Run test servers in online mode</div>
-          <p class="muted" id="online-hint">
-            Online test servers check your account like a real server, so they need an internet connection. Turn this off to test offline; the client
-            still launches as you.
-          </p>
-          {#if onlineError}<p class="failed" role="alert">{onlineError}</p>{/if}
-        </div>
-        <button
-          type="button"
-          role="switch"
-          class="switch"
-          aria-checked={settings.minecraftOnlineMode}
-          aria-labelledby="online-label"
-          aria-describedby="online-hint"
-          onclick={toggleOnlineMode}
-        ><span></span></button>
-      </div>
-      {#if credentials}<p class="muted hint">packraven keeps your sign-in in {credentials.keychain}.</p>{/if}
     {/if}
     <p class="muted hint">packraven is not an official Minecraft product, and is not approved by or associated with Mojang or Microsoft.</p>
   </section>
@@ -592,14 +555,6 @@
   .account h3,
   .account p {
     margin: 0;
-  }
-
-  .online-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 24px;
-    padding-top: 4px;
   }
 
   .app-switches {
