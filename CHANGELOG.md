@@ -2,6 +2,11 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1]
+
+### Changed
+- packraven now records a format version in mods.lock.json. If a newer version of packraven wrote the mod list you're trying to use, we'll prompt you to update before changing anything
+
 ## [0.2.0] - 2026-10-28
 
 ### Added

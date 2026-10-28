@@ -564,6 +564,8 @@ pub async fn pull(dir: &Path, prefer: Option<Prefer>, log: &Log) -> Result<Strin
     let _guard = modsync::MOD_LIST_GUARD.lock().await;
     modsync::update_mod_list(dir).await.context("packraven can't pull until the mod list records every mod")?;
     remote::run_logged(dir, &["fetch"], log).await?;
+    // Reading the pulled mod list here means a format we can't read stops the pull, not the restore after it.
+    modsync::lock_at(dir, "@{upstream}")?;
 
     let lock_path = dir.join(LOCKFILE);
     let mine_text = has_lock_changes(dir).then(|| std::fs::read_to_string(&lock_path)).transpose()?;
@@ -738,6 +740,19 @@ mod tests {
 
         runtime.block_on(pull(&mine, Some(Prefer::Theirs), &Log::console("pull"))).unwrap();
         assert_eq!(mod_names(&mine), ["base.jar", "shared-2.jar", "theirs.jar"]);
+    }
+
+    #[test]
+    fn pull_refuses_a_mod_list_from_a_newer_packraven() {
+        let (theirs, mine, runtime) = diverged_clones("newer");
+        std::fs::write(theirs.join(LOCKFILE), format!(r#"{{"formatVersion": {}, "entries": []}}"#, crate::pack::LOCK_FORMAT + 1)).unwrap();
+        git(&theirs, &["commit", "-qam", "Newer format"]);
+        git(&theirs, &["push", "-q"]);
+
+        let error = runtime.block_on(pull(&mine, None, &Log::console("pull"))).unwrap_err();
+        assert!(format!("{error:#}").contains("A newer version of packraven"), "{error:#}");
+        assert_eq!(git::ahead_behind(&mine), Some((0, 2)));
+        assert_eq!(mod_names(&mine), ["base.jar", "shared-1.jar"]);
     }
 
     fn option_patterns(paths: &[&str], dirs: &[bool]) -> Vec<(String, Vec<String>)> {

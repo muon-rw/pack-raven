@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 
 pub const CONFIG_FILE: &str = "packraven.toml";
 pub const LOCKFILE: &str = "mods.lock.json";
+// Bump this whenever older packraven versions would misread the new mods.lock.json. Old versions will
+// refuse a newer format rather than rewrite it in theirs, so the user will be prompted for an update.
+pub const LOCK_FORMAT: u64 = 1;
+const NEWER_LOCK_FORMAT: &str = "A newer version of packraven wrote this pack's mods.lock.json. Update packraven in App settings, then try again.";
 pub const CHANGELOG: &str = "changelog.md";
 pub const CHANGELOG_ARCHIVE: &str = "changelogs";
 pub const SERVER_ICON: &str = "server-icon.png";
@@ -181,7 +185,13 @@ pub struct Lockfile {
 
 impl Lockfile {
     pub fn parse(text: &str) -> Result<Self> {
-        serde_json::from_str(text).context("parsing mods.lock.json")
+        let value: serde_json::Value = serde_json::from_str(text).context("parsing mods.lock.json")?;
+        // Lockfiles from before we recorded a format are format 1.
+        let format = value.get("formatVersion").map_or(Some(1), serde_json::Value::as_u64);
+        if !format.is_some_and(|format| format <= LOCK_FORMAT) {
+            bail!(NEWER_LOCK_FORMAT);
+        }
+        serde_json::from_value(value).context("parsing mods.lock.json")
     }
 
     pub fn minecraft(&self) -> Result<&str> {
@@ -370,6 +380,16 @@ mod tests {
         assert_eq!(lock("fabric-0.19.2-1.21.1").mod_loader().unwrap(), ModLoader::Fabric("0.19.2"));
         assert_eq!(lock("fabric-0.19.2-1.21.1").mod_loader().unwrap().manifest_id(), "fabric-0.19.2");
         assert!(lock("quilt-0.26.0-1.21.1").mod_loader().is_err());
+    }
+
+    #[test]
+    fn refuses_lockfiles_from_a_newer_format() {
+        assert!(Lockfile::parse(r#"{"files": []}"#).is_ok());
+        assert!(Lockfile::parse(&format!(r#"{{"formatVersion": {LOCK_FORMAT}, "files": []}}"#)).is_ok());
+        for newer in [format!("{}", LOCK_FORMAT + 1), r#""2""#.into()] {
+            let error = Lockfile::parse(&format!(r#"{{"formatVersion": {newer}, "entries": []}}"#)).unwrap_err();
+            assert_eq!(error.to_string(), NEWER_LOCK_FORMAT, "{newer}");
+        }
     }
 
     #[test]

@@ -14,7 +14,7 @@ use crate::curseforge;
 use crate::git;
 use crate::http;
 use crate::jobs::Log;
-use crate::pack::{LockEntry, Lockfile, LOCKFILE};
+use crate::pack::{LockEntry, Lockfile, LOCKFILE, LOCK_FORMAT};
 
 const FOLDERS: [&str; 4] = ["mods", "resourcepacks", "shaderpacks", "datapacks"];
 const EXTENSIONS: [&str; 3] = [".jar", ".zip", ".disabled"];
@@ -130,7 +130,7 @@ impl Repo {
 
 fn render_lock(lock: &mut Lockfile) -> Result<String> {
     lock.files.sort_by_key(|e| e.path.to_lowercase());
-    let mut text = String::from("{\n");
+    let mut text = format!("{{\n  \"formatVersion\": {LOCK_FORMAT},\n");
     for (key, value) in [("minecraft", &lock.minecraft), ("loader", &lock.loader)] {
         if let Some(value) = value.as_deref().filter(|v| !v.is_empty()) {
             text += &format!("  \"{key}\": {},\n", serde_json::to_string(value)?);
