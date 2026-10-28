@@ -38,6 +38,8 @@ pub struct CfMod {
     pub categories: Vec<CfCategory>,
     #[serde(default)]
     pub date_modified: String,
+    #[serde(default)]
+    pub license_type: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

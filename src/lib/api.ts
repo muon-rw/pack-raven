@@ -75,6 +75,7 @@ export type StoredModKey = number | string
 export interface PackConfig {
   author: string
   curseforge: { project_id: number; release_type: string; manual_release: boolean }
+  modrinth: { project_id: string; allowed_override_jars: string[]; exclude: string[]; allowed_authors: string[] }
   export: { exclude: string[] }
   server: {
     exclude: string[]
@@ -169,7 +170,11 @@ export interface Overview {
   loader: string | null
   lockCount: number
   addons: { mods: number; resourcePacks: number; shaderPacks: number; dataPacks: number; other: number }
+  // Files neither platform the pack uses hosts.
   notOnCurseforge: string[]
+  notOnModrinth: ModrinthCandidate[]
+  modrinthError: string | null
+  releasesMissingModrinth: number
   modListError: string | null
   watchError: string | null
   branch: string | null
@@ -181,10 +186,38 @@ export interface Overview {
   devJars: string[]
   unpublishableJars: string[]
   projectId: number
+  modrinthProjectId: string
   runningJobs: string[]
   serverRunning: boolean
   clientRunning: boolean
   hooks: HooksState
+}
+
+export interface ModrinthCandidate {
+  path: string
+  // The mod the file belongs to, when packraven knows it, so you can check its license.
+  name: string | null
+  url: string | null
+  authors: string[]
+  license: string | null
+  openLicense: boolean
+  // packraven has the project's authors and license, or the file isn't from a project it can ask about.
+  known: boolean
+}
+
+export interface ModrinthFileView {
+  path: string
+  name: string | null
+  license: string | null
+  openLicense: boolean
+  // The author whose permission ships it, when that's why the Modrinth pack carries it.
+  author: string | null
+}
+
+export interface ModrinthChoices {
+  shipped: ModrinthFileView[]
+  byAuthor: { author: string; files: ModrinthFileView[] }[]
+  keptOff: ModrinthFileView[]
 }
 
 export interface ModCounts {
@@ -237,16 +270,18 @@ export interface ModSide {
 
 export interface ReleaseStatus {
   version: string
-  projectId: number
-  fileId: number
-  serverFileId: number
   publishedAt: string
-  status: string
-  serverStatus: string
-  serverPackLinked: boolean | null
   announce: boolean
   announcedAt: string | null
+  displayName: string | null
+  releaseType: string | null
+  curseforge: { projectId: number; fileId: number; status: string; serverStatus: string; serverPackLinked: boolean | null } | null
+  modrinth: { status: string; url: string } | null
+  // The Modrinth pack packraven would upload, when the pack is on Modrinth but this release isn't yet.
+  modrinthMissing: string | null
 }
+
+export type ModrinthChoice = 'ship' | 'leaveOut'
 
 export type HooksState = 'missing' | 'outdated' | 'current'
 
@@ -458,7 +493,7 @@ export interface IgnorePreview {
   tracked: string[]
 }
 
-export type Credential = 'upload' | 'github'
+export type Credential = 'upload' | 'modrinth' | 'github'
 export type CredentialSource = { kind: 'none' } | { kind: 'stored' } | { kind: 'env'; name: string }
 
 export interface CredentialStatus {
@@ -469,6 +504,7 @@ export interface CredentialStatus {
 export interface CredentialsView {
   builtInApiKey: boolean
   upload: CredentialStatus
+  modrinth: CredentialStatus
   github: CredentialStatus
   keychain: string
 }
@@ -607,8 +643,16 @@ export const api = {
   modDescription: (projectId: number) => invoke<string>('mod_description', { projectId }),
   removeMods: (paths: string[]) => invoke<void>('remove_mods', { paths }),
   publishPreflight: (version: string) =>
-    invoke<{ problems: string[]; warnings: string[]; tagTaken: boolean; client: UploadNames; server: UploadNames }>('publish_preflight', { version }),
+    invoke<{ problems: string[]; warnings: string[]; tagTaken: boolean; client: UploadNames; server: UploadNames; modrinthFile: string; modrinthShipped: ModrinthFileView[]; modrinthLeftOut: ModrinthFileView[] }>('publish_preflight', { version }),
   buildClientExport: () => invoke<void>('build_client_export'),
+  buildModrinthExport: () => invoke<void>('build_modrinth_export'),
+  uploadReleaseToModrinth: (version: string) => invoke<void>('upload_release_to_modrinth', { version }),
+  setModrinthChoice: (paths: string[], choice: ModrinthChoice | null) => invoke<void>('set_modrinth_choice', { paths, choice }),
+  modrinthChoices: () => invoke<ModrinthChoices>('modrinth_choices'),
+  lookUpModrinthCandidates: () => invoke<void>('look_up_modrinth_candidates'),
+  setModrinthAuthor: (author: string, allowed: boolean) => invoke<void>('set_modrinth_author', { author, allowed }),
+  modrinthProjectTitle: (id: string) => invoke<string | null>('modrinth_project_title', { id }),
+  publishedTo: (version: string) => invoke<{ curseforge: boolean; modrinth: boolean } | null>('published_to', { version }),
   buildServerPack: () => invoke<void>('build_server_pack'),
   startTest: (recopyAll: boolean, connect: boolean) => invoke<void>('start_test', { recopyAll, connect }),
   startClient: (join: boolean) => invoke<void>('start_client', { join }),

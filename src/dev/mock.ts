@@ -2,6 +2,7 @@
 // We load data from src/dev/fixtures.json when present (gitignored; you generate it from a real instance),
 // and otherwise from the committed demo-fixtures.json, a snapshot of a real pack.
 import demoFixtures from './demo-fixtures.json'
+import type { ReleaseStatus } from '../lib/api'
 
 // Add `?scenario=` to the URL to put the pack in one of the states we review the UI in.
 const scenarios = {
@@ -78,6 +79,7 @@ const pack = {
 const config = {
   author: 'muon-rw',
   curseforge: { project_id: scenario === 'empty' ? 0 : 1234567, release_type: 'beta', manual_release: false },
+  modrinth: { project_id: scenario === 'empty' ? '' : 'ravens-high-fantasy', allowed_override_jars: [] as string[], exclude: [] as string[], allowed_authors: [] as string[] },
   export: { exclude: [] },
   server: {
     exclude: [],
@@ -96,10 +98,46 @@ const config = {
   updates: { channel: 'alpha', locked: [] as string[] },
 }
 
-const releases = scenario === 'empty' ? [] : [
-  { version: '0.1.0', projectId: 1234567, fileId: 7001001, serverFileId: 7001002, publishedAt: '2026-10-03T18:20:00Z', status: 'Approved', serverStatus: 'Approved', serverPackLinked: true, announce: true, announcedAt: '2026-10-03T19:02:00Z' },
-  { version: fx.version === '0.1.0' ? '0.1.1' : fx.version, projectId: 1234567, fileId: 7105511, serverFileId: 7105512, publishedAt: '2026-10-12T21:40:00Z', status: 'Under review', serverStatus: 'Under review', serverPackLinked: null, announce: true, announcedAt: null },
+const modrinthRelease = (version: string) => ({ status: 'Listed', url: `https://modrinth.com/project/ravens-high-fantasy/version/${version}` })
+// The newest release missed Modrinth in the dirty scenario, so Releases offers to upload it.
+const releases: ReleaseStatus[] = scenario === 'empty' ? [] : [
+  { version: '0.1.0', publishedAt: '2026-10-03T18:20:00Z', announce: true, announcedAt: '2026-10-03T19:02:00Z', displayName: `${pack.name} 0.1.0`, releaseType: 'beta', modrinth: modrinthRelease('0.1.0'), modrinthMissing: null,
+    curseforge: { projectId: 1234567, fileId: 7001001, status: 'Approved', serverStatus: 'Approved', serverPackLinked: true } },
+  { version: fx.version === '0.1.0' ? '0.1.1' : fx.version, publishedAt: '2026-10-12T21:40:00Z', announce: true, announcedAt: null,
+    displayName: `${pack.name} 0.1.1`, releaseType: 'beta', modrinth: scenario === 'dirty' ? null : modrinthRelease('0.1.1'), modrinthMissing: scenario === 'dirty' ? `${pack.name.replace(/[^\w -]/g, '').trim().replace(/ /g, '-')}-0.1.1.mrpack` : null,
+    curseforge: { projectId: 1234567, fileId: 7105511, status: 'Under review', serverStatus: 'Under review', serverPackLinked: null } },
 ]
+
+// Files Modrinth doesn't host, which a dual pack has to allow there or remove.
+const notOnModrinthCandidates = scenario === 'dirty' ? ['mods/alltheleaks-1.1.13+1.21.1-neoforge.jar', 'mods/framework-neoforge-1.21.1-0.13.11.jar', 'mods/ftb-library-neoforge-2101.1.39.jar', 'resourcepacks/FreshAnimations-PT-BR.zip'] : []
+type MockCandidate = { name: string | null; url: string | null; authors: string[]; license: string | null; openLicense: boolean; known: boolean }
+const modrinthCandidateNames: Record<string, MockCandidate> = {
+  'mods/framework-neoforge-1.21.1-0.13.11.jar': { name: 'Framework', url: 'https://www.curseforge.com/minecraft/mc-mods/framework', authors: ['MrCrayfish'], license: 'All Rights Reserved', openLicense: false, known: true },
+  'mods/ftb-library-neoforge-2101.1.39.jar': { name: 'FTB Library (NeoForge)', url: 'https://www.curseforge.com/minecraft/mc-mods/ftb-library-forge', authors: ['FTB'], license: 'All Rights Reserved', openLicense: false, known: true },
+  'mods/alltheleaks-1.1.13+1.21.1-neoforge.jar': { name: 'AllTheLeaks', url: 'https://www.curseforge.com/minecraft/mc-mods/alltheleaks', authors: ['Uncandango'], license: 'MIT License', openLicense: true, known: true },
+  'resourcepacks/FreshAnimations-PT-BR.zip': { name: null, url: null, authors: [], license: null, openLicense: false, known: true },
+}
+const fileView = (path: string, author: string | null = null) => {
+  const known = modrinthCandidateNames[path]
+  return { path, name: known?.name ?? null, license: known?.license ?? null, openLicense: known?.openLicense ?? false, author }
+}
+const modrinthChoices = () => ({
+  shipped: config.modrinth.allowed_override_jars.map((path) => fileView(path)),
+  byAuthor: config.modrinth.allowed_authors.map((author) => ({
+    author,
+    files: notOnModrinthCandidates
+      .filter((path) => modrinthCandidateNames[path].authors.includes(author) && !config.modrinth.allowed_override_jars.includes(path) && !config.modrinth.exclude.includes(path))
+      .map((path) => fileView(path, author)),
+  })),
+  keptOff: config.modrinth.exclude.map((path) => fileView(path)),
+})
+const notOnModrinth = () =>
+  notOnModrinthCandidates.filter(
+    (path) =>
+      !config.modrinth.allowed_override_jars.includes(path) &&
+      !config.modrinth.exclude.includes(path) &&
+      !modrinthCandidateNames[path].authors.some((author) => config.modrinth.allowed_authors.includes(author)),
+  )
 
 const modChange = (name: string, from: string | null, to: string | null) => ({ name, url: `https://www.curseforge.com/minecraft/mc-mods/${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, from, to, inModList: true })
 const modDiff = {
@@ -342,11 +380,11 @@ function updateMods(requests: { path: string; fileId: number }[], extraLines: st
 
 const preflight = {
   dirty: [
-    "mods/raven_tweaks-1.2.jar isn't on CurseForge. In Changes, add it to Git or move it to the trash.",
+    "mods/raven_tweaks-1.2.jar isn't on CurseForge or Modrinth. In Changes, add it to Git or move it to the trash.",
     "The mods folder has two versions of one mod: iris-neoforge-1.8.0.jar and iris-neoforge-1.8.1.jar. In Mods, remove the one you don't want.",
   ],
   ready: [],
-  empty: ['Set the CurseForge project ID in Pack settings.'],
+  empty: ['Set a CurseForge or Modrinth project ID in Pack settings.'],
   nopack: [],
 }[scenario]
 
@@ -789,6 +827,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     lockCount: fx.lockCount,
     addons: scenario === 'empty' ? { mods: 0, resourcePacks: 0, shaderPacks: 0, dataPacks: 0, other: 0 } : { mods: fx.lockCount - 14, resourcePacks: 9, shaderPacks: 2, dataPacks: 3, other: 0 },
     notOnCurseforge: scenario === 'dirty' ? ['mods/raven_tweaks-1.2.jar'] : [],
+    notOnModrinth: notOnModrinth().map((path) => ({ path, ...modrinthCandidateNames[path] })),
+    modrinthError: null,
+    releasesMissingModrinth: releases.filter((r) => r.modrinthMissing).length,
     modListError: null,
     watchError: null,
     branch: 'master',
@@ -800,6 +841,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     devJars: scenario === 'dirty' ? ['raven_core-dev.jar'] : [],
     unpublishableJars: [],
     projectId: config.curseforge.project_id,
+    modrinthProjectId: config.modrinth.project_id,
     runningJobs: [],
     serverRunning,
     clientRunning,
@@ -881,7 +923,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   },
   get_webhook: () => 'https://discord.com/api/webhooks/0000/example',
   git_version: () => '2.56.0.windows.2',
-  credentials_status: () => ({ builtInApiKey: true, upload: { source: { kind: 'env', name: 'CURSEFORGE_TOKEN' }, present: true }, github: { source: { kind: 'stored' }, present: true }, keychain: 'Windows Credential Manager' }),
+  credentials_status: () => ({ builtInApiKey: true, upload: { source: { kind: 'env', name: 'CURSEFORGE_TOKEN' }, present: true }, modrinth: { source: { kind: 'stored' }, present: scenario !== 'empty' }, github: { source: { kind: 'stored' }, present: true }, keychain: 'Windows Credential Manager' }),
   env_var_names: () => ['APPDATA', 'CF_DOWNLOAD_TOKEN', 'CURSEFORGE_TOKEN', 'PATH'],
   defender_status: () => ({ active: true, exclusionsReadable: false, missing: [], prompt: false }),
   git_overview: () => ({ status: gitStatus(), commits: fx.commits }),
@@ -1010,14 +1052,46 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
           : tagTaken
             ? 'You already released 0.1.0 (tag v0.1.0 exists). Change the version to publish a new release.'
             : null
+    const blocked = notOnModrinth()
+    const modrinth = !blocked.length
+      ? []
+      : blocked.length === 1
+        ? [`${blocked[0]} isn't on Modrinth. In Changes, ship it on Modrinth or keep it off.`]
+        : [`${blocked.length} files aren't on Modrinth. In Changes, ship them on Modrinth or keep them off it.`]
     return {
-      problems: blocker ? [blocker, ...preflight] : preflight,
+      problems: [...(blocker ? [blocker] : []), ...preflight, ...modrinth],
       tagTaken,
       warnings: scenario === 'dirty' ? ['betterclouds-neoforge-1.3.2.jar is disabled, so packraven leaves it out of the export.'] : [],
       client: { displayName: `${pack.name} {version}`, fileName: `${stem}.zip` },
       server: { displayName: 'Server Pack {version}', fileName: `${stem}-server.zip` },
+      modrinthFile: `${stem}.mrpack`,
+      modrinthShipped: modrinthChoices().shipped.concat(modrinthChoices().byAuthor.flatMap((group) => group.files)),
+      modrinthLeftOut: modrinthChoices().keptOff,
     }
   },
+  build_modrinth_export: () =>
+    mockJob('modrinth-export', ['Modrinth pack: 391 Modrinth files, 4 override files'], `C:/Users/you/AppData/Roaming/dev.muon.packraven/builds/${bcc.version ?? 'dev'}/pack.mrpack`, () => {}),
+  upload_release_to_modrinth: (a) =>
+    mockJob('publish', ['Uploading the pack to Modrinth', 'Uploaded Modrinth version'], `Uploaded ${a.version} to Modrinth`, () => {
+      const release = releases.find((r) => r.version === a.version)!
+      release.modrinth = modrinthRelease(String(a.version))
+      release.modrinthMissing = null
+    }),
+  set_modrinth_choice: (a) => {
+    const paths = a.paths as string[]
+    const keep = (list: string[]) => list.filter((p) => !paths.includes(p))
+    config.modrinth.allowed_override_jars = [...keep(config.modrinth.allowed_override_jars), ...(a.choice === 'ship' ? paths : [])].sort()
+    config.modrinth.exclude = [...keep(config.modrinth.exclude), ...(a.choice === 'leaveOut' ? paths : [])].sort()
+  },
+  look_up_modrinth_candidates: () => {},
+  modrinth_choices: () => modrinthChoices(),
+  set_modrinth_author: (a) => {
+    const author = String(a.author)
+    const others = config.modrinth.allowed_authors.filter((x) => x !== author)
+    config.modrinth.allowed_authors = a.allowed ? [...others, author].sort() : others
+  },
+  modrinth_project_title: (a) => (String(a.id) === 'ravens-high-fantasy' ? "Raven's High Fantasy" : null),
+  published_to: (a) => (releases.some((r) => r.version === a.version) ? { curseforge: true, modrinth: !!releases.find((r) => r.version === a.version)!.modrinth } : null),
   discover_instances: () => [pack, { ...pack, dir: 'C:/Instances/Shared Pack', name: 'Shared Pack', addonCount: 0, hasGit: false, hasLock: false, remote: null, added: false }],
   server_sides: () => serverSides,
   installed_mods: () => ({

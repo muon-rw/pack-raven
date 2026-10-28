@@ -320,7 +320,7 @@ async fn update_mod_with_dependencies() {
     assert_eq!(lock.files.len(), plan.dependencies.len() + 1);
 
     let written = std::fs::read_to_string(dir.join(crate::pack::LOCKFILE)).unwrap();
-    assert!(modsync::refresh_mod_list(&dir).await.unwrap().is_empty());
+    assert!(modsync::refresh_mod_list(&dir).await.unwrap().unknown.is_empty());
     assert_eq!(std::fs::read_to_string(dir.join(crate::pack::LOCKFILE)).unwrap(), written, "the watcher's refresh should agree with what we wrote");
 }
 
@@ -359,4 +359,35 @@ async fn install_mod_from_search() {
     assert_eq!(pack.lock.files.len(), plan.dependencies.len() + 1);
     let again = mod_updates::plan(&pack, &[ModRequest { file_id, replaces: None }]).await;
     assert!(again.is_err(), "installing a project the pack already has should fail");
+}
+
+// Set PACKRAVEN_TWIN_SAMPLE to try more of the files Modrinth doesn't host byte for byte.
+#[tokio::test]
+#[ignore]
+async fn finds_modrinth_copies_of_the_pack() {
+    let (_, pack) = pack();
+    let mut entries: Vec<crate::pack::LockEntry> = pack.lock.files.clone();
+    let hashes: Vec<String> = entries.iter().map(|e| e.sha1.clone()).collect();
+    let exact = crate::modrinth::files_by_sha1(&hashes).await.unwrap();
+    for entry in &mut entries {
+        entry.modrinth = exact.get(&entry.sha1).cloned();
+    }
+    assert!(!exact.is_empty(), "Modrinth should host some of the pack's files byte for byte");
+    let exact_paths: Vec<String> = entries.iter().filter(|e| e.modrinth.is_some()).map(|e| e.path.clone()).collect();
+
+    let sample = std::env::var("PACKRAVEN_TWIN_SAMPLE").ok().and_then(|n| n.parse().ok()).unwrap_or(12);
+    let target = crate::twins::Target::of(&pack.lock).unwrap();
+    let mut wanting: Vec<&mut crate::pack::LockEntry> = entries.iter_mut().filter(|e| e.modrinth.is_none() && e.curseforge.is_some() && e.size < 20_000_000).take(sample).collect();
+    crate::twins::find(&pack.dir, &scratch().join("twins"), &target, &mut wanting).await.unwrap();
+    for entry in &wanting {
+        println!("{}: {}", if entry.modrinth.is_some() { "twin" } else { "miss" }, entry.path);
+    }
+    let tried: Vec<String> = wanting.iter().map(|e| e.path.clone()).collect();
+    for folder in ["mods", "resourcepacks", "shaderpacks", "datapacks"] {
+        let in_folder: Vec<&crate::pack::LockEntry> = entries.iter().filter(|e| e.path.starts_with(&format!("{folder}/"))).collect();
+        let exact = in_folder.iter().filter(|e| exact_paths.contains(&e.path)).count();
+        let tried_here = in_folder.iter().filter(|e| tried.contains(&e.path)).count();
+        let twins = in_folder.iter().filter(|e| tried.contains(&e.path) && e.modrinth.is_some()).count();
+        println!("{folder}: {} files, {exact} on Modrinth byte for byte, twins for {twins} of the {tried_here} others we tried", in_folder.len());
+    }
 }

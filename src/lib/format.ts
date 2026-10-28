@@ -416,6 +416,11 @@ const DIFF_CELLS = 2_000_000
  * Returns the smallest edits we can cheaply find that turn `before` into `after`, so the
  * cursor, selections and folds stay where they were.
  */
+export function asReleaseType(type: string): string {
+  const lower = type.toLowerCase()
+  return lower === 'release' ? 'a release' : `${/^[aeiou]/.test(lower) ? 'an' : 'a'} ${lower}`
+}
+
 export function changesBetween(before: string, after: string): ChangeSpec[] {
   const a = linesOf(before)
   const b = linesOf(after)

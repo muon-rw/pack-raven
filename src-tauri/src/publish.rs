@@ -7,10 +7,11 @@ use serde_json::json;
 use crate::changelog;
 use crate::curseforge;
 use crate::export;
+use crate::modrinth;
 use crate::git;
 use crate::jobs::Log;
 use crate::git::Identity;
-use crate::pack::{version_problem, Pack, CHANGELOG_ARCHIVE};
+use crate::pack::{version_problem, ModKey, ModLoader, Pack, CHANGELOG_ARCHIVE};
 use crate::sides::{self, MetadataCache};
 use crate::modsync;
 
@@ -18,6 +19,12 @@ use crate::modsync;
 #[serde(rename_all = "camelCase", from = "StoredRelease")]
 pub struct Release {
     pub version: String,
+    /// The display name the client pack shipped under, which a later Modrinth upload reuses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// The release type it shipped as, which a later Modrinth upload reuses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub curseforge: Option<CurseforgeRelease>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,6 +54,8 @@ pub struct ModrinthRelease {
 #[serde(rename_all = "camelCase")]
 struct StoredRelease {
     version: String,
+    display_name: Option<String>,
+    release_type: Option<String>,
     curseforge: Option<CurseforgeRelease>,
     modrinth: Option<ModrinthRelease>,
     project_id: Option<u64>,
@@ -67,6 +76,8 @@ impl From<StoredRelease> for Release {
         };
         Self {
             version: stored.version,
+            display_name: stored.display_name,
+            release_type: stored.release_type,
             curseforge: stored.curseforge.or(legacy),
             modrinth: stored.modrinth,
             published_at: stored.published_at,
@@ -88,7 +99,7 @@ pub struct PublishOptions {
     pub server: UploadNames,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Clone)]
 #[serde(rename_all = "camelCase", default)]
 pub struct UploadNames {
     pub display_name: String,
@@ -149,13 +160,17 @@ pub fn tag_exists(pack: &Pack, version: &str) -> bool {
     git::run(&pack.dir, &["rev-parse", "-q", "--verify", &format!("refs/tags/v{version}")]).is_ok()
 }
 
-pub fn preflight(pack: &Pack, version: &str, not_on_curseforge: &[String], identity: &Identity) -> Vec<String> {
+pub fn preflight(pack: &Pack, cache: &MetadataCache, version: &str, unknown: &[String], modrinth_error: Option<&str>, identity: &Identity) -> Vec<String> {
     let mut problems = Vec::new();
-    if pack.config.curseforge.project_id == 0 {
-        problems.push("Set the CurseForge project ID in Pack settings.".into());
+    let config = &pack.config;
+    if !config.targets_curseforge() && !config.targets_modrinth() {
+        problems.push("Set a CurseForge or Modrinth project ID in Pack settings.".into());
     }
-    if curseforge::upload_token().is_none() {
+    if config.targets_curseforge() && curseforge::upload_token().is_none() {
         problems.push("Add a CurseForge upload token in App settings.".into());
+    }
+    if config.targets_modrinth() && modrinth::token().is_none() {
+        problems.push("Add a Modrinth token in App settings.".into());
     }
     if curseforge::core_key().is_none() {
         problems.push("This packraven build has no CurseForge API key. Build it with PACKRAVEN_CF_API_KEY set.".into());
@@ -171,10 +186,11 @@ pub fn preflight(pack: &Pack, version: &str, not_on_curseforge: &[String], ident
     } else if tag_exists(pack, version) {
         problems.push(format!("You already released {version} (tag v{version} exists). Change the version to publish a new release."));
     }
-    match not_on_curseforge {
+    let hosts = config.hosts();
+    match unknown {
         [] => {}
-        [path] => problems.push(format!("{path} isn't on CurseForge. In Changes, add it to Git or move it to the trash.")),
-        paths => problems.push(format!("{} files aren't on CurseForge. In Changes, add them to Git or move them to the trash.", paths.len())),
+        [path] => problems.push(format!("{path} isn't on {hosts}. In Changes, add it to Git or move it to the trash.")),
+        paths => problems.push(format!("{} files aren't on {hosts}. In Changes, add them to Git or move them to the trash.", paths.len())),
     }
     problems.extend(export::duplicate_mods_problem(pack));
     // The commit comes after the upload, which you can't take back, so we check git can make it first.
@@ -182,6 +198,7 @@ pub fn preflight(pack: &Pack, version: &str, not_on_curseforge: &[String], ident
         problems.push("Set your commit name and email in App settings.".into());
     }
     match export::unallowed_override_jars(pack) {
+        _ if !config.targets_curseforge() => {}
         Ok(jars) if !jars.is_empty() => problems.push(format!(
             "These jars would be in overrides, which CurseForge rejects: {}. Remove them or allow them in packraven.toml.",
             jars.join(", ")
@@ -189,7 +206,27 @@ pub fn preflight(pack: &Pack, version: &str, not_on_curseforge: &[String], ident
         Err(error) => problems.push(format!("Couldn't check overrides: {error:#}")),
         _ => {}
     }
+    if config.targets_modrinth() {
+        if let Some(error) = modrinth_error {
+            problems.push(format!("Couldn't check which files Modrinth hosts: {error}"));
+        }
+        match export::not_on_modrinth(pack, cache).as_deref() {
+            Ok([]) => {}
+            Ok([path]) => problems.push(format!("{path} isn't on Modrinth. In Changes, ship it on Modrinth or keep it off.")),
+            Ok(paths) => problems.push(format!("{} files aren't on Modrinth. In Changes, ship them on Modrinth or keep them off it.", paths.len())),
+            Err(error) => problems.push(format!("Couldn't check which files the Modrinth pack would carry: {error:#}")),
+        }
+    }
     problems
+}
+
+/// Fetches the authors and licenses of the files Modrinth doesn't host, which we don't keep for every mod.
+pub async fn look_up_modrinth_candidates(pack: &Pack, cache: &mut MetadataCache) -> Result<()> {
+    if !pack.config.targets_modrinth() {
+        return Ok(());
+    }
+    let keys: Vec<ModKey> = export::not_on_modrinth(pack, cache)?.iter().filter_map(|path| pack.lock.files.iter().find(|e| e.path == *path)?.key()).collect();
+    cache.ensure_names(&keys).await
 }
 
 pub struct PublishContext {
@@ -205,69 +242,62 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
     let PublishContext { pack, identity, data_dir, pack_data, cache_path, announce } = ctx;
     let version = options.version.trim().to_string();
     let _guard = modsync::MOD_LIST_GUARD.lock().await;
-    let unknown = modsync::refresh_mod_list(&pack.dir).await?;
-    let problems = preflight(&pack, &version, &unknown, &identity);
+    let refresh = modsync::refresh_mod_list(&pack.dir).await?;
+    let mut cache = MetadataCache::load(&cache_path);
+    // The authors you allowed decide some files, so we need every undecided file's authors first.
+    look_up_modrinth_candidates(&pack, &mut cache).await?;
+    cache.save(&cache_path)?;
+    let problems = preflight(&pack, &cache, &version, &refresh.unknown, refresh.modrinth_error.as_deref(), &identity);
     if !problems.is_empty() {
         bail!("{}", problems.join("\n"));
     }
     let pack = Pack::open(&pack.dir)?;
-    let project_id = pack.config.curseforge.project_id;
     let client_names = upload_names("client pack", &options.client, default_client_names(&pack), &version)?;
     let server_names = upload_names("server pack", &options.server, default_server_names(&pack), &version)?;
 
     pack.set_version(&version)?;
     log.info(format!("Set the pack version to {version}"));
     let out_dir = pack_data.join("builds").join(&version);
-    let client_zip = export::client_export(&pack, &version, &out_dir, &log)?;
+    let client_zip = pack.config.targets_curseforge().then(|| export::client_export(&pack, &version, &out_dir, &log)).transpose()?;
 
-    let mut cache = MetadataCache::load(&cache_path);
     let sides = sides::classify(&pack, &mut cache).await?;
     let baseline_path = pack_data.join(changelog::BASELINE_FILE);
     let diff = changelog::mod_diff(&pack, &pack.lock, &mut cache, &baseline_path).await?;
     cache.save(&cache_path)?;
-    export::server_pack(&pack, &sides, &version, &out_dir, &data_dir, &log).await?;
-    let server_zip = export::zip_server_pack(&pack, &version, &out_dir, &log).await?;
+    let modrinth_pack = pack.config.targets_modrinth().then(|| export::modrinth_export(&pack, &sides, &cache, &version, &out_dir, &log)).transpose()?;
     let notes = changelog::render(&changelog::read_notes(&pack), &diff);
 
-    let game_versions = curseforge::game_version_ids(pack.lock.minecraft()?, pack.lock.mod_loader()?.name()).await?;
-    let release_type = pack.config.curseforge.release_type.clone();
-    log.info(format!("Uploading {} as {}", client_zip.display(), client_names.file_name));
-    let file_id = curseforge::upload(
-        project_id,
-        &client_zip,
-        client_names.file_name,
-        json!({
-            "changelog": notes,
-            "changelogType": "markdown",
-            "displayName": client_names.display_name,
-            "gameVersions": game_versions,
-            "releaseType": release_type,
-            "isMarkedForManualRelease": pack.config.curseforge.manual_release,
-        }),
-    )
-    .await?;
-    log.info(format!("Uploaded the client pack as file {file_id}"));
-    log.info(format!("Uploading {} as {}", server_zip.display(), server_names.file_name));
-    let server_file_id = curseforge::upload(
-        project_id,
-        &server_zip,
-        server_names.file_name,
-        json!({
-            "changelog": notes,
-            "changelogType": "markdown",
-            "displayName": server_names.display_name,
-            "parentFileID": file_id,
-            "releaseType": release_type,
-        }),
-    )
-    .await
-    .context("packraven uploaded the client pack, but the server pack upload failed; upload the server pack as an additional file on CurseForge")?;
-    log.info(format!("Uploaded the server pack as file {server_file_id}"));
+    let curseforge = match client_zip {
+        Some(client_zip) => {
+            export::server_pack(&pack, &sides, &version, &out_dir, &data_dir, &log).await?;
+            let server_zip = export::zip_server_pack(&pack, &version, &out_dir, &log).await?;
+            Some(upload_to_curseforge(&pack, (&client_zip, client_names.clone()), (&server_zip, server_names), &notes, &log).await?)
+        }
+        None => None,
+    };
+    // A CurseForge release already happened by now, so a failed Modrinth upload mustn't keep us from recording it.
+    let (modrinth, modrinth_failure) = match &modrinth_pack {
+        Some(path) => match upload_to_modrinth(&pack, &version, path, &client_names.display_name, &pack.config.curseforge.release_type, &notes, &log).await {
+            Ok(release) => (Some(release), None),
+            Err(error) if curseforge.is_some() => (None, Some(error)),
+            Err(error) => return Err(error),
+        },
+        None => (None, None),
+    };
+    let summary = [
+        curseforge.as_ref().map(|c| format!("CurseForge file {}, server pack {}", c.file_id, c.server_file_id)),
+        modrinth.as_ref().map(|m| format!("Modrinth version {}", m.version_id)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("; ");
 
     let releases_path = pack_data.join("releases.json");
     let mut releases = load_releases(&releases_path);
-    let curseforge = Some(CurseforgeRelease { project_id, file_id, server_file_id });
-    releases.push(Release { version: version.clone(), curseforge, modrinth: None, published_at: chrono::Utc::now().to_rfc3339(), announce, announced_at: None });
+    let display_name = Some(client_names.display_name.clone());
+    let release_type = Some(pack.config.curseforge.release_type.clone());
+    releases.push(Release { version: version.clone(), display_name, release_type, curseforge, modrinth, published_at: chrono::Utc::now().to_rfc3339(), announce, announced_at: None });
     save_releases(&releases_path, &releases)?;
 
     let archive = pack.dir.join(CHANGELOG_ARCHIVE);
@@ -291,7 +321,111 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
             .with_context(|| format!("packraven published {version} and tagged v{version}, but couldn't push. Once you've fixed this, push from Git"))?;
         log.info("Pushed the release commit and tag");
     }
-    Ok(format!("Published {version}: pack file {file_id}, server pack {server_file_id}"))
+    // The release happened, so the job succeeds, and Publish finds the missing Modrinth upload from releases.json.
+    Ok(match modrinth_failure {
+        Some(error) => format!("Published {version}: {summary}. The Modrinth upload failed, so upload it again from Releases: {error:#}"),
+        None => format!("Published {version}: {summary}"),
+    })
+}
+
+async fn upload_to_curseforge(pack: &Pack, (client_zip, client): (&Path, UploadNames), (server_zip, server): (&Path, UploadNames), notes: &str, log: &Log) -> Result<CurseforgeRelease> {
+    let project_id = pack.config.curseforge.project_id;
+    let game_versions = curseforge::game_version_ids(pack.lock.minecraft()?, pack.lock.mod_loader()?.name()).await?;
+    let release_type = pack.config.curseforge.release_type.clone();
+    log.info(format!("Uploading {} as {}", client_zip.display(), client.file_name));
+    let file_id = curseforge::upload(
+        project_id,
+        client_zip,
+        client.file_name,
+        json!({
+            "changelog": notes,
+            "changelogType": "markdown",
+            "displayName": client.display_name,
+            "gameVersions": game_versions,
+            "releaseType": release_type,
+            "isMarkedForManualRelease": pack.config.curseforge.manual_release,
+        }),
+    )
+    .await?;
+    log.info(format!("Uploaded the client pack as file {file_id}"));
+    log.info(format!("Uploading {} as {}", server_zip.display(), server.file_name));
+    let server_file_id = curseforge::upload(
+        project_id,
+        server_zip,
+        server.file_name,
+        json!({
+            "changelog": notes,
+            "changelogType": "markdown",
+            "displayName": server.display_name,
+            "parentFileID": file_id,
+            "releaseType": release_type,
+        }),
+    )
+    .await
+    .context("packraven uploaded the client pack, but the server pack upload failed; upload the server pack as an additional file on CurseForge")?;
+    log.info(format!("Uploaded the server pack as file {server_file_id}"));
+    Ok(CurseforgeRelease { project_id, file_id, server_file_id })
+}
+
+async fn upload_to_modrinth(pack: &Pack, version: &str, path: &Path, display_name: &str, release_type: &str, notes: &str, log: &Log) -> Result<ModrinthRelease> {
+    let wanted = pack.config.modrinth.project_id.trim();
+    let project = modrinth::project(wanted).await?.with_context(|| format!("Modrinth has no project {wanted}. Check the Modrinth project in Pack settings."))?;
+    let loader = match pack.lock.mod_loader()? {
+        ModLoader::NeoForge(_) => "neoforge",
+        ModLoader::Forge(_) => "forge",
+        ModLoader::Fabric(_) => "fabric",
+    };
+    let file_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| pack.modrinth_pack_name(version));
+    log.info(format!("Uploading {file_name} to Modrinth"));
+    // The v2 API takes a modpack's real loaders and records them as the mrpack loader for us.
+    let uploaded = modrinth::create_version(
+        json!({
+            "project_id": project.id,
+            "name": display_name,
+            "version_number": version,
+            "changelog": notes,
+            "dependencies": [],
+            "game_versions": [pack.lock.minecraft()?],
+            "version_type": release_type,
+            "loaders": [loader],
+            "featured": false,
+            "status": "listed",
+        }),
+        path,
+        file_name,
+    )
+    .await?;
+    log.info(format!("Uploaded Modrinth version {}", uploaded.id));
+    Ok(ModrinthRelease { project_id: project.id, version_id: uploaded.id })
+}
+
+/// Returns the Modrinth pack a publish built for this release but couldn't upload. Releases from
+/// before the pack was on Modrinth have none, so we never offer to upload them.
+pub fn awaiting_modrinth(pack: &Pack, pack_data: &Path, release: &Release) -> Option<PathBuf> {
+    let path = pack_data.join("builds").join(&release.version).join(pack.modrinth_pack_name(&release.version));
+    (pack.config.targets_modrinth() && release.modrinth.is_none() && path.exists()).then_some(path)
+}
+
+/// Uploads a release's Modrinth pack after the publish that built it couldn't.
+pub async fn upload_release_to_modrinth(pack: Pack, pack_data: PathBuf, version: String, log: Log) -> Result<String> {
+    let releases_path = pack_data.join("releases.json");
+    let mut releases = load_releases(&releases_path);
+    let release = releases.iter_mut().find(|r| r.version == version).with_context(|| format!("you haven't published {version} from this machine"))?;
+    if release.modrinth.is_some() {
+        bail!("{version} is already on Modrinth.");
+    }
+    let path = pack_data.join("builds").join(&version).join(pack.modrinth_pack_name(&version));
+    if !path.exists() {
+        bail!("The Modrinth pack packraven built for {version} is gone from {}, so packraven can't upload it.", path.display());
+    }
+    let notes = std::fs::read_to_string(pack.dir.join(CHANGELOG_ARCHIVE).join(format!("{version}.md"))).unwrap_or_default();
+    let display_name = release.display_name.clone().unwrap_or_else(|| default_client_names(&pack).display_name.replace(VERSION_TOKEN, &version));
+    let release_type = release.release_type.clone().unwrap_or_else(|| pack.config.curseforge.release_type.clone());
+    let uploaded = upload_to_modrinth(&pack, &version, &path, &display_name, &release_type, &notes, &log).await?;
+    let message = format!("Uploaded {version} to Modrinth as version {}", uploaded.version_id);
+    release.modrinth = Some(uploaded);
+    save_releases(&releases_path, &releases)?;
+    Ok(message)
 }
 
 #[cfg(test)]

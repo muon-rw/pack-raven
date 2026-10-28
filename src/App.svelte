@@ -15,7 +15,7 @@
   import SettingsView from './views/Settings.svelte'
   import AddPack from './views/AddPack.svelte'
   import Git from './views/Git.svelte'
-  import { nav } from './lib/nav.svelte'
+  import { nav, revealAnchor } from './lib/nav.svelte'
   import Releases from './views/Releases.svelte'
   import PackSettings from './views/PackSettings.svelte'
   const loadFiles = () => import('./views/Files.svelte')
@@ -29,7 +29,7 @@
   import RavenMark from './components/RavenMark.svelte'
   import ThemeToggle from './components/ThemeToggle.svelte'
   import VersionEditor from './components/VersionEditor.svelte'
-  import { modCountsSummary, notOnCurseforgeSummary } from './lib/modsync'
+  import { hostsOf, modCountsSummary, notOnHostsSummary } from './lib/modsync'
   import { commandKey, isMac, shortcut } from './lib/platform'
   import Pane from './components/Pane.svelte'
   import Splitter from './components/Splitter.svelte'
@@ -243,10 +243,14 @@
     overview?.modListError
       ? "Couldn't update the mod list"
       : overview?.notOnCurseforge.length
-        ? notOnCurseforgeSummary(overview.notOnCurseforge)
+        ? notOnHostsSummary(overview.notOnCurseforge, hostsOf(overview))
         : overview?.watchError
           ? "Can't watch the pack folder"
-          : undefined,
+          : overview?.modrinthError
+            ? "Couldn't check Modrinth"
+            : overview?.notOnModrinth.length
+              ? notOnHostsSummary(overview.notOnModrinth, 'Modrinth')
+              : undefined,
   )
   let incomingSummary = $derived(overview?.incoming ? modCountsSummary(overview.incoming) : null)
 
@@ -320,7 +324,13 @@
           status: { running: 'Uploading', failed: 'Publish failed', done: 'Published', idle: undefined }[publishPhase],
           tone: ({ running: 'busy', failed: 'bad', done: 'ok', idle: 'idle' } as const)[publishPhase],
         },
-        { id: 'releases', title: 'Releases', key: '8' },
+        {
+          id: 'releases',
+          title: 'Releases',
+          key: '8',
+          status: overview?.releasesMissingModrinth ? `${overview.releasesMissingModrinth} not on Modrinth yet` : undefined,
+          tone: overview?.releasesMissingModrinth ? 'warn' : undefined,
+        },
       ],
     },
     { items: [{ id: 'pack', title: 'Pack settings', key: '9' }] },
@@ -335,6 +345,8 @@
     if (!nav.view) return
     showFrom(nav.view, layout.focused)
     nav.view = null
+    if (nav.anchor) revealAnchor(nav.anchor)
+    nav.anchor = null
   })
 
   let navItems = $derived(groups.flatMap((group) => group.items))

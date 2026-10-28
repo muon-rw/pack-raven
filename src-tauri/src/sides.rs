@@ -32,11 +32,14 @@ pub struct ProjectName {
     pub authors: Option<Vec<String>>,
     #[serde(default)]
     pub logo: Option<String>,
+    // Like authors, None means a cache from before we kept licenses. A project without one has Some("").
+    #[serde(default)]
+    pub license: Option<String>,
 }
 
 impl ProjectName {
     pub fn of_file(path: &str) -> Self {
-        Self { name: path.rsplit('/').next().unwrap_or(path).to_string(), url: None, authors: None, logo: None }
+        Self { name: path.rsplit('/').next().unwrap_or(path).to_string(), url: None, authors: None, logo: None, license: None }
     }
 }
 
@@ -84,7 +87,7 @@ impl MetadataCache {
     pub async fn ensure_names(&mut self, keys: &[ModKey]) -> Result<()> {
         let missing: Vec<u64> = keys
             .iter()
-            .filter(|key| self.names.get(key).is_none_or(|n| n.authors.is_none()))
+            .filter(|key| self.names.get(key).is_none_or(|n| n.authors.is_none() || n.license.is_none()))
             .filter_map(|key| match key {
                 ModKey::Curseforge(id) => Some(*id),
                 ModKey::Modrinth(_) => None,
@@ -95,9 +98,15 @@ impl MetadataCache {
         }
         for (id, m) in curseforge::mods(&missing).await? {
             let authors = Some(m.authors.into_iter().map(|a| a.name).collect());
-            self.names.insert(ModKey::Curseforge(id), ProjectName { name: m.name, url: m.links.website_url, authors, logo: m.logo.map(|l| l.thumbnail_url) });
+            let license = Some(m.license_type.unwrap_or_default());
+            self.names.insert(ModKey::Curseforge(id), ProjectName { name: m.name, url: m.links.website_url, authors, logo: m.logo.map(|l| l.thumbnail_url), license });
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn remember(&mut self, key: ModKey, name: ProjectName) {
+        self.names.insert(key, name);
     }
 
     pub fn known_name(&self, key: &ModKey) -> Option<&ProjectName> {
@@ -109,7 +118,7 @@ impl MetadataCache {
             ModKey::Curseforge(id) => id.to_string(),
             ModKey::Modrinth(id) => id.clone(),
         };
-        self.names.get(key).cloned().unwrap_or(ProjectName { name: format!("Project {id}"), url: None, authors: None, logo: None })
+        self.names.get(key).cloned().unwrap_or(ProjectName { name: format!("Project {id}"), url: None, authors: None, logo: None, license: None })
     }
 
     async fn ensure_sides(&mut self, entries: &[&LockEntry]) -> Result<()> {
@@ -117,12 +126,18 @@ impl MetadataCache {
         if missing.is_empty() {
             return Ok(());
         }
-        let hashes: Vec<String> = missing.iter().map(|e| e.sha1.clone()).collect();
-        let from_modrinth = modrinth::projects_by_sha1(&hashes).await?;
+        // Entries that record Modrinth's copy already name its project, so we only look the rest up by hash.
+        let hashes: Vec<String> = missing.iter().filter(|e| e.modrinth.is_none()).map(|e| e.sha1.clone()).collect();
+        let by_hash = if hashes.is_empty() { HashMap::new() } else { modrinth::files_by_sha1(&hashes).await? };
+        let project_of = |e: &LockEntry| e.modrinth.as_ref().or_else(|| by_hash.get(&e.sha1)).map(|f| f.project_id.clone());
+        let mut ids: Vec<String> = missing.iter().filter_map(|e| project_of(e)).collect();
+        ids.sort();
+        ids.dedup();
+        let from_modrinth = modrinth::projects(&ids).await?;
         let file_ids: Vec<u64> = missing.iter().filter_map(|e| e.curseforge.as_ref()).map(|f| f.file_id).collect();
         let from_curseforge = curseforge::files(&file_ids).await?;
         for entry in missing {
-            let project = from_modrinth.get(&entry.sha1);
+            let project = project_of(entry).and_then(|id| from_modrinth.get(&id));
             self.sides.insert(
                 entry.sha1.clone(),
                 SideMetadata {

@@ -22,6 +22,7 @@ pub const BCC_PROJECT_ID: u64 = 551894;
 pub struct PackConfig {
     pub author: String,
     pub curseforge: CurseforgeConfig,
+    pub modrinth: ModrinthConfig,
     pub export: ExportConfig,
     pub server: ServerConfig,
     pub test: TestConfig,
@@ -77,6 +78,34 @@ pub struct CurseforgeConfig {
     pub manual_release: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct ModrinthConfig {
+    /// The project's ID or slug.
+    pub project_id: String,
+    /// Files Modrinth doesn't host that you may share, so the Modrinth pack carries them.
+    pub allowed_override_jars: Vec<String>,
+    /// Files the Modrinth pack leaves out, which the CurseForge pack still ships.
+    pub exclude: Vec<String>,
+    /// Authors who let you share their work in your pack, so the Modrinth pack carries all of it.
+    pub allowed_authors: Vec<String>,
+}
+
+impl PackConfig {
+    pub fn targets_curseforge(&self) -> bool {
+        self.curseforge.project_id != 0
+    }
+
+    pub fn targets_modrinth(&self) -> bool {
+        !self.modrinth.project_id.trim().is_empty()
+    }
+
+    /// Names the platforms we place mods from.
+    pub fn hosts(&self) -> &'static str {
+        if self.targets_modrinth() { "CurseForge or Modrinth" } else { "CurseForge" }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct ExportConfig {
@@ -111,6 +140,7 @@ impl Default for PackConfig {
         Self {
             author: "muon-rw".into(),
             curseforge: CurseforgeConfig::default(),
+            modrinth: ModrinthConfig::default(),
             export: ExportConfig::default(),
             server: ServerConfig::default(),
             test: TestConfig::default(),
@@ -450,6 +480,13 @@ impl ModLoader<'_> {
     }
 }
 
+pub fn read_config(dir: &Path) -> Result<PackConfig> {
+    match std::fs::read_to_string(dir.join(CONFIG_FILE)) {
+        Ok(text) => toml::from_str(&text).context("parsing packraven.toml"),
+        Err(_) => Ok(PackConfig::default()),
+    }
+}
+
 pub struct Pack {
     pub dir: PathBuf,
     pub config: PackConfig,
@@ -463,10 +500,7 @@ impl Pack {
         }
         // A newer packraven may have written both files, and only the lockfile's format tells you to update.
         let lock = Lockfile::parse(&std::fs::read_to_string(dir.join(LOCKFILE))?)?;
-        let config = match std::fs::read_to_string(dir.join(CONFIG_FILE)) {
-            Ok(text) => toml::from_str(&text).context("parsing packraven.toml")?,
-            Err(_) => PackConfig::default(),
-        };
+        let config = read_config(dir)?;
         Ok(Self { dir: dir.to_path_buf(), config, lock })
     }
 
@@ -534,6 +568,10 @@ impl Pack {
 
     pub fn client_zip_name(&self, version: &str) -> String {
         format!("{}.zip", self.file_stem(version))
+    }
+
+    pub fn modrinth_pack_name(&self, version: &str) -> String {
+        format!("{}.mrpack", self.file_stem(version))
     }
 
     pub fn server_zip_name(&self, version: &str) -> String {

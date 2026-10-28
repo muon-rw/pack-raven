@@ -101,6 +101,7 @@
 
   const UPLOAD_TOKEN_PAGE = 'https://legacy.curseforge.com/account/api-tokens'
   const GITHUB_TOKEN_PAGE = 'https://github.com/settings/personal-access-tokens/new'
+  const MODRINTH_TOKEN_PAGE = 'https://modrinth.com/settings/pats'
 
   let identityBusy = $state(false)
   let identityMessage = $state<{ ok: boolean; text: string } | null>(null)
@@ -455,15 +456,15 @@
 
   {#if credentialsError}
     <section class="removal">
-      <h3>CurseForge access</h3>
+      <h3>Access tokens</h3>
       <Notice tone="error">
-        <p>Couldn't read your saved CurseForge and GitHub tokens: {credentialsError}</p>
+        <p>Couldn't read your saved CurseForge, Modrinth and GitHub tokens: {credentialsError}</p>
         <p><button type="button" onclick={loadCredentials}>Try again</button></p>
       </Notice>
     </section>
   {:else if credentials}
     <section class="removal" id="curseforge-access">
-      <h3>CurseForge access</h3>
+      <h3 id="curseforge-access-title" tabindex="-1">CurseForge access</h3>
       <p class="muted">Changes here take effect right away, including in the git hooks.</p>
       {#if !credentials.builtInApiKey}
         <Notice tone="warn">
@@ -473,7 +474,19 @@
       <CredentialField credential="upload" label="CurseForge upload token" status={credentials.upload} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
         {#snippet help()}
           <p class="muted hint">
-            You only need this to publish. <a href={UPLOAD_TOKEN_PAGE} onclick={(e) => { e.preventDefault(); openUrl(UPLOAD_TOKEN_PAGE) }}>Generate a token on CurseForge</a>, then paste it here.
+            You only need this to publish to CurseForge. <a href={UPLOAD_TOKEN_PAGE} onclick={(e) => { e.preventDefault(); openUrl(UPLOAD_TOKEN_PAGE) }}>Generate a token on CurseForge</a>, then paste it here.
+          </p>
+        {/snippet}
+      </CredentialField>
+    </section>
+
+    <section class="removal" id="modrinth-access">
+      <h3 id="modrinth-access-title" tabindex="-1">Modrinth access</h3>
+      <CredentialField credential="modrinth" label="Modrinth token" status={credentials.modrinth} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
+        {#snippet help()}
+          <p class="muted hint">
+            You only need this to publish to Modrinth. <a href={MODRINTH_TOKEN_PAGE} onclick={(e) => { e.preventDefault(); openUrl(MODRINTH_TOKEN_PAGE) }}>Create a personal access token</a>
+            with the Create versions scope, then paste it here.
           </p>
         {/snippet}
       </CredentialField>

@@ -3,10 +3,10 @@
 
   let { text }: { text: string } = $props()
 
-  const PAGES = { 'App settings': 'settings', 'Pack settings': 'pack', Changes: 'changes', Git: 'git' } as const
+  const PAGES = { 'App settings': 'settings', 'Pack settings': 'pack', Changes: 'changes', Git: 'git', Mods: 'mods', Releases: 'releases' } as const
   type PageName = keyof typeof PAGES
 
-  let parts = $derived(text.split(/\b(App settings|Pack settings|Changes|Git)\b/))
+  let parts = $derived(text.split(/\b(App settings|Pack settings|Changes|Git|Mods|Releases)\b/))
 
   function isPage(part: string): part is PageName {
     return part in PAGES

@@ -3,8 +3,15 @@
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Can now build and publish Modrinth packs, alongside CurseForge or on their own. Set the Modrinth project in Pack settings and add a Modrinth token in App settings to get started
+- packraven tries very very hard to find Modrinth's equivalent copy of each mod and pack, if one exists.
+- In a pack on Modrinth, mods only Modrinth hosts go into packraven's own mod list like CurseForge mods, instead of in git
+- Warning list for mods which are on CF but not Modrinth; you can override files you have permission to share inside the Modrinth pack, and leave the rest out of it.
+- Ship every openly licensed file at once, or everything by an author who gave you permission, including their mods you add later
+
 ### Changed
-- packraven saves your pack's mod list in a new format that makes room for Modrinth. Everyone working on the pack needs this version or newer, and older versions ask you to update.
+- Updated the pack list format version. Everyone working on the pack needs this version or newer, and on older versions you'll be asked to update before opening a pack built with a newer packraven version.
 
 ## [0.2.1] - 2026-10-28
 

@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { notOnCurseforgeSummary } from '../lib/modsync'
+  import { hostsOf, notOnHostsSummary } from '../lib/modsync'
   import Notice from '../components/Notice.svelte'
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { open } from '@tauri-apps/plugin-dialog'
-  import { api, errorText, type ModDiff, type Overview } from '../lib/api'
+  import { openUrl } from '@tauri-apps/plugin-opener'
+  import { api, errorText, type ModDiff, type ModrinthChoice, type Overview } from '../lib/api'
   import { shortcut } from '../lib/platform'
   import { nav } from '../lib/nav.svelte'
   import RenderedChangelog from '../components/RenderedChangelog.svelte'
@@ -19,24 +20,32 @@
   let diffError: string | null = $state(null)
   let loadingDiff = $state(false)
   let notesError: string | null = $state(null)
-  let keys = $state<{ upload: boolean } | null>(null)
+  let keys = $state<{ upload: boolean; modrinth: boolean } | null>(null)
 
   onMount(async () => {
-    api.credentialsStatus().then((c) => (keys = { upload: c.upload.present }), () => {})
+    api.credentialsStatus().then((c) => (keys = { upload: c.upload.present, modrinth: c.modrinth.present }), () => {})
     notes = savedNotes = await api.getNotes().catch(() => '')
     loadDiff()
   })
 
   // Before the first release we list what publishing needs here, where the work starts, rather
   // than only in Publish's checks at the end.
-  let firstRelease = $derived(
-    overview && !overview.lastTag && keys
-      ? [
-          { done: overview.projectId > 0, text: 'Set the CurseForge project ID', page: 'pack' as const, where: 'Pack settings' },
-          { done: keys.upload, text: 'Add a CurseForge upload token', page: 'settings' as const, where: 'App settings' },
-        ]
-      : null,
-  )
+  // We only ask for the tokens of the platforms you publish to.
+  let firstRelease = $derived.by(() => {
+    if (!overview || overview.lastTag || !keys) return null
+    const curseforge = overview.projectId > 0
+    const modrinth = !!overview.modrinthProjectId
+    return [
+      { done: curseforge || modrinth, text: 'Set a CurseForge or Modrinth project', page: 'pack' as const, anchor: 'publishing-title', where: 'Pack settings' },
+      curseforge ? { done: keys.upload, text: 'Add a CurseForge upload token', page: 'settings' as const, anchor: 'curseforge-access-title', where: 'App settings' } : null,
+      modrinth ? { done: keys.modrinth, text: 'Add a Modrinth token', page: 'settings' as const, anchor: 'modrinth-access-title', where: 'App settings' } : null,
+    ].filter((item) => item !== null)
+  })
+
+  function go(page: 'pack' | 'settings', anchor: string) {
+    nav.anchor = anchor
+    nav.view = page
+  }
 
   let savedVersion = $derived(overview?.version ?? null)
   let lastVersion = $derived(overview?.lastTag?.replace(/^v/, '') ?? null)
@@ -113,6 +122,99 @@
       unknownResult = { ok: false, text: errorText(error) }
     } finally {
       unknownBusy = null
+    }
+  }
+
+  const PERMISSIONS_GUIDE = 'https://support.modrinth.com/en/articles/8797527-obtaining-modpack-permissions'
+  // Past a handful of rows, the notice would push the release notes out of view.
+  const MODRINTH_ROWS = 4
+  // Long enough to catch the second press of a double click on a row that just moved up.
+  const SETTLE_MS = 400
+  type Undo = { kind: 'files'; paths: string[] } | { kind: 'author'; author: string }
+  let showAllModrinth = $state(false)
+  let choosing = $state<string | null>(null)
+  let settling = $state(false)
+  let choiceResult = $state<{ ok: boolean; text: string; undo?: Undo } | null>(null)
+  // Where your place goes once the list catches up: the row that moved up after you ship, the same
+  // button after you keep one off, or the result after a choice about several files.
+  let refocus = $state<{ paths: string[]; index: number; target: 'row' | 'leaveOut' | 'result' } | null>(null)
+  let retrying = $state(false)
+
+  async function chooseForModrinth(paths: string[], choice: ModrinthChoice, index: number, label: string, target: 'row' | 'leaveOut' | 'result') {
+    choosing = `${choice}:${paths.length === 1 ? paths[0] : 'all'}`
+    try {
+      await api.setModrinthChoice(paths, choice)
+      const it = paths.length === 1 ? 'it' : 'them'
+      const text = choice === 'ship' ? `The Modrinth pack ships ${label}.` : `${label} ${paths.length === 1 ? 'stays' : 'stay'} off Modrinth. The CurseForge pack still has ${it}.`
+      choiceResult = { ok: true, text, undo: { kind: 'files', paths } }
+      refocus = { paths, index, target }
+      onchange()
+    } catch (error) {
+      choiceResult = { ok: false, text: `Couldn't save the choice for ${paths.length === 1 ? paths[0] : 'those files'}: ${errorText(error)}` }
+    } finally {
+      choosing = null
+    }
+  }
+
+  async function undoChoice(undo: Undo) {
+    choosing = 'undo'
+    try {
+      if (undo.kind === 'files') await api.setModrinthChoice(undo.paths, null)
+      else await api.setModrinthAuthor(undo.author, false)
+      choiceResult = { ok: true, text: undo.kind === 'files' ? 'Undone. Decide again below.' : `Undone. packraven no longer ships everything by ${undo.author}.` }
+      onchange()
+    } catch (error) {
+      choiceResult = { ok: false, text: `Couldn't undo that: ${errorText(error)}` }
+    } finally {
+      choosing = null
+    }
+  }
+
+  $effect(() => {
+    const paths = (overview?.notOnModrinth ?? []).map((file) => file.path)
+    if (!refocus || paths.some((path) => refocus!.paths.includes(path))) return
+    const index = Math.min(refocus.index, paths.length - 1)
+    const id = refocus.target === 'result' || index < 0 ? 'modrinth-choice-result' : refocus.target === 'row' ? `modrinth-row-${index}` : `modrinth-leaveOut-${index}`
+    refocus = null
+    settling = true
+    setTimeout(() => (settling = false), SETTLE_MS)
+    tick().then(() => document.getElementById(id)?.focus())
+  })
+
+  // We keep the authors and licenses of only the files that need a decision, so we look them up as they appear.
+  let lookedUp = ''
+  $effect(() => {
+    const unknown = (overview?.notOnModrinth ?? []).filter((file) => !file.known).map((file) => file.path)
+    const key = unknown.join('\n')
+    if (!unknown.length || key === lookedUp) return
+    lookedUp = key
+    api.lookUpModrinthCandidates().then(onchange, () => {})
+  })
+
+  let permittingAuthor = $state('')
+
+  async function shipByAuthor(author: string, paths: string[]) {
+    choosing = `author:${author}`
+    try {
+      await api.setModrinthAuthor(author, true)
+      choiceResult = { ok: true, text: `The Modrinth pack ships everything by ${author}, including mods of theirs you add later.`, undo: { kind: 'author', author } }
+      permittingAuthor = ''
+      refocus = { paths, index: 0, target: 'result' }
+      onchange()
+    } catch (error) {
+      choiceResult = { ok: false, text: `Couldn't save ${author}'s permission: ${errorText(error)}` }
+    } finally {
+      choosing = null
+    }
+  }
+
+  async function retryModrinth() {
+    retrying = true
+    try {
+      await api.resyncModList(true)
+      onchange()
+    } finally {
+      retrying = false
     }
   }
 
@@ -241,7 +343,7 @@
           <li class:done={item.done}>
             <span class="mark" aria-hidden="true">{item.done ? '✓' : ''}</span>
             <span>
-              {item.text}{item.done ? '' : ' in '}{#if !item.done}<button class="link" onclick={() => (nav.view = item.page)}>{item.where}</button>{/if}<span class="visually-hidden">{item.done ? ', done' : ', not done yet'}</span>
+              {item.text}{item.done ? '' : ' in '}{#if !item.done}<button class="link" onclick={() => go(item.page, item.anchor)}>{item.where}</button>{/if}<span class="visually-hidden">{item.done ? ', done' : ', not done yet'}</span>
             </span>
           </li>
         {/each}
@@ -251,15 +353,16 @@
 
   {#if overview?.notOnCurseforge.length}
     {@const paths = overview.notOnCurseforge}
+    {@const hosts = hostsOf(overview)}
     <Notice tone="warn">
       <div class="mod-list-notice">
         <p>
-          <strong>{notOnCurseforgeSummary(paths)}.</strong> packraven only downloads mods from CurseForge, so releases and collaborators won't get
+          <strong>{notOnHostsSummary(paths, hosts)}.</strong> packraven only downloads mods from {hosts}, so releases and collaborators won't get
           {paths.length === 1 ? 'this file' : 'these files'} unless you commit {paths.length === 1 ? 'it' : 'them'} directly. You can't publish until you add
           {paths.length === 1 ? 'it' : 'them'} to Git or remove {paths.length === 1 ? 'it' : 'them'}.
         </p>
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <ul class="folder-files" tabindex="0" aria-label="Files not on CurseForge">
+        <ul class="folder-files" tabindex="0" aria-label="Files not on {hosts}">
           {#each paths as path (path)}<li class="file">{path}</li>{/each}
         </ul>
         <div class="actions">
@@ -273,6 +376,105 @@
       </div>
     </Notice>
   {/if}
+  {#if overview?.modrinthError}
+    <Notice tone="warn">
+      <p>
+        Couldn't check which files Modrinth hosts, so you can't publish to Modrinth until packraven can. <LinkedText text={overview.modrinthError} />
+      </p>
+      <p><button class:busy={retrying} disabled={retrying} onclick={retryModrinth}>{retrying ? 'Checking' : 'Check again'}</button></p>
+    </Notice>
+  {/if}
+  {#if overview?.notOnModrinth.length}
+    {@const candidates = overview.notOnModrinth}
+    {@const shown = showAllModrinth ? candidates : candidates.slice(0, MODRINTH_ROWS)}
+    {@const paths = candidates.map((file) => file.path)}
+    {@const openlyLicensed = candidates.filter((file) => file.openLicense)}
+    {@const authors = [...new Set(candidates.flatMap((file) => file.authors))].sort((a, b) => a.localeCompare(b))}
+    {@const filesBy = (author: string) => candidates.filter((file) => file.authors.includes(author)).map((file) => file.path)}
+    {@const busy = !!choosing || settling}
+    <Notice tone="warn">
+      <div class="mod-list-notice">
+        <p>
+          <strong>{notOnHostsSummary(paths, 'Modrinth')}.</strong> Modrinth's moderators check that you may share each file you ship inside a pack, through
+          its license, its project page or its author, and they may ask you for proof. Ship the ones you may share on Modrinth, and keep the rest off it.
+          The CurseForge pack keeps them either way. <button class="link" onclick={() => openUrl(PERMISSIONS_GUIDE)}>How Modrinth checks permissions</button>
+        </p>
+        <!-- Each way to decide several files at once rests on a reason you can check: a license, or an author's word. -->
+        {#if openlyLicensed.length || authors.length || candidates.length > 1}
+          <div class="reasons">
+            {#if openlyLicensed.length}
+              {@const names = openlyLicensed.map((file) => file.name ?? file.path)}
+              <button class:busy={choosing === `ship:${openlyLicensed.length === 1 ? openlyLicensed[0].path : 'all'}`} disabled={busy} onclick={() => chooseForModrinth(openlyLicensed.map((file) => file.path), 'ship', 0, names.length <= 3 ? names.join(', ') : `the ${names.length} files with open licenses`, 'result')}>
+                Ship the {openlyLicensed.length === 1 ? 'one' : openlyLicensed.length} with {openlyLicensed.length === 1 ? 'an open license' : 'open licenses'}
+              </button>
+            {/if}
+            {#if authors.length}
+              {@const covered = permittingAuthor ? filesBy(permittingAuthor) : []}
+              <span class="by-author">
+                <label for="permitting-author">An author's permission</label>
+                <select id="permitting-author" bind:value={permittingAuthor}>
+                  <option value="" disabled>Choose an author</option>
+                  {#each authors as author (author)}
+                    {@const count = filesBy(author).length}
+                    <option value={author}>{author} ({count} {count === 1 ? 'file' : 'files'})</option>
+                  {/each}
+                </select>
+                <button class:busy={choosing === `author:${permittingAuthor}`} disabled={busy || !permittingAuthor} onclick={() => shipByAuthor(permittingAuthor, covered)}>
+                  {permittingAuthor ? `Ship ${permittingAuthor}'s ${covered.length === 1 ? 'file' : `${covered.length} files`} and future ones` : 'Ship their files and future ones'}
+                </button>
+              </span>
+            {/if}
+            {#if candidates.length > 1}
+              <button class:busy={choosing === 'leaveOut:all'} disabled={busy} onclick={() => chooseForModrinth(paths, 'leaveOut', 0, `${paths.length} files`, 'result')}>Keep all {paths.length} off</button>
+            {/if}
+          </div>
+        {/if}
+        <ul class="decisions" class:all={showAllModrinth} aria-label="Files not on Modrinth">
+          {#each shown as file, index (file.path)}
+            {@const label = file.name ?? file.path}
+            <li id="modrinth-row-{index}" tabindex="-1" aria-label={label}>
+              <span class="what">
+                {#if file.name && file.url}
+                  <a href={file.url} onclick={(e) => { e.preventDefault(); openUrl(file.url!) }}>{file.name}<span class="visually-hidden"> on CurseForge</span></a>
+                {:else if file.name}
+                  <span>{file.name}</span>
+                {/if}
+                {#if file.name}
+                  <span class="facts muted">
+                    {#if file.authors.length}by {file.authors.join(', ')} ·{/if}
+                    {#if file.license}{file.license}{#if file.openLicense}{' '}<span class="chip ok">open license</span>{/if}{:else if file.known}No license listed{:else}Looking up its license{/if}
+                  </span>
+                {/if}
+                <span class="file" class:muted={!!file.name}>{file.path}</span>
+              </span>
+              <span class="choices">
+                <button id="modrinth-ship-{index}" class:busy={choosing === `ship:${file.path}`} disabled={busy} onclick={() => chooseForModrinth([file.path], 'ship', index, label, 'row')}>
+                  Ship<span class="visually-hidden"> {label} on Modrinth</span>
+                </button>
+                <button id="modrinth-leaveOut-{index}" class:busy={choosing === `leaveOut:${file.path}`} disabled={busy} onclick={() => chooseForModrinth([file.path], 'leaveOut', index, label, 'leaveOut')}>
+                  Keep off<span class="visually-hidden"> {label}, off Modrinth</span>
+                </button>
+              </span>
+            </li>
+          {/each}
+        </ul>
+        {#if candidates.length > shown.length}
+          <button class="link show-all" onclick={() => (showAllModrinth = true)}>Show all {candidates.length} files</button>
+        {/if}
+      </div>
+    </Notice>
+  {/if}
+  <!-- Mounted all along, so screen readers announce each result as it changes. -->
+  <p id="modrinth-choice-result" tabindex="-1" class:muted={choiceResult?.ok} class:failed={choiceResult && !choiceResult.ok} role="status">
+    {#if choiceResult}
+      {choiceResult.text}
+      {#if choiceResult.undo}
+        {@const undo = choiceResult.undo}
+        {' '}<button class="link" disabled={!!choosing} onclick={() => undoChoice(undo)}>Undo</button>, or change it later in
+        <button class="link" onclick={() => go('pack', 'choices-title')}>Pack settings</button>.
+      {/if}
+    {/if}
+  </p>
   {#if overview?.modListError}
     <Notice tone="error"><p>Couldn't update the mod list: <LinkedText text={overview.modListError} /></p></Notice>
   {/if}
@@ -588,6 +790,71 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+  }
+
+  /* A cap keeps each file within reach of its buttons in a wide window. Notice caps the height of its
+     lists for plain file names, but we show at most a few of these taller rows until you ask for all. */
+  .mod-list-notice .decisions {
+    display: grid;
+    gap: 8px;
+    max-width: 840px;
+    max-height: none;
+    overflow: visible;
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .mod-list-notice .decisions.all {
+    max-height: 50vh;
+    overflow: auto;
+  }
+
+  .decisions li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px 12px;
+  }
+
+  .what {
+    display: grid;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .what .file,
+  .facts {
+    overflow-wrap: anywhere;
+    font-size: var(--step--1);
+  }
+
+  .reasons {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 14px;
+  }
+
+  .by-author {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .decisions li:focus-visible {
+    outline-offset: 2px;
+  }
+
+  .choices {
+    display: flex;
+    gap: 6px;
+  }
+
+  .show-all {
+    justify-self: start;
   }
 
   .folder-files {

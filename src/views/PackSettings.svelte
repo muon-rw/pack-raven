@@ -4,7 +4,7 @@
   import ExtraLaunchArgs, { activeLines, emptyDraft, fromDraft, toDraft } from '../components/ExtraLaunchArgs.svelte'
   import { onMount } from 'svelte'
   import { ask } from '@tauri-apps/plugin-dialog'
-  import { api, errorText, type PackConfig, type PackJavaDefault } from '../lib/api'
+  import { api, errorText, type ModrinthChoice, type ModrinthChoices, type ModrinthFileView, type PackConfig, type PackJavaDefault } from '../lib/api'
   import { scanJava } from '../lib/java.svelte'
   import { serverView } from '../lib/nav.svelte'
 
@@ -41,6 +41,8 @@
       // Only the App settings hint depends on this, so a failed read shouldn't hide the pack's settings.
       appRunArgs = await api.getSettings().then((settings) => activeLines(settings.runArgs), () => 0)
       config = await api.getPackConfig()
+      loadChoices()
+      checkModrinthProject(config.modrinth.project_id.trim())
       webhook = (await api.getWebhook()) ?? ''
       packJava = (await api.getPackJava()) ?? ''
       configError = null
@@ -65,6 +67,7 @@
     // Svelte binds a cleared number field to null, which packraven.toml can't hold. We treat an
     // empty project ID as not set, but the test server needs a port.
     config.curseforge.project_id = Number(config.curseforge.project_id) || 0
+    config.modrinth.project_id = config.modrinth.project_id.trim()
     portMissing = !config.test.port
     if (portMissing) {
       messageFailed = true
@@ -78,7 +81,9 @@
     try {
       // Server saves its own settings as you change them, so we keep whatever it wrote since we loaded.
       const fresh = await api.getPackConfig()
-      await api.savePackConfig({ ...config, server: fresh.server, updates: fresh.updates })
+      const { allowed_override_jars, exclude, allowed_authors } = fresh.modrinth
+      const modrinth = { ...config.modrinth, allowed_override_jars, exclude, allowed_authors }
+      await api.savePackConfig({ ...config, server: fresh.server, updates: fresh.updates, modrinth })
       await api.setWebhook(webhook)
       await api.setPackJava(packJava.trim() || null)
       await api.setRunArgs(fromDraft(runArgs))
@@ -86,6 +91,12 @@
       onchange()
       messageFailed = false
       message = argsProblem ? 'Saved, but an extra launch argument will stop test runs from starting' : 'Saved'
+      const project = config?.modrinth.project_id ?? ''
+      await checkModrinthProject(project)
+      if (project && modrinthProject?.title === null) {
+        messageFailed = true
+        message = "Saved, but Modrinth has no project with that ID or slug, so publishing to Modrinth would fail"
+      }
     } catch (error) {
       messageFailed = true
       message = `Couldn't save: ${errorText(error)}`
@@ -107,6 +118,66 @@
     } finally {
       testing = false
     }
+  }
+
+  let modrinthProject = $state<{ id: string; title: string | null } | null>(null)
+
+  // A mistyped project would otherwise only show up when you publish.
+  async function checkModrinthProject(id: string) {
+    if (!id) return (modrinthProject = null)
+    try {
+      modrinthProject = { id, title: await api.modrinthProjectTitle(id) }
+    } catch {
+      modrinthProject = null
+    }
+  }
+
+  let changing = $state<string | null>(null)
+  let choicesError = $state<string | null>(null)
+
+  // Changes saves each choice as you make it, so changing one here saves right away too.
+  let choices = $state<ModrinthChoices | null>(null)
+  let newAuthor = $state('')
+
+  async function loadChoices() {
+    choices = await api.modrinthChoices().catch(() => null)
+  }
+
+  // Changes saves each choice as you make it, so changing one here saves right away too.
+  async function changeChoice(path: string, choice: ModrinthChoice | null) {
+    changing = path
+    try {
+      await api.setModrinthChoice([path], choice)
+      choicesError = null
+      await loadChoices()
+      onchange()
+    } catch (error) {
+      choicesError = `Couldn't change the choice for ${path}: ${errorText(error)}`
+    } finally {
+      changing = null
+    }
+  }
+
+  async function setAuthor(author: string, allowed: boolean) {
+    changing = author
+    try {
+      await api.setModrinthAuthor(author, allowed)
+      choicesError = null
+      await loadChoices()
+      onchange()
+      return true
+    } catch (error) {
+      choicesError = `Couldn't ${allowed ? 'add' : 'forget'} ${author}'s permission: ${errorText(error)}`
+      return false
+    } finally {
+      changing = null
+    }
+  }
+
+  const forgetAuthor = (author: string) => setAuthor(author, false)
+
+  async function addAuthor() {
+    if (await setAuthor(newAuthor.trim(), true)) newAuthor = ''
   }
 
   async function removePack() {
@@ -141,19 +212,32 @@
   {:else if config}
     <form class="form" onsubmit={(e) => { e.preventDefault(); save() }} oninput={() => !messageFailed && (message = null)}>
       <section>
-        <h3>CurseForge</h3>
+        <h3 id="publishing-title" tabindex="-1">Publishing</h3>
         <div class="grid">
-          <label>Project ID <input type="number" min="0" bind:value={config.curseforge.project_id} placeholder="Not set" /></label>
+          <label>CurseForge project ID <input type="number" min="0" bind:value={config.curseforge.project_id} placeholder="Not set" /></label>
+          <label>
+            Modrinth project
+            <input bind:value={config.modrinth.project_id} placeholder="Not set" spellcheck="false" aria-describedby="modrinth-project-hint" />
+            <span class="hint" id="modrinth-project-hint">
+              {#if modrinthProject && modrinthProject.id === config.modrinth.project_id.trim()}
+                {#if modrinthProject.title}On Modrinth as {modrinthProject.title}{:else}<span class="failed">Modrinth has no project with this ID or slug</span>{/if}
+              {:else}
+                The ID, or the slug from the project's URL
+              {/if}
+            </span>
+          </label>
           <label>
             Release type
-            <select bind:value={config.curseforge.release_type}>
+            <select bind:value={config.curseforge.release_type} aria-describedby="release-type-hint">
               <option value="release">Release</option>
               <option value="beta">Beta</option>
               <option value="alpha">Alpha</option>
             </select>
+            <span class="hint" id="release-type-hint">On both platforms</span>
           </label>
           <label>Author <input bind:value={config.author} /></label>
         </div>
+        <p class="hint">packraven publishes to each platform you give a project.</p>
         <label class="check">
           <input type="checkbox" bind:checked={config.curseforge.manual_release} /> Hold approved files until I release them on CurseForge
         </label>
@@ -232,7 +316,7 @@
           <input type="checkbox" bind:checked={config.discord.show_author} /> Show the project author, with their CurseForge avatar and a link to their profile
         </label>
         <label class="check">
-          <input type="checkbox" bind:checked={config.discord.announce_on_approval} /> Announce each release once CurseForge approves it
+          <input type="checkbox" bind:checked={config.discord.announce_on_approval} /> Announce each release once every platform it's on has approved it
         </label>
         <p class="hint">packraven checks every few minutes while it's running in the tray. You can also announce a release by hand from Releases.</p>
       </section>
@@ -242,6 +326,76 @@
         <span id="pack-save-status" class:muted={!messageFailed} class:failed={messageFailed} role="status">{message ?? ''}</span>
       </div>
     </form>
+
+    {#if choices && (choices.shipped.length || choices.keptOff.length || choices.byAuthor.length || config.modrinth.project_id)}
+      <section aria-labelledby="choices-title">
+        <h3 id="choices-title" tabindex="-1">Modrinth permissions</h3>
+        <p class="hint">
+          What the Modrinth pack does with files Modrinth doesn't host. Unlike the settings above, packraven saves these as soon as you change them. Decide
+          again to put a file back in Changes, where it blocks publishing to Modrinth until you choose.
+        </p>
+        {#snippet fileRow(file: ModrinthFileView, actions: { label: string; choice: ModrinthChoice | null; quiet?: boolean }[])}
+          {@const label = file.name ?? file.path}
+          <li>
+            <span class="what">
+              <span>{label}{#if file.license}<span class="muted"> · {file.license}</span>{/if}</span>
+              {#if file.name}<span class="file path muted">{file.path}</span>{/if}
+            </span>
+            <span class="choice-actions">
+              {#each actions as action (action.label)}
+                <button type="button" class:quiet={action.quiet} class:busy={changing === file.path && !action.quiet} disabled={!!changing} onclick={() => changeChoice(file.path, action.choice)}>
+                  {action.label}<span class="visually-hidden">: {label}</span>
+                </button>
+              {/each}
+            </span>
+          </li>
+        {/snippet}
+        {#each choices.byAuthor as group (group.author)}
+          <div class="field">
+            <h4 id="author-{group.author}">On {group.author}'s permission</h4>
+            <p class="hint">
+              The Modrinth pack ships everything by {group.author}, including mods of theirs you add later.
+              {#if !group.files.length}None of their files are in the pack yet.{/if}
+            </p>
+            {#if group.files.length}
+              <ul class="choices" aria-labelledby="author-{group.author}">
+                {#each group.files as file (file.path)}{@render fileRow(file, [{ label: 'Keep off instead', choice: 'leaveOut' }])}{/each}
+              </ul>
+            {/if}
+            <div>
+              <button type="button" class:busy={changing === group.author} disabled={!!changing} onclick={() => forgetAuthor(group.author)}>
+                Forget {group.author}'s permission
+              </button>
+            </div>
+          </div>
+        {/each}
+        {#if choices.shipped.length}
+          <div class="field">
+            <h4 id="shipped-title">Shipped on your word</h4>
+            <ul class="choices" aria-labelledby="shipped-title">
+              {#each choices.shipped as file (file.path)}{@render fileRow(file, [{ label: 'Keep off instead', choice: 'leaveOut' }, { label: 'Decide again', choice: null, quiet: true }])}{/each}
+            </ul>
+          </div>
+        {/if}
+        {#if choices.keptOff.length}
+          <div class="field">
+            <h4 id="kept-off-title">Kept off Modrinth</h4>
+            <ul class="choices" aria-labelledby="kept-off-title">
+              {#each choices.keptOff as file (file.path)}{@render fileRow(file, [{ label: 'Ship instead', choice: 'ship' }, { label: 'Decide again', choice: null, quiet: true }])}{/each}
+            </ul>
+          </div>
+        {/if}
+        <form class="field" onsubmit={(e) => { e.preventDefault(); addAuthor() }}>
+          <label for="new-author">Add an author who let you share their work</label>
+          <div class="inline">
+            <input id="new-author" bind:value={newAuthor} placeholder="Their CurseForge name" aria-describedby="new-author-hint" />
+            <button type="submit" disabled={!!changing || !newAuthor.trim()}>Add</button>
+          </div>
+          <p class="hint" id="new-author-hint">Modrinth's moderators may ask you for proof, so keep the message where they said yes.</p>
+        </form>
+        {#if choicesError}<p class="failed" role="alert">{choicesError}</p>{/if}
+      </section>
+    {/if}
   {/if}
 
   <section class="removal">
@@ -276,6 +430,7 @@
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    align-items: start;
     gap: 14px 18px;
   }
 
@@ -340,5 +495,44 @@
 
   .path {
     overflow-wrap: anywhere;
+  }
+
+  h4 {
+    font-size: var(--step-0);
+  }
+
+  .grid > label .hint {
+    display: block;
+    margin-top: 4px;
+  }
+
+  .choices {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .choice-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .what {
+    display: grid;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .what .file {
+    font-size: var(--step--1);
+  }
+
+  .choices li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
   }
 </style>

@@ -69,7 +69,7 @@ pub async fn discohook_preview(state: State<'_, AppState>, version: String) -> C
     let pack = Pack::open(&state.settings().instance_dir).map_err(err)?;
     let mut cache = MetadataCache::load(&state.cache_path());
     let diff = changelog::mod_diff(&pack, &pack.lock, &mut cache, &state.pack_data().join(changelog::BASELINE_FILE)).await.map_err(err)?;
-    let project = discord::project(pack.config.curseforge.project_id, &pack.config.author).await;
+    let project = discord::pack_project(&pack).await;
     let announcement = discord::Announcement {
         name: pack.name(),
         version,

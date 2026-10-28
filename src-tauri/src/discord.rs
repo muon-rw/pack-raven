@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 
 use crate::curseforge;
 use crate::http::CLIENT;
+use crate::modrinth;
 use crate::pack::{DiscordConfig, Pack, CHANGELOG_ARCHIVE};
 use crate::publish::{self, Release};
 
@@ -133,23 +134,64 @@ pub async fn discohook_link(message: &Value) -> Result<String> {
     response.get("url").and_then(Value::as_str).map(String::from).context("Discohook didn't return a link")
 }
 
+/// Returns whether every platform the release went to lists it. Modrinth usually lists a version on
+/// an approved project as soon as we upload it, but it can hold one for review too.
 pub async fn is_approved(release: &Release) -> bool {
-    // Modrinth lists a version as soon as we upload it, so only CurseForge's review can hold an announcement back.
-    let Some(published) = &release.curseforge else { return true };
-    matches!(curseforge::file(published.project_id, published.file_id).await, Ok(Some(file)) if APPROVED_STATUSES.contains(&file.file_status))
+    let on_curseforge = match &release.curseforge {
+        Some(published) => matches!(curseforge::file(published.project_id, published.file_id).await, Ok(Some(file)) if APPROVED_STATUSES.contains(&file.file_status)),
+        None => true,
+    };
+    let on_modrinth = match &release.modrinth {
+        Some(published) => matches!(modrinth::version(&published.version_id).await, Ok(Some(version)) if version.status.as_deref().is_none_or(|status| status == "listed")),
+        None => true,
+    };
+    on_curseforge && on_modrinth
 }
 
 pub async fn announcement(pack: &Pack, release: &Release) -> Announcement {
     let changelog = std::fs::read_to_string(pack.dir.join(CHANGELOG_ARCHIVE).join(format!("{}.md", release.version))).unwrap_or_default();
-    let published = release.curseforge.as_ref();
-    let project = project(published.map_or(0, |p| p.project_id), &pack.config.author).await;
+    let (project, file_url) = match (&release.curseforge, &release.modrinth) {
+        (Some(published), _) => {
+            let project = project(published.project_id, &pack.config.author).await;
+            let file_url = format!("{}/files/{}", project.url, published.file_id);
+            (project, file_url)
+        }
+        (None, Some(published)) => {
+            let file_url = format!("https://modrinth.com/project/{}/version/{}", published.project_id, published.version_id);
+            (modrinth_project(&published.project_id).await, file_url)
+        }
+        (None, None) => {
+            let project = project(0, &pack.config.author).await;
+            let file_url = project.url.clone();
+            (project, file_url)
+        }
+    };
     Announcement {
         name: pack.name(),
         version: release.version.clone(),
         changelog,
-        file_url: published.map_or_else(|| project.url.clone(), |p| format!("{}/files/{}", project.url, p.file_id)),
+        file_url,
         project,
         game: game(pack),
+    }
+}
+
+/// Returns the project announcements link to: the CurseForge one when the pack is there, or else Modrinth's.
+pub async fn pack_project(pack: &Pack) -> Project {
+    if !pack.config.targets_curseforge() && pack.config.targets_modrinth() {
+        modrinth_project(pack.config.modrinth.project_id.trim()).await
+    } else {
+        project(pack.config.curseforge.project_id, &pack.config.author).await
+    }
+}
+
+async fn modrinth_project(id: &str) -> Project {
+    let found = modrinth::project(id).await.ok().flatten();
+    Project {
+        name: found.as_ref().map(|p| p.title.clone()),
+        url: found.as_ref().map_or_else(|| format!("https://modrinth.com/project/{id}"), modrinth::Project::url),
+        logo: found.and_then(|p| p.icon_url),
+        author: None,
     }
 }
 

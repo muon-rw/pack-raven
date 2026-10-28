@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -16,8 +16,9 @@ use crate::git;
 use crate::http;
 use crate::jobs::Log;
 use crate::mirror::{mirror, FilePlan, Planned};
+use crate::modrinth;
 use crate::pack::{LockEntry, ModKey, ModLoader, Pack, SERVER_ICON};
-use crate::sides::{ModSide, Side};
+use crate::sides::{MetadataCache, ModSide, ProjectName, Side};
 
 const NEOFORGE_MAVEN: &str = "https://maven.neoforged.net/releases/net/neoforged/neoforge";
 const FORGE_MAVEN: &str = "https://maven.minecraftforge.net/net/minecraftforge/forge";
@@ -47,11 +48,85 @@ pub fn unallowed_override_jars(pack: &Pack) -> Result<Vec<String>> {
     let excluded = globs(&pack.config.export.exclude)?;
     let allowed = globs(&pack.config.export.allowed_override_jars)?;
     let jars = git::run(&pack.dir, &["ls-files", "-z", "--", "*.jar"])?;
-    Ok(jars
+    let mut unallowed: Vec<String> = jars
         .split('\0')
         .filter(|path| path.ends_with(".jar") && !excluded.is_match(path) && !allowed.is_match(path) && pack.dir.join(path).is_file())
         .map(String::from)
-        .collect())
+        .collect();
+    unallowed.extend(only_on_modrinth(pack).map(|e| e.path.clone()).filter(|path| path.ends_with(".jar") && !allowed.is_match(path)));
+    Ok(unallowed)
+}
+
+// CurseForge's manifest can only list CurseForge's files, so the client pack carries these in overrides.
+fn only_on_modrinth(pack: &Pack) -> impl Iterator<Item = &LockEntry> {
+    pack.lock.files.iter().filter(|e| e.curseforge.is_none() && !e.path.ends_with(".disabled"))
+}
+
+// Modrinth's moderators check every jar and pack in an mrpack's overrides for permission to
+// redistribute it, the way labrinth's modpack validator collects them.
+fn is_moderated_override(path: &str) -> bool {
+    ["mods/", "resourcepacks/", "shaderpacks/"].iter().any(|folder| path.starts_with(folder)) && (path.ends_with(".jar") || path.ends_with(".zip"))
+}
+
+// We record Modrinth choices as the paths you picked, and file names often hold [1.20.1] or {build},
+// so only * stays a wildcard in them.
+fn literal_paths(patterns: &[String]) -> Vec<String> {
+    let literal = |c: char| if matches!(c, '[' | ']' | '{' | '}' | '?') { format!("[{c}]") } else { c.to_string() };
+    patterns.iter().map(|pattern| pattern.chars().map(literal).collect()).collect()
+}
+
+// Licenses that let anyone redistribute the work. CurseForge names them in its own words, like "MIT
+// License" or "GNU Lesser General Public License version 3".
+pub fn is_open_license(license: &str) -> bool {
+    static OPEN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(MIT|Apache|BSD|ISC|Unlicense|CC0|zlib|MPL|L?GPL|AGPL)\b|General Public License|Mozilla Public|Eclipse Public|Public Domain").expect("valid regex")
+    });
+    OPEN.is_match(license)
+}
+
+/// Returns what we know about the project behind a file in the pack.
+pub fn project_of<'a>(pack: &Pack, cache: &'a MetadataCache, path: &str) -> Option<&'a ProjectName> {
+    pack.lock.files.iter().find(|e| e.path == path).and_then(LockEntry::key).and_then(|key| cache.known_name(&key))
+}
+
+pub struct ModrinthFiles {
+    /// Files Modrinth doesn't host that you haven't decided about yet.
+    pub undecided: Vec<String>,
+    /// Ones the Modrinth pack carries, with the author whose permission ships each, when that's why.
+    pub shipped: Vec<(String, Option<String>)>,
+    /// Ones the Modrinth pack leaves out.
+    pub left_out: Vec<String>,
+}
+
+pub fn modrinth_files(pack: &Pack, cache: &MetadataCache) -> Result<ModrinthFiles> {
+    let allowed = globs(&literal_paths(&pack.config.modrinth.allowed_override_jars))?;
+    let excluded = globs(&literal_paths(&pack.config.modrinth.exclude))?;
+    let permitting_author = |path: &str| {
+        let authors = project_of(pack, cache, path).and_then(|p| p.authors.as_ref())?;
+        authors.iter().find(|author| pack.config.modrinth.allowed_authors.iter().any(|allowed| allowed.eq_ignore_ascii_case(author))).cloned()
+    };
+    let mut paths: Vec<String> = pack.lock.files.iter().filter(|e| e.modrinth.is_none() && !e.path.ends_with(".disabled")).map(|e| e.path.clone()).collect();
+    paths.extend(override_files(pack, &[])?.into_iter().filter(|path| is_moderated_override(path)));
+    paths.sort();
+    paths.dedup();
+    let mut files = ModrinthFiles { undecided: Vec::new(), shipped: Vec::new(), left_out: Vec::new() };
+    for path in paths {
+        if excluded.is_match(&path) {
+            files.left_out.push(path);
+        } else if allowed.is_match(&path) {
+            files.shipped.push((path, None));
+        } else if let Some(author) = permitting_author(&path) {
+            files.shipped.push((path, Some(author)));
+        } else {
+            files.undecided.push(path);
+        }
+    }
+    Ok(files)
+}
+
+/// Returns the files Modrinth would get in overrides that you haven't allowed there or left out.
+pub fn not_on_modrinth(pack: &Pack, cache: &MetadataCache) -> Result<Vec<String>> {
+    Ok(modrinth_files(pack, cache)?.undecided)
 }
 
 // The CurseForge app can leave the old jar behind when it can't delete it during an update. Loaders
@@ -151,9 +226,100 @@ pub fn client_export(pack: &Pack, version: &str, out_dir: &Path, log: &Log) -> R
             None => add_file(&mut zip, &name, &pack.dir.join(file), false)?,
         }
     }
+    for entry in only_on_modrinth(pack) {
+        add_file(&mut zip, &format!("overrides/{}", entry.path), &pack.dir.join(&entry.path), false)?;
+    }
     zip.finish()?;
     log.info(format!("Client export: {} CurseForge files, {} override files", files.len(), overrides.len()));
     Ok(path)
+}
+
+pub fn modrinth_export(pack: &Pack, sides: &[ModSide], cache: &MetadataCache, version: &str, out_dir: &Path, log: &Log) -> Result<PathBuf> {
+    if let Some(problem) = duplicate_mods_problem(pack) {
+        bail!(problem);
+    }
+    let blocked = not_on_modrinth(pack, cache)?;
+    if !blocked.is_empty() {
+        bail!("Modrinth won't publish a pack with files it doesn't host unless you have permission to share them: {}. In Changes, ship them on Modrinth or keep them off it.", blocked.join(", "));
+    }
+    let left_out = globs(&literal_paths(&pack.config.modrinth.exclude))?;
+    let side_of: HashMap<&str, Side> = sides.iter().map(|m| (m.path.as_str(), m.side)).collect();
+    let server_excluded = globs(&pack.config.server.exclude)?;
+    let client_only = |path: &str| side_of.get(path) == Some(&Side::Client) || server_excluded.is_match(path);
+    let mut files = Vec::new();
+    let mut from_disk = Vec::new();
+    for entry in pack.lock.files.iter().filter(|e| !e.path.ends_with(".disabled") && !left_out.is_match(&e.path)) {
+        let Some(file) = &entry.modrinth else {
+            from_disk.push(entry.path.as_str());
+            continue;
+        };
+        check_pack_download(&file.url)?;
+        let (client, server) = match (client_only(&entry.path), side_of.get(entry.path.as_str())) {
+            (true, _) => ("required", "unsupported"),
+            (false, Some(Side::Server)) => ("unsupported", "required"),
+            _ => ("required", "required"),
+        };
+        files.push(json!({
+            "path": entry.path,
+            "hashes": { "sha1": file.sha1, "sha512": file.sha512 },
+            "env": { "client": client, "server": server },
+            "downloads": [file.url],
+            "fileSize": file.size,
+        }));
+    }
+    let loader = pack.lock.mod_loader()?;
+    let (loader_key, loader_version) = match loader {
+        ModLoader::NeoForge(version) => ("neoforge", version),
+        ModLoader::Forge(version) => ("forge", version),
+        ModLoader::Fabric(version) => ("fabric-loader", version),
+    };
+    let index = json!({
+        "formatVersion": 1,
+        "game": "minecraft",
+        "versionId": version,
+        "name": pack.name(),
+        "files": files,
+        "dependencies": { "minecraft": pack.lock.minecraft()?, loader_key: loader_version },
+    });
+
+    std::fs::create_dir_all(out_dir)?;
+    let path = out_dir.join(pack.modrinth_pack_name(version));
+    let mut zip = ZipWriter::new(File::create(&path)?);
+    zip.start_file("modrinth.index.json", options())?;
+    zip.write_all(serde_json::to_string_pretty(&index)?.as_bytes())?;
+    let overrides = override_files(pack, &[vec![SERVER_ICON.to_string()], literal_paths(&pack.config.modrinth.exclude)].concat())?;
+    // Modrinth's launchers apply client-overrides only to clients, so these stay off servers the way
+    // they stay out of our server pack.
+    let folder = |path: &str| if client_only(path) { "client-overrides" } else { "overrides" };
+    for file in &overrides {
+        let name = format!("{}/{file}", folder(file));
+        match pack.config.export.properties.get(file) {
+            Some(forced) => {
+                zip.start_file(name, options())?;
+                zip.write_all(force_properties(&std::fs::read_to_string(pack.dir.join(file))?, forced).as_bytes())?;
+            }
+            None => add_file(&mut zip, &name, &pack.dir.join(file), false)?,
+        }
+    }
+    for file in &from_disk {
+        add_file(&mut zip, &format!("{}/{file}", folder(file)), &pack.dir.join(file), false)?;
+    }
+    if git::tracked_files(&pack.dir)?.iter().any(|f| f == SERVER_ICON) {
+        add_file(&mut zip, &format!("server-overrides/{SERVER_ICON}"), &pack.dir.join(SERVER_ICON), false)?;
+    }
+    zip.finish()?;
+    log.info(format!("Modrinth pack: {} Modrinth files, {} override files", files.len(), overrides.len() + from_disk.len()));
+    Ok(path)
+}
+
+// Modrinth refuses a pack whose downloads come from another host, or whose URLs aren't written the
+// way its URL parser writes them back.
+fn check_pack_download(url: &str) -> Result<()> {
+    let parsed = reqwest::Url::parse(url).with_context(|| format!("{url} isn't a valid download URL"))?;
+    if parsed.as_str() != url || parsed.scheme() != "https" || !parsed.host_str().is_some_and(|host| modrinth::PACK_DOWNLOAD_HOSTS.contains(&host)) {
+        bail!("Modrinth won't accept {url} as a download in a modpack");
+    }
+    Ok(())
 }
 
 fn force_properties(text: &str, forced: &BTreeMap<String, String>) -> String {
@@ -497,6 +663,103 @@ fn zip_dir(source: &Path, dest: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn modrinth_file(name: &str) -> crate::pack::ModrinthFile {
+        crate::pack::ModrinthFile {
+            project_id: format!("{name}-project"),
+            version_id: format!("{name}-version"),
+            sha1: format!("{name}-sha1"),
+            sha512: format!("{name}-sha512"),
+            size: 7,
+            url: format!("https://cdn.modrinth.com/data/{name}/versions/1/{name}.jar"),
+        }
+    }
+
+    fn side(path: &str, side: Side) -> ModSide {
+        ModSide { path: path.into(), key: None, name: path.into(), url: None, side, reason: String::new(), r#override: crate::sides::Override::Auto }
+    }
+
+    #[test]
+    fn builds_an_mrpack_that_keeps_client_files_off_servers() {
+        let dir = std::env::temp_dir().join(format!("packraven-mrpack-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in [("mods/own.jar", "own"), ("config/a.toml", "a = 1"), ("options.txt", "fov:1"), ("server-icon.png", "png")] {
+            std::fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
+            std::fs::write(dir.join(path), text).unwrap();
+        }
+        git::run(&dir, &["init", "-q"]).unwrap();
+        git::run(&dir, &["add", "config/a.toml", "options.txt", "server-icon.png"]).unwrap();
+
+        let on_modrinth = |path: &str, name: &str| LockEntry { path: path.into(), sha1: "disk".into(), size: 1, curseforge: None, modrinth: Some(modrinth_file(name)) };
+        let own = LockEntry::curseforge("mods/own.jar".into(), "own".into(), 3, crate::pack::CurseforgeFile { project_id: 1, file_id: 2, url: String::new() });
+        let ftb = LockEntry::curseforge("mods/ftb-library [1.21].jar".into(), "ftb".into(), 3, crate::pack::CurseforgeFile { project_id: 3, file_id: 4, url: String::new() });
+        let files = vec![on_modrinth("mods/sodium.jar", "sodium"), on_modrinth("mods/create.jar", "create"), on_modrinth("resourcepacks/fa.zip", "fa"), own, ftb];
+        let mut pack = Pack { dir: dir.clone(), config: Default::default(), lock: crate::pack::Lockfile { minecraft: Some("1.21.1".into()), loader: crate::pack::Loader::from_curseforge("neoforge-21.1.259"), files } };
+        pack.config.modrinth.allowed_override_jars = vec!["mods/own.jar".into()];
+        pack.config.modrinth.exclude = vec!["mods/ftb-library [1.21].jar".into()];
+        let sides = [side("mods/sodium.jar", Side::Client), side("mods/create.jar", Side::Both), side("mods/own.jar", Side::Both)];
+
+        let path = modrinth_export(&pack, &sides, &MetadataCache::default(), "1.0", &dir.join("out"), &Log::console("test")).unwrap();
+        let mut archive = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+        let mut names: Vec<String> = archive.file_names().map(|n| n.unwrap().into_owned()).collect();
+        names.sort();
+        assert_eq!(names, ["client-overrides/options.txt", "modrinth.index.json", "overrides/config/a.toml", "overrides/mods/own.jar", "server-overrides/server-icon.png"]);
+        let index: serde_json::Value = serde_json::from_reader(archive.by_name("modrinth.index.json").unwrap()).unwrap();
+        assert_eq!(index["dependencies"], json!({ "minecraft": "1.21.1", "neoforge": "21.1.259" }));
+        let env = |path: &str| index["files"].as_array().unwrap().iter().find(|f| f["path"] == path).map(|f| f["env"].clone()).unwrap();
+        assert_eq!(env("mods/sodium.jar"), json!({ "client": "required", "server": "unsupported" }));
+        assert_eq!(env("mods/create.jar"), json!({ "client": "required", "server": "required" }));
+        assert_eq!(env("resourcepacks/fa.zip"), json!({ "client": "required", "server": "unsupported" }), "the server pack leaves resource packs out");
+        let sodium = index["files"].as_array().unwrap().iter().find(|f| f["path"] == "mods/sodium.jar").unwrap();
+        assert_eq!(sodium["hashes"], json!({ "sha1": "sodium-sha1", "sha512": "sodium-sha512" }), "Modrinth's copy, not the jar on disk");
+
+        pack.config.modrinth.allowed_override_jars.clear();
+        let error = modrinth_export(&pack, &sides, &MetadataCache::default(), "1.0", &dir.join("out"), &Log::console("test")).unwrap_err();
+        assert!(error.to_string().contains("mods/own.jar"), "{error}");
+        assert_eq!(not_on_modrinth(&pack, &MetadataCache::default()).unwrap(), ["mods/own.jar"]);
+        assert_eq!(modrinth_files(&pack, &MetadataCache::default()).unwrap().left_out, ["mods/ftb-library [1.21].jar"], "a left-out file never blocks the Modrinth pack");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn recognizes_licenses_that_let_anyone_share() {
+        for open in ["MIT License", "Apache License version 2.0", "GNU Lesser General Public License version 3 (LGPLv3)", "GNU General Public License version 3 (GPLv3)", "Mozilla Public License 2.0 (MPL-2.0)", "BSD 3-Clause", "The Unlicense", "Public Domain"] {
+            assert!(is_open_license(open), "{open}");
+        }
+        for closed in ["All Rights Reserved", "Custom License", "", "Creative Commons Attribution-NonCommercial 4.0"] {
+            assert!(!is_open_license(closed), "{closed}");
+        }
+    }
+
+    #[test]
+    fn ships_every_file_by_an_author_who_gave_permission() {
+        let file = |path: &str, project_id| LockEntry::curseforge(path.into(), String::new(), 0, crate::pack::CurseforgeFile { project_id, file_id: 0, url: String::new() });
+        let dir = std::env::temp_dir().join(format!("packraven-authors-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        git::run(&dir, &["init", "-q"]).unwrap();
+        let mut pack = Pack { dir: dir.clone(), config: Default::default(), lock: crate::pack::Lockfile { minecraft: None, loader: None, files: vec![file("mods/a.jar", 1), file("mods/b.jar", 2)] } };
+        let mut cache = MetadataCache::default();
+        for (id, author) in [(1, "ElocinDev"), (2, "Someone")] {
+            let name = ProjectName { name: format!("Mod {id}"), url: None, authors: Some(vec![author.into()]), logo: None, license: Some(String::new()) };
+            cache.remember(ModKey::Curseforge(id), name);
+        }
+        pack.config.modrinth.allowed_authors = vec!["elocindev".into()];
+        let files = modrinth_files(&pack, &cache).unwrap();
+        assert_eq!(files.shipped, [("mods/a.jar".to_string(), Some("ElocinDev".to_string()))]);
+        assert_eq!(files.undecided, ["mods/b.jar"]);
+        pack.config.modrinth.exclude = vec!["mods/a.jar".into()];
+        assert_eq!(modrinth_files(&pack, &cache).unwrap().left_out, ["mods/a.jar"], "keeping a file off beats its author's permission");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn accepts_only_downloads_modrinth_accepts() {
+        assert!(check_pack_download("https://cdn.modrinth.com/data/AANobbMI/versions/x/sodium.jar").is_ok());
+        assert!(check_pack_download("https://github.com/a/b/releases/download/1/b.jar").is_ok());
+        for refused in ["https://edge.forgecdn.net/files/1/2/a.jar", "https://gitlab.com/a/b.jar", "https://cdn.modrinth.com/data/a b.jar", "http://cdn.modrinth.com/a.jar"] {
+            assert!(check_pack_download(refused).is_err(), "{refused}");
+        }
+    }
 
     #[test]
     fn force_properties_replaces_and_appends() {

@@ -49,6 +49,7 @@ mod setup;
 mod sides;
 mod system_commands;
 mod testrun;
+mod twins;
 mod text_search;
 mod watcher;
 #[cfg(test)]
@@ -211,6 +212,14 @@ pub fn run() {
             mod_commands::remove_mods,
             commands::publish_preflight,
             commands::build_client_export,
+            commands::build_modrinth_export,
+            commands::upload_release_to_modrinth,
+            commands::set_modrinth_choice,
+            commands::modrinth_project_title,
+            commands::look_up_modrinth_candidates,
+            commands::modrinth_choices,
+            commands::set_modrinth_author,
+            commands::published_to,
             commands::build_server_pack,
             commands::start_test,
             commands::start_client,
