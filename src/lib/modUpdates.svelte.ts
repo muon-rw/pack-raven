@@ -9,7 +9,7 @@ export const modUpdates = $state({
   pack: null as string | null,
   channel: 'release' as ReleaseType,
   // We replace the set on each change, since Svelte doesn't track changes inside a Set.
-  locked: new Set<number>(),
+  locked: new Set<string>(),
   checks: null as Map<string, ModCheck> | null,
   checkedAt: 0,
   // Changes you ask for while one runs join that run. We keep each until the run ends, since we
@@ -140,8 +140,12 @@ export function newestOnChannel(check: ModCheck | undefined): ModFile | undefine
   return check?.newer.find((file) => stability[file.releaseType] <= stability[modUpdates.channel])
 }
 
+export function isLocked(key: string | null): boolean {
+  return key !== null && modUpdates.locked.has(key)
+}
+
 export function availableUpdate(check: ModCheck | undefined): ModFile | undefined {
-  return check && modUpdates.locked.has(check.projectId) ? undefined : newestOnChannel(check)
+  return check && isLocked(check.key) ? undefined : newestOnChannel(check)
 }
 
 export function updateCount(pack: string | null): number {

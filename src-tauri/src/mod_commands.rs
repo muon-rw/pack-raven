@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 
 use anyhow::Context;
 use serde::Serialize;
@@ -10,7 +9,7 @@ use crate::history::{self, Action};
 use crate::jobs::Log;
 use crate::mod_updates::{self, AddonKind, Category, InstalledMods, ModCheck, ModFile, ModRequest, SearchPage, SearchRequest};
 use crate::modsync;
-use crate::pack::{Pack, ReleaseType, BCC_PROJECT_ID};
+use crate::pack::{ModKey, Pack, ReleaseType, BCC_PROJECT_ID};
 use crate::sides::MetadataCache;
 
 type CmdResult<T> = Result<T, String>;
@@ -72,7 +71,7 @@ pub struct ModPreview {
 #[tauri::command]
 pub async fn preview_mods(state: State<'_, AppState>, requests: Vec<ModRequest>) -> CmdResult<ModPreview> {
     let plan = mod_updates::plan(&state.pack().map_err(err)?, &requests).await.map_err(err)?;
-    let projects = plan.placements.iter().map(|p| p.entry.project_id).collect();
+    let projects = plan.placements.iter().filter_map(|p| p.entry.curseforge_project()).collect();
     Ok(ModPreview { dependencies: plan.dependencies, unavailable: plan.unavailable, projects })
 }
 
@@ -81,12 +80,13 @@ fn sync_locks(state: &AppState, pack: &mut Pack) -> anyhow::Result<()> {
 }
 
 #[tauri::command(async)]
-pub fn set_mod_locked(state: State<'_, AppState>, project_id: u64, locked: bool) -> CmdResult<()> {
+pub fn set_mod_locked(state: State<'_, AppState>, key: String, locked: bool) -> CmdResult<()> {
+    let key: ModKey = key.parse()?;
     let mut pack = state.pack().map_err(err)?;
     let list = &mut pack.config.updates.locked;
-    list.retain(|id| *id != project_id);
+    list.retain(|k| *k != key);
     if locked {
-        list.push(project_id);
+        list.push(key);
         list.sort_unstable();
     }
     pack.save_config().map_err(err)?;
@@ -154,8 +154,8 @@ pub fn change_mods(app: AppHandle, state: State<'_, AppState>, requests: Vec<Mod
         .iter()
         .filter_map(|r| r.replaces.as_deref())
         .map(|path| {
-            let project = pack.lock.files.iter().find(|e| e.path == path).map(|e| e.project_id);
-            project.and_then(|id| cache.known_name(id)).map_or_else(|| path.rsplit('/').next().unwrap_or(path).to_string(), |n| n.name.clone())
+            let key = pack.lock.files.iter().find(|e| e.path == path).and_then(|e| e.key());
+            key.and_then(|key| cache.known_name(&key)).map_or_else(|| path.rsplit('/').next().unwrap_or(path).to_string(), |n| n.name.clone())
         })
         .collect();
     let dir = pack.dir;
@@ -250,12 +250,12 @@ pub async fn remove_mods(state: State<'_, AppState>, paths: Vec<String>) -> CmdR
 // Overrides and locks name projects, so we drop the ones whose last file you just removed.
 fn forget_removed_projects(root: &std::path::Path) -> anyhow::Result<()> {
     let mut pack = Pack::open(root)?;
-    let present: HashSet<u64> = pack.lock.files.iter().map(|e| e.project_id).collect();
+    let lock = &pack.lock;
     let lists = [&mut pack.config.server.client_only, &mut pack.config.server.keep, &mut pack.config.updates.locked];
     let mut changed = false;
     for list in lists {
         let before = list.len();
-        list.retain(|id| present.contains(id));
+        list.retain(|key| lock.files.iter().any(|e| e.has_key(key)));
         changed |= list.len() != before;
     }
     if changed {

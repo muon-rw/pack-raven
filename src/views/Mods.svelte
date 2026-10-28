@@ -14,7 +14,7 @@
   import { ask } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type InstalledMod, type ModCheck, type ModFile, type ReleaseType, type ModRequest } from '../lib/api'
   import { job, onJobEnd, serverPack } from '../lib/jobs.svelte'
-  import { availableUpdate, browse, cancelChange, cancelMenuLabel, changeFor, changeQueued, downloadingCount, dropChange, modUpdates, newestOnChannel, point, projectKey, queuedButton, startChange } from '../lib/modUpdates.svelte'
+  import { availableUpdate, browse, cancelChange, cancelMenuLabel, changeFor, changeQueued, downloadingCount, dropChange, isLocked, modUpdates, newestOnChannel, point, projectKey, queuedButton, startChange } from '../lib/modUpdates.svelte'
   import { sanitizeRemoteHtml } from '../lib/markdown'
   import type { MenuItem } from '../lib/menu'
   import { commandKey, shortcut, trashName } from '../lib/platform'
@@ -165,12 +165,14 @@
   }
 
   async function setLocked(mod: InstalledMod, lock: boolean) {
+    const key = mod.key
+    if (key === null) return
     actionError = null
     try {
-      await api.setModLocked(mod.projectId, lock)
+      await api.setModLocked(key, lock)
       const locked = new Set(modUpdates.locked)
-      if (lock) locked.add(mod.projectId)
-      else locked.delete(mod.projectId)
+      if (lock) locked.add(key)
+      else locked.delete(key)
       modUpdates.locked = locked
     } catch (error) {
       actionError = `Couldn't ${lock ? 'lock' : 'unlock'} ${mod.name}: ${errorText(error)}`
@@ -250,7 +252,7 @@
   }
 
   async function setManyLocked(targets: InstalledMod[], lock: boolean) {
-    for (const mod of targets.filter((m) => modUpdates.locked.has(m.projectId) !== lock)) await setLocked(mod, lock)
+    for (const mod of targets.filter((m) => isLocked(m.key) !== lock)) await setLocked(mod, lock)
   }
 
   function pendingFor(targets: InstalledMod[]): PendingUpdate[] {
@@ -381,7 +383,7 @@
     const row = event.currentTarget as HTMLElement
     const rect = row.getBoundingClientRect()
     const keyboard = !event.clientX && !event.clientY
-    const lockedHere = modUpdates.locked.has(mod.projectId)
+    const lockedHere = isLocked(mod.key)
     const disabled = mod.path.endsWith('.disabled')
     const change = changeFor(mod.path)
     menu = {
@@ -465,7 +467,7 @@
   // Locked mods with a newer file sit between the ones you can update and the ones with nothing new.
   function updateTier(mod: InstalledMod) {
     if (updates.has(mod.path)) return 0
-    return modUpdates.locked.has(mod.projectId) && newestOnChannel(checkFor(mod)) ? 1 : 2
+    return isLocked(mod.key) && newestOnChannel(checkFor(mod)) ? 1 : 2
   }
 
   // Each column sorts the interesting rows first: updates, locked or disabled mods, and A to Z.
@@ -476,7 +478,7 @@
       case 'update':
         return updateTier(a) - updateTier(b) || byName
       case 'locked':
-        return flag((m) => modUpdates.locked.has(m.projectId))
+        return flag((m) => isLocked(m.key))
       case 'enabled':
         return flag((m) => m.path.endsWith('.disabled'))
       case 'author':
@@ -730,8 +732,8 @@
           <Tip tip={whyNoChange}>
             {#snippet children(why)}<button onclick={() => !whyNoChange && setEnabled(selectedMods, false)} disabled={selectedMods.every((m) => m.path.endsWith('.disabled'))} aria-disabled={!!whyNoChange} aria-describedby={why}>Disable</button>{/snippet}
           </Tip>
-          <button onclick={() => setManyLocked(selectedMods, true)} disabled={selectedMods.every((m) => modUpdates.locked.has(m.projectId))}>Lock</button>
-          <button onclick={() => setManyLocked(selectedMods, false)} disabled={!selectedMods.some((m) => modUpdates.locked.has(m.projectId))}>Unlock</button>
+          <button onclick={() => setManyLocked(selectedMods, true)} disabled={selectedMods.every((m) => isLocked(m.key))}>Lock</button>
+          <button onclick={() => setManyLocked(selectedMods, false)} disabled={!selectedMods.some((m) => isLocked(m.key))}>Unlock</button>
           <Tip tip={pending.length ? whyNoUpdate : null}>
             {#snippet children(why)}<button onclick={() => !whyNoUpdate && (reviewing = pending)} disabled={!pending.length} aria-disabled={!!whyNoUpdate} aria-describedby={why}>{pending.length ? `Update (${pending.length})` : 'Update'}</button>{/snippet}
           </Tip>
@@ -776,7 +778,7 @@
               {#each visible as mod (`${mod.projectId}:${mod.fileId}`)}
                 {@const status = checkFor(mod)}
                 {@const next = updates.get(mod.path)}
-                {@const lockedHere = modUpdates.locked.has(mod.projectId)}
+                {@const lockedHere = isLocked(mod.key)}
                 {@const held = newestOnChannel(status)}
                 {@const disabled = mod.path.endsWith('.disabled')}
                 {@const whyNoToggle = disabled ? whyNoEnable : whyNoChange}

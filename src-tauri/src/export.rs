@@ -16,7 +16,7 @@ use crate::git;
 use crate::http;
 use crate::jobs::Log;
 use crate::mirror::{mirror, FilePlan, Planned};
-use crate::pack::{LockEntry, ModLoader, Pack, SERVER_ICON};
+use crate::pack::{LockEntry, ModKey, ModLoader, Pack, SERVER_ICON};
 use crate::sides::{ModSide, Side};
 
 const NEOFORGE_MAVEN: &str = "https://maven.neoforged.net/releases/net/neoforged/neoforge";
@@ -54,13 +54,16 @@ pub fn unallowed_override_jars(pack: &Pack) -> Result<Vec<String>> {
         .collect())
 }
 
-// The CurseForge app can leave the old jar behind when it can't delete it during an update, and
-// Minecraft won't start with two versions of a mod. Packs can hold several variants of one resource
+// The CurseForge app can leave the old jar behind when it can't delete it during an update. Loaders
+// try to load only the newest of two versions, but sometimes pick the wrong one, and the platforms
+// reject a manifest that lists one project twice. Packs can hold several variants of one resource
 // pack, so we only check mods.
 pub fn duplicate_mods(pack: &Pack) -> Vec<Vec<String>> {
-    let mut by_project: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+    let mut by_project: BTreeMap<ModKey, Vec<String>> = BTreeMap::new();
     for entry in pack.lock.files.iter().filter(|e| e.path.starts_with("mods/") && !e.path.ends_with(".disabled")) {
-        by_project.entry(entry.project_id).or_default().push(entry.path.trim_start_matches("mods/").to_string());
+        if let Some(key) = entry.key() {
+            by_project.entry(key).or_default().push(entry.path.trim_start_matches("mods/").to_string());
+        }
     }
     by_project.into_values().filter(|paths| paths.len() > 1).collect()
 }
@@ -107,7 +110,8 @@ pub fn client_export(pack: &Pack, version: &str, out_dir: &Path, log: &Log) -> R
         .files
         .iter()
         .filter(|e| !e.path.ends_with(".disabled"))
-        .map(|e| json!({ "projectID": e.project_id, "fileID": e.file_id, "required": true, "isLocked": pack.config.updates.locked.contains(&e.project_id) }))
+        .filter_map(|e| Some((e, e.curseforge.as_ref()?)))
+        .map(|(e, f)| json!({ "projectID": f.project_id, "fileID": f.file_id, "required": true, "isLocked": pack.config.updates.locked.iter().any(|key| e.has_key(key)) }))
         .collect();
     let manifest = json!({
         "minecraft": {
@@ -174,7 +178,8 @@ fn force_properties(text: &str, forced: &BTreeMap<String, String>) -> String {
 pub async fn ensure_cached(pack: &Pack, entry: &LockEntry) -> Result<PathBuf> {
     let path = pack.cache_dir()?.join(&entry.sha1);
     if !path.exists() {
-        http::download(&entry.url, &path, Some(&entry.sha1)).await?;
+        let url = entry.download_url().with_context(|| format!("packraven has no download for {}", entry.path))?;
+        http::download(url, &path, Some(&entry.sha1)).await?;
     }
     Ok(path)
 }
@@ -520,7 +525,7 @@ mod tests {
     }
 
     fn loader_pack(minecraft: &str, loader: &str) -> Pack {
-        Pack { dir: PathBuf::new(), config: Default::default(), lock: crate::pack::Lockfile { minecraft: Some(minecraft.into()), loader: Some(loader.into()), files: Vec::new() } }
+        Pack { dir: PathBuf::new(), config: Default::default(), lock: crate::pack::Lockfile { minecraft: Some(minecraft.into()), loader: crate::pack::Loader::from_curseforge(loader), files: Vec::new() } }
     }
 
     #[test]
@@ -542,7 +547,7 @@ mod tests {
 
     #[test]
     fn finds_two_enabled_versions_of_one_mod() {
-        let entry = |path: &str, project_id| crate::pack::LockEntry { path: path.into(), project_id, file_id: 0, sha1: String::new(), size: 0, url: String::new() };
+        let entry = |path: &str, project_id| LockEntry::curseforge(path.into(), String::new(), 0, crate::pack::CurseforgeFile { project_id, file_id: 0, url: String::new() });
         let files = vec![
             entry("mods/sodium-0.6.14.jar", 1),
             entry("mods/sodium-0.6.15.jar", 1),

@@ -93,7 +93,7 @@ const config = {
   },
   test: { port: 25565, client_memory: '8G' },
   discord: { role_id: '112233445566778899', color: '#4d6b2f', announce_on_approval: true, title: '{project_name} - v{version}', show_author: true, header: '', footer: '[Install]({file_url})' },
-  updates: { channel: 'alpha', locked: [] as number[] },
+  updates: { channel: 'alpha', locked: [] as string[] },
 }
 
 const releases = scenario === 'empty' ? [] : [
@@ -129,10 +129,10 @@ const serverSides =
   scenario === 'empty'
     ? []
     : [
-        { path: 'mods/sodium-neoforge-0.6.15.jar', projectId: 394468, name: 'Sodium', url: 'https://www.curseforge.com/minecraft/mc-mods/sodium', side: 'client', reason: 'Modrinth lists it as client-only', override: 'auto' },
-        { path: 'mods/iris-neoforge-1.8.1.jar', projectId: 455508, name: 'Iris Shaders', url: 'https://www.curseforge.com/minecraft/mc-mods/irisshaders', side: 'client', reason: 'Modrinth lists it as client-only', override: 'auto' },
-        { path: 'mods/shouldersurfing-neoforge-4.5.0.jar', projectId: 243190, name: 'Shoulder Surfing Reloaded', url: null, side: 'both', reason: 'CurseForge lists it for both sides', override: 'client' },
-        { path: 'mods/Apotheosis-1.21.1-8.1.2.jar', projectId: 313970, name: 'Apotheosis', url: null, side: 'both', reason: 'CurseForge lists it for both sides', override: 'auto' },
+        { path: 'mods/sodium-neoforge-0.6.15.jar', key: 'cf:394468', name: 'Sodium', url: 'https://www.curseforge.com/minecraft/mc-mods/sodium', side: 'client', reason: 'Modrinth lists it as client-only', override: 'auto' },
+        { path: 'mods/iris-neoforge-1.8.1.jar', key: 'cf:455508', name: 'Iris Shaders', url: 'https://www.curseforge.com/minecraft/mc-mods/irisshaders', side: 'client', reason: 'Modrinth lists it as client-only', override: 'auto' },
+        { path: 'mods/shouldersurfing-neoforge-4.5.0.jar', key: 'cf:243190', name: 'Shoulder Surfing Reloaded', url: null, side: 'both', reason: 'CurseForge lists it for both sides', override: 'client' },
+        { path: 'mods/Apotheosis-1.21.1-8.1.2.jar', key: 'cf:313970', name: 'Apotheosis', url: null, side: 'both', reason: 'CurseForge lists it for both sides', override: 'auto' },
       ]
 
 // A logo drawn inline, so the view never waits on CurseForge's image CDN.
@@ -1021,7 +1021,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   discover_instances: () => [pack, { ...pack, dir: 'C:/Instances/Shared Pack', name: 'Shared Pack', addonCount: 0, hasGit: false, hasLock: false, remote: null, added: false }],
   server_sides: () => serverSides,
   installed_mods: () => ({
-    mods: installedMods.map(({ path, projectId, fileId, name, url, logo }) => ({ path, projectId, fileId, name, url, logo, authors: authorsOf[projectId] ?? [] })),
+    mods: installedMods.map(({ path, projectId, fileId, name, url, logo }) => ({ path, key: `cf:${projectId}`, projectId, fileId, name, url, logo, authors: authorsOf[projectId] ?? [] })),
     locked: config.updates.locked,
   }),
   set_mods_enabled: (a) =>
@@ -1055,7 +1055,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
       ),
     ),
   check_mod_updates: () =>
-    new Promise((resolve) => setTimeout(() => resolve(installedMods.map(({ path, projectId, logo, releaseType, requires, newer }) => ({ path, projectId, logo, releaseType, requires, newer }))), 400)),
+    new Promise((resolve) => setTimeout(() => resolve(installedMods.map(({ path, projectId, logo, releaseType, requires, newer }) => ({ path, key: `cf:${projectId}`, projectId, logo, releaseType, requires, newer }))), 400)),
   mod_versions: (a) => {
     const mod = installedMods.find((m) => m.path === a.path)!
     const base = mod.path.slice(mod.path.indexOf('/') + 1).replace(/\.disabled$/, '')
@@ -1066,8 +1066,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   },
   set_update_channel: (a) => (config.updates.channel = String(a.channel)),
   set_mod_locked: (a) => {
-    config.updates.locked = config.updates.locked.filter((id) => id !== a.projectId)
-    if (a.locked) config.updates.locked.push(Number(a.projectId))
+    config.updates.locked = config.updates.locked.filter((key) => key !== a.key)
+    if (a.locked) config.updates.locked.push(String(a.key))
   },
   set_version: (a) => {
     const problem = versionProblem(String(a.version))

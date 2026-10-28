@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde_json::Value;
 
+use crate::instance::Instance;
 use crate::pack::Pack;
 use crate::settings::Settings;
 
@@ -160,11 +161,7 @@ pub fn app_java(settings: &Settings) -> Result<PathBuf> {
 }
 
 pub fn required_java(settings: &Settings) -> (String, u32) {
-    let minecraft = std::fs::read_to_string(settings.instance_dir.join("minecraftinstance.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .and_then(|instance| instance.get("gameVersion").and_then(Value::as_str).map(String::from))
-        .unwrap_or_default();
+    let minecraft = Instance::read(&settings.instance_dir).ok().and_then(|i| i.minecraft).unwrap_or_default();
     let declared = read_version(&settings.install_dir, &minecraft).ok().and_then(|version| {
         let java = version.get("javaVersion")?;
         Some((java.get("component")?.as_str()?.to_string(), u32::try_from(java.get("majorVersion")?.as_u64()?).ok()?))
@@ -207,7 +204,7 @@ mod tests {
 
 pub fn client(settings: &Settings, pack: &Pack, player: &Player, server: Option<&str>, natives_dir: &Path) -> Result<ClientLaunch> {
     let install = &settings.install_dir;
-    let id = pack.lock.loader()?.to_string();
+    let id = Instance::read(&settings.instance_dir)?.version_id.context("this profile has no mod loader; choose one in the CurseForge app")?;
     let child = read_version(install, &id)?;
     let parent_id = child.get("inheritsFrom").and_then(Value::as_str).unwrap_or(&id).to_string();
     let parent = if parent_id == id { child.clone() } else { read_version(install, &parent_id)? };

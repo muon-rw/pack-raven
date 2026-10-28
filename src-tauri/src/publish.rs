@@ -15,17 +15,65 @@ use crate::sides::{self, MetadataCache};
 use crate::modsync;
 
 #[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", from = "StoredRelease")]
 pub struct Release {
     pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub curseforge: Option<CurseforgeRelease>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modrinth: Option<ModrinthRelease>,
+    pub published_at: String,
+    pub announce: bool,
+    pub announced_at: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CurseforgeRelease {
     pub project_id: u64,
     pub file_id: u64,
     pub server_file_id: u64,
-    pub published_at: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ModrinthRelease {
+    pub project_id: String,
+    pub version_id: String,
+}
+
+// packraven 0.2.1 and earlier only published to CurseForge, and kept its IDs at the top level.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredRelease {
+    version: String,
+    curseforge: Option<CurseforgeRelease>,
+    modrinth: Option<ModrinthRelease>,
+    project_id: Option<u64>,
+    file_id: Option<u64>,
+    server_file_id: Option<u64>,
+    published_at: String,
     #[serde(default)]
-    pub announce: bool,
+    announce: bool,
     #[serde(default)]
-    pub announced_at: Option<String>,
+    announced_at: Option<String>,
+}
+
+impl From<StoredRelease> for Release {
+    fn from(stored: StoredRelease) -> Self {
+        let legacy = match (stored.project_id, stored.file_id) {
+            (Some(project_id), Some(file_id)) => Some(CurseforgeRelease { project_id, file_id, server_file_id: stored.server_file_id.unwrap_or_default() }),
+            _ => None,
+        };
+        Self {
+            version: stored.version,
+            curseforge: stored.curseforge.or(legacy),
+            modrinth: stored.modrinth,
+            published_at: stored.published_at,
+            announce: stored.announce,
+            announced_at: stored.announced_at,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -218,7 +266,8 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
 
     let releases_path = pack_data.join("releases.json");
     let mut releases = load_releases(&releases_path);
-    releases.push(Release { version: version.clone(), project_id, file_id, server_file_id, published_at: chrono::Utc::now().to_rfc3339(), announce, announced_at: None });
+    let curseforge = Some(CurseforgeRelease { project_id, file_id, server_file_id });
+    releases.push(Release { version: version.clone(), curseforge, modrinth: None, published_at: chrono::Utc::now().to_rfc3339(), announce, announced_at: None });
     save_releases(&releases_path, &releases)?;
 
     let archive = pack.dir.join(CHANGELOG_ARCHIVE);
@@ -247,7 +296,7 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{upload_names, UploadNames};
+    use super::{load_releases, upload_names, UploadNames};
 
     fn names(display_name: &str, file_name: &str) -> UploadNames {
         UploadNames { display_name: display_name.into(), file_name: file_name.into() }
@@ -271,6 +320,17 @@ mod tests {
     fn upload_names_trim_overrides_and_add_zip_to_file_names() {
         assert_eq!(resolve(names(" My Pack ", " my-pack ")).unwrap(), names("My Pack", "my-pack.zip"));
         assert_eq!(resolve(names("", "pack.ZIP")).unwrap(), names("Pack 1.0", "pack.ZIP"));
+    }
+
+    #[test]
+    fn reads_releases_from_before_modrinth() {
+        let path = std::env::temp_dir().join(format!("packraven-releases-{}.json", std::process::id()));
+        std::fs::write(&path, r#"[{"version": "1.0", "projectId": 5, "fileId": 6, "serverFileId": 7, "publishedAt": "2026-10-01T00:00:00Z"}]"#).unwrap();
+        let releases = load_releases(&path);
+        std::fs::remove_file(&path).unwrap();
+        let curseforge = releases[0].curseforge.as_ref().unwrap();
+        assert_eq!((curseforge.project_id, curseforge.file_id, curseforge.server_file_id), (5, 6, 7));
+        assert!(releases[0].modrinth.is_none() && !releases[0].announce);
     }
 
     #[test]

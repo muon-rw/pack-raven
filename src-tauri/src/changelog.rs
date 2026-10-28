@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::curseforge;
 use crate::git;
-use crate::pack::{LockEntry, Lockfile, Pack, CHANGELOG, LOCKFILE};
-use crate::sides::MetadataCache;
+use crate::pack::{CurseforgeFile, LockEntry, Lockfile, ModKey, Pack, CHANGELOG, LOCKFILE};
+use crate::sides::{MetadataCache, ProjectName};
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -76,7 +76,7 @@ pub fn baseline_from_zip(zip: &Path) -> Result<Baseline> {
     let files = manifest
         .files
         .into_iter()
-        .map(|f| LockEntry { path: String::new(), project_id: f.project_id, file_id: f.file_id, sha1: String::new(), size: 0, url: String::new() })
+        .map(|f| LockEntry::curseforge(String::new(), String::new(), 0, CurseforgeFile { project_id: f.project_id, file_id: f.file_id, url: String::new() }))
         .collect();
     Ok(Baseline { label, lock: Lockfile { files, ..Default::default() } })
 }
@@ -100,8 +100,8 @@ fn load_baseline(path: &Path) -> Option<Baseline> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
-fn by_project(lock: &Lockfile) -> BTreeMap<u64, &LockEntry> {
-    lock.files.iter().map(|e| (e.project_id, e)).collect()
+fn by_project(lock: &Lockfile) -> BTreeMap<ModKey, &LockEntry> {
+    lock.files.iter().filter_map(|e| Some((e.key()?, e))).collect()
 }
 
 pub async fn mod_diff(pack: &Pack, current: &Lockfile, cache: &mut MetadataCache, baseline_path: &Path) -> Result<ModDiff> {
@@ -118,12 +118,13 @@ pub async fn mod_diff(pack: &Pack, current: &Lockfile, cache: &mut MetadataCache
     let old = by_project(&previous);
     let new = by_project(current);
     let listed = by_project(&pack.lock);
-    let ids: Vec<u64> = old.keys().chain(new.keys()).copied().collect();
-    cache.ensure_names(&ids).await?;
+    let keys: Vec<ModKey> = old.keys().chain(new.keys()).cloned().collect();
+    cache.ensure_names(&keys).await?;
     let changed_files: Vec<u64> = new
         .iter()
-        .filter_map(|(id, e)| old.get(id).filter(|o| o.file_id != e.file_id).map(|o| [o.file_id, e.file_id]))
+        .filter_map(|(key, e)| old.get(key).filter(|o| !o.same_file(e)).map(|o| [o, *e]))
         .flatten()
+        .filter_map(|e| e.curseforge.as_ref().map(|f| f.file_id))
         .collect();
     let file_names: HashMap<u64, String> = if changed_files.is_empty() {
         HashMap::new()
@@ -131,23 +132,23 @@ pub async fn mod_diff(pack: &Pack, current: &Lockfile, cache: &mut MetadataCache
         curseforge::files(&changed_files).await?.into_iter().map(|(id, f)| (id, f.display_name)).collect()
     };
     let display = |entry: &LockEntry| {
-        file_names.get(&entry.file_id).cloned().unwrap_or_else(|| entry.path.rsplit('/').next().unwrap_or_default().to_string())
+        entry.curseforge.as_ref().and_then(|f| file_names.get(&f.file_id)).cloned().unwrap_or_else(|| ProjectName::of_file(&entry.path).name)
     };
-    let change = |id: u64, from: Option<String>, to: Option<String>, in_mod_list: bool| {
-        let name = cache.name(id);
+    let change = |key: &ModKey, from: Option<String>, to: Option<String>, in_mod_list: bool| {
+        let name = cache.name(key);
         ModChange { name: name.name, url: name.url, from, to, in_mod_list }
     };
     let mut diff = ModDiff { since: Some(since), baseline: is_baseline, ..Default::default() };
-    for (id, entry) in &new {
-        let in_mod_list = listed.get(id).is_some_and(|l| l.file_id == entry.file_id);
-        match old.get(id) {
-            None => diff.added.push(change(*id, None, None, in_mod_list)),
-            Some(previous) if previous.file_id != entry.file_id => diff.updated.push(change(*id, Some(display(previous)), Some(display(entry)), in_mod_list)),
+    for (key, entry) in &new {
+        let in_mod_list = listed.get(key).is_some_and(|l| l.same_file(entry));
+        match old.get(key) {
+            None => diff.added.push(change(key, None, None, in_mod_list)),
+            Some(previous) if !previous.same_file(entry) => diff.updated.push(change(key, Some(display(previous)), Some(display(entry)), in_mod_list)),
             Some(_) => {}
         }
     }
-    for id in old.keys().filter(|id| !new.contains_key(id)) {
-        diff.removed.push(change(*id, None, None, !listed.contains_key(id)));
+    for key in old.keys().filter(|key| !new.contains_key(key)) {
+        diff.removed.push(change(key, None, None, !listed.contains_key(key)));
     }
     for list in [&mut diff.added, &mut diff.updated, &mut diff.removed] {
         list.sort_by_key(|c| c.name.to_lowercase());
@@ -204,7 +205,6 @@ mod tests {
         let baseline = baseline_from_zip(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
         assert_eq!(baseline.label, "Pack 1.2.0");
-        assert_eq!(baseline.lock.files[0].project_id, 10);
-        assert_eq!(baseline.lock.files[0].file_id, 20);
+        assert_eq!(baseline.lock.files[0].curseforge, Some(CurseforgeFile { project_id: 10, file_id: 20, url: String::new() }));
     }
 }

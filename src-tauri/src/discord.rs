@@ -134,17 +134,20 @@ pub async fn discohook_link(message: &Value) -> Result<String> {
 }
 
 pub async fn is_approved(release: &Release) -> bool {
-    matches!(curseforge::file(release.project_id, release.file_id).await, Ok(Some(file)) if APPROVED_STATUSES.contains(&file.file_status))
+    // Modrinth lists a version as soon as we upload it, so only CurseForge's review can hold an announcement back.
+    let Some(published) = &release.curseforge else { return true };
+    matches!(curseforge::file(published.project_id, published.file_id).await, Ok(Some(file)) if APPROVED_STATUSES.contains(&file.file_status))
 }
 
 pub async fn announcement(pack: &Pack, release: &Release) -> Announcement {
     let changelog = std::fs::read_to_string(pack.dir.join(CHANGELOG_ARCHIVE).join(format!("{}.md", release.version))).unwrap_or_default();
-    let project = project(release.project_id, &pack.config.author).await;
+    let published = release.curseforge.as_ref();
+    let project = project(published.map_or(0, |p| p.project_id), &pack.config.author).await;
     Announcement {
         name: pack.name(),
         version: release.version.clone(),
         changelog,
-        file_url: format!("{}/files/{}", project.url, release.file_id),
+        file_url: published.map_or_else(|| project.url.clone(), |p| format!("{}/files/{}", project.url, p.file_id)),
         project,
         game: game(pack),
     }
@@ -170,7 +173,7 @@ pub async fn project(project_id: u64, preferred_author: &str) -> Project {
 }
 
 pub fn game(pack: &Pack) -> String {
-    format!("Minecraft {}, {}", pack.lock.minecraft.as_deref().unwrap_or("?"), pack.lock.loader.as_deref().unwrap_or("?"))
+    format!("Minecraft {}, {}", pack.lock.minecraft.as_deref().unwrap_or("?"), pack.lock.loader.as_ref().map_or_else(|| "?".into(), ToString::to_string))
 }
 
 pub async fn announce(pack_dir: &Path, releases_path: &Path, version: &str, webhook: &str) -> Result<()> {

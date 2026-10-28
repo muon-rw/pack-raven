@@ -3,23 +3,22 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use futures_util::{stream, StreamExt};
 use regex::Regex;
 use serde::Serialize;
-use serde_json::Value;
 use sha1::{Digest, Sha1};
 
 use crate::curseforge;
 use crate::git;
 use crate::http;
 use crate::jobs::Log;
-use crate::pack::{LockEntry, Lockfile, LOCKFILE, LOCK_FORMAT};
+use crate::instance::{self, Instance};
+use crate::pack::{CurseforgeFile, LockEntry, Lockfile, ModKey, LOCKFILE, LOCK_FORMAT};
 
 const FOLDERS: [&str; 4] = ["mods", "resourcepacks", "shaderpacks", "datapacks"];
 const EXTENSIONS: [&str; 3] = [".jar", ".zip", ".disabled"];
 const LOCAL_BUILD_SUFFIX: &str = "-dev.jar";
-const INSTANCE_JSON: &str = "minecraftinstance.json";
 const CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 86400);
 const NOT_ON_CURSEFORGE_RECHECK: Duration = Duration::from_secs(86400);
 // A jar you haven't committed may be one you just uploaded, and CurseForge takes 5 to 10 minutes to
@@ -27,8 +26,6 @@ const NOT_ON_CURSEFORGE_RECHECK: Duration = Duration::from_secs(86400);
 const UNCOMMITTED_RECHECK: Duration = Duration::from_secs(60);
 const PARALLEL_DOWNLOADS: usize = 6;
 const DOWNLOAD_ATTEMPTS: usize = 3;
-
-type FileSource = (u64, u64, String);
 
 pub fn is_binary(relative: &str) -> bool {
     FOLDERS.iter().any(|folder| {
@@ -39,7 +36,7 @@ pub fn is_binary(relative: &str) -> bool {
 // Mods write their own files into subfolders of mods/ while the game runs, and the mod list only
 // records the folders' top-level files, so only those trigger a refresh.
 pub fn affects_mod_list(relative: &str) -> bool {
-    relative == INSTANCE_JSON || is_binary(relative)
+    instance::is_metadata_file(relative) || is_binary(relative)
 }
 
 pub fn managed_files(root: &Path) -> Result<Vec<String>> {
@@ -131,10 +128,11 @@ impl Repo {
 fn render_lock(lock: &mut Lockfile) -> Result<String> {
     lock.files.sort_by_key(|e| e.path.to_lowercase());
     let mut text = format!("{{\n  \"formatVersion\": {LOCK_FORMAT},\n");
-    for (key, value) in [("minecraft", &lock.minecraft), ("loader", &lock.loader)] {
-        if let Some(value) = value.as_deref().filter(|v| !v.is_empty()) {
-            text += &format!("  \"{key}\": {},\n", serde_json::to_string(value)?);
-        }
+    if let Some(minecraft) = lock.minecraft.as_deref().filter(|v| !v.is_empty()) {
+        text += &format!("  \"minecraft\": {},\n", serde_json::to_string(minecraft)?);
+    }
+    if let Some(loader) = &lock.loader {
+        text += &format!("  \"loader\": {},\n", spaced_json(loader)?);
     }
     text += "  \"files\": [\n";
     for (i, entry) in lock.files.iter().enumerate() {
@@ -323,36 +321,7 @@ pub fn cdn_url(file_id: u64, file_name: &str) -> String {
     format!("https://edge.forgecdn.net/files/{}/{}/{encoded}", file_id / 1000, file_id % 1000)
 }
 
-struct Instance {
-    by_sha1: HashMap<String, FileSource>,
-    minecraft: Option<String>,
-    loader: Option<String>,
-}
-
-fn read_instance(root: &Path) -> Instance {
-    let instance: Value = std::fs::read_to_string(root.join(INSTANCE_JSON))
-        .ok()
-        .and_then(|t| serde_json::from_str(t.trim_start_matches('\u{feff}')).ok())
-        .unwrap_or_default();
-    let mut by_sha1 = HashMap::new();
-    for addon in instance["installedAddons"].as_array().into_iter().flatten() {
-        let installed = &addon["installedFile"];
-        let sha1 = installed["hashes"].as_array().into_iter().flatten().find(|h| h["type"] == 1).and_then(|h| h["value"].as_str());
-        let (Some(sha1), Some(project_id), Some(file_id)) = (sha1, addon["addonID"].as_u64(), installed["id"].as_u64()) else { continue };
-        let url = match installed["downloadUrl"].as_str().filter(|u| !u.is_empty()) {
-            Some(url) => url.to_string(),
-            None => cdn_url(file_id, installed["fileName"].as_str().unwrap_or_default()),
-        };
-        by_sha1.insert(sha1.to_string(), (project_id, file_id, url));
-    }
-    Instance {
-        by_sha1,
-        minecraft: instance["gameVersion"].as_str().map(String::from),
-        loader: instance.pointer("/baseModLoader/name").and_then(Value::as_str).map(String::from),
-    }
-}
-
-async fn resolve_by_fingerprint(root: &Path, paths: &[String]) -> Result<HashMap<String, FileSource>> {
+async fn resolve_by_fingerprint(root: &Path, paths: &[String]) -> Result<HashMap<String, CurseforgeFile>> {
     let mut by_fingerprint = HashMap::new();
     for path in paths {
         by_fingerprint.insert(cf_fingerprint(&std::fs::read(root.join(path))?), path.clone());
@@ -362,10 +331,14 @@ async fn resolve_by_fingerprint(root: &Path, paths: &[String]) -> Result<HashMap
     for found in curseforge::fingerprint_matches(&fingerprints).await? {
         if let Some(path) = by_fingerprint.get(&found.file.file_fingerprint) {
             let url = found.file.download_url.unwrap_or_else(|| cdn_url(found.file.id, &found.file.file_name));
-            resolved.insert(path.clone(), (found.id, found.file.id, url));
+            resolved.insert(path.clone(), CurseforgeFile { project_id: found.id, file_id: found.file.id, url });
         }
     }
     Ok(resolved)
+}
+
+fn sources(curseforge: Option<CurseforgeFile>) -> LockEntry {
+    LockEntry { path: String::new(), sha1: String::new(), size: 0, curseforge, modrinth: None }
 }
 
 struct BuiltLock {
@@ -388,9 +361,15 @@ async fn build_lock(repo: &Repo, lookup: Lookup) -> Result<BuiltLock> {
     let mut hashes = HashCache::load(repo);
     let mut not_on_curseforge = NotOnCurseforge::load(repo);
     let old = repo.read_lock()?;
-    let instance = read_instance(&repo.root);
-    let mut known: HashMap<String, FileSource> = old.files.iter().map(|e| (e.sha1.clone(), (e.project_id, e.file_id, e.url.clone()))).collect();
-    known.extend(instance.by_sha1);
+    let (minecraft, loader, installed) = match Instance::read(&repo.root) {
+        Ok(instance) => (instance.minecraft, instance.loader, instance.sources_by_sha1),
+        Err(_) => (None, None, HashMap::new()),
+    };
+    // We keep every source the old list recorded for a file, so a refresh never forgets one.
+    let mut known: HashMap<String, LockEntry> = old.files.iter().map(|e| (e.sha1.clone(), e.clone())).collect();
+    for (sha1, file) in installed {
+        known.entry(sha1).or_insert_with(|| sources(None)).curseforge = Some(file);
+    }
 
     let binaries = binary_files(&repo.root)?;
     let mut files = Vec::new();
@@ -437,7 +416,7 @@ async fn build_lock(repo: &Repo, lookup: Lookup) -> Result<BuiltLock> {
         Some(mut resolved) => {
             for path in lookup {
                 let sha1 = hashes.sha1(&repo.root, &path)?;
-                let Some(source) = resolved.remove(&path) else {
+                let Some(file) = resolved.remove(&path) else {
                     not_on_curseforge.insert(sha1);
                     if unknown_unchecked.contains(&path) {
                         unknown.push(path);
@@ -447,7 +426,7 @@ async fn build_lock(repo: &Repo, lookup: Lookup) -> Result<BuiltLock> {
                 if committed_unchecked.contains(&path) {
                     now_on_curseforge.push(path.clone());
                 }
-                files.push((path, sha1, source));
+                files.push((path, sha1, sources(Some(file))));
             }
         }
         None => unknown.extend(unknown_unchecked),
@@ -456,11 +435,11 @@ async fn build_lock(repo: &Repo, lookup: Lookup) -> Result<BuiltLock> {
     not_on_curseforge.save()?;
 
     let mut entries = Vec::new();
-    for (path, sha1, (project_id, file_id, url)) in files {
+    for (path, sha1, source) in files {
         let size = std::fs::metadata(repo.root.join(&path))?.len();
-        entries.push(LockEntry { path, project_id, file_id, sha1, size, url });
+        entries.push(LockEntry { path, sha1, size, ..source });
     }
-    let lock = Lockfile { minecraft: instance.minecraft.or(old.minecraft), loader: instance.loader.or(old.loader), files: entries };
+    let lock = Lockfile { minecraft: minecraft.or(old.minecraft), loader: loader.or(old.loader), files: entries };
     unknown.sort();
     now_on_curseforge.sort();
     Ok(BuiltLock { lock, unknown, now_on_curseforge })
@@ -587,11 +566,11 @@ pub struct ModConflict {
     pub theirs: Option<String>,
 }
 
-// We match entries by CurseForge project, so updating a mod on one side and leaving it alone on the
-// other merges cleanly even though the path changed. Packs can hold several files of one project
-// (resource pack variants, say), and those we match by path instead.
+// We match entries by project, so updating a mod on one side and leaving it alone on the other merges
+// cleanly even though the path changed. Packs can hold several files of one project (resource pack
+// variants, say), and those we match by path instead.
 struct MergeKeys {
-    by_path: HashSet<u64>,
+    by_path: HashSet<ModKey>,
 }
 
 impl MergeKeys {
@@ -599,9 +578,9 @@ impl MergeKeys {
         let mut by_path = HashSet::new();
         for lock in locks {
             let mut seen = HashSet::new();
-            for entry in &lock.files {
-                if entry.project_id == 0 || !seen.insert(entry.project_id) {
-                    by_path.insert(entry.project_id);
+            for key in lock.files.iter().filter_map(LockEntry::key) {
+                if !seen.insert(key.clone()) {
+                    by_path.insert(key);
                 }
             }
         }
@@ -609,7 +588,10 @@ impl MergeKeys {
     }
 
     fn key(&self, entry: &LockEntry) -> String {
-        if self.by_path.contains(&entry.project_id) { format!("path:{}", entry.path) } else { format!("project:{}", entry.project_id) }
+        match entry.key() {
+            Some(key) if !self.by_path.contains(&key) => format!("project:{key}"),
+            _ => format!("path:{}", entry.path),
+        }
     }
 
     fn index<'a>(&self, lock: &'a Lockfile) -> HashMap<String, &'a LockEntry> {
@@ -621,7 +603,7 @@ fn file_name(entry: Option<&LockEntry>) -> Option<String> {
     entry.map(|e| e.path.rsplit('/').next().unwrap_or(&e.path).to_string())
 }
 
-fn merge_value(name: &str, base: &Option<String>, mine: &Option<String>, theirs: &Option<String>, prefer: Option<Prefer>, conflicts: &mut Vec<ModConflict>) -> Option<String> {
+fn merge_value<T: Clone + PartialEq + std::fmt::Display>(name: &str, base: &Option<T>, mine: &Option<T>, theirs: &Option<T>, prefer: Option<Prefer>, conflicts: &mut Vec<ModConflict>) -> Option<T> {
     if mine == base || mine == theirs {
         return theirs.clone();
     }
@@ -632,7 +614,7 @@ fn merge_value(name: &str, base: &Option<String>, mine: &Option<String>, theirs:
         Some(Prefer::Mine) => mine.clone(),
         Some(Prefer::Theirs) => theirs.clone(),
         None => {
-            conflicts.push(ModConflict { name: name.into(), mine: mine.clone(), theirs: theirs.clone() });
+            conflicts.push(ModConflict { name: name.into(), mine: mine.as_ref().map(T::to_string), theirs: theirs.as_ref().map(T::to_string) });
             mine.clone()
         }
     }
@@ -734,15 +716,16 @@ pub async fn place(dir: &Path, placements: Vec<Placement>, log: &Log) -> Result<
         .map(|entry| {
             let target = repo.cached(&entry.sha1);
             async move {
+                let url = entry.download_url().with_context(|| format!("packraven has no download for {}", entry.path))?;
                 log.info(format!("Downloading {}", entry.path));
-                let mut result = http::download(&entry.url, &target, Some(&entry.sha1)).await;
+                let mut result = http::download(url, &target, Some(&entry.sha1)).await;
                 // A connection can drop partway through a download, and one failure would otherwise
                 // cancel every change in the batch.
                 for _ in 1..DOWNLOAD_ATTEMPTS {
                     if result.is_ok() {
                         break;
                     }
-                    result = http::download(&entry.url, &target, Some(&entry.sha1)).await;
+                    result = http::download(url, &target, Some(&entry.sha1)).await;
                 }
                 result
             }
@@ -766,7 +749,8 @@ pub async fn place(dir: &Path, placements: Vec<Placement>, log: &Log) -> Result<
                 None => std::fs::remove_file(repo.root.join(&old)).map_err(Into::into),
             };
             // Minecraft can hold a jar open while it runs. If we placed the new file anyway, the
-            // pack would load two versions of the mod, so we leave this one as it was.
+            // folder would hold two versions of the mod, and the loader might pick the old one, so
+            // we leave this one as it was.
             if let Err(error) = removed {
                 log.stream("err", &format!("Couldn't remove {old}: {error:#}"));
                 failed.push(old);
@@ -845,7 +829,7 @@ pub fn missing_count(dir: &Path) -> usize {
 async fn sync_folder(dir: &Path, log: &Log, replace_existing: bool) -> Result<()> {
     let repo = Repo::open(dir)?;
     let lock = repo.read_lock()?;
-    if let (Some(local), Some(expected)) = (read_instance(&repo.root).loader, &lock.loader)
+    if let (Some(local), Some(expected)) = (Instance::read(&repo.root).ok().and_then(|i| i.loader), &lock.loader)
         && local != *expected
     {
         log.stream("err", &format!("modsync: WARNING: lockfile expects {expected} but this profile uses {local}; change it in the CurseForge app"));
@@ -878,7 +862,13 @@ async fn sync_folder(dir: &Path, log: &Log, replace_existing: bool) -> Result<()
         let results: Vec<_> = stream::iter(to_download.into_values())
             .map(|entry| {
                 let target = repo.cached(&entry.sha1);
-                async move { (entry, http::download(&entry.url, &target, Some(&entry.sha1)).await) }
+                async move {
+                    let result = match entry.download_url() {
+                        Some(url) => http::download(url, &target, Some(&entry.sha1)).await,
+                        None => Err(anyhow!("packraven has no download for {}", entry.path)),
+                    };
+                    (entry, result)
+                }
             })
             .buffer_unordered(PARALLEL_DOWNLOADS)
             .collect()
@@ -970,18 +960,24 @@ mod tests {
         }
     }
 
+    fn curseforge(project_id: u64, file_id: u64, url: &str) -> CurseforgeFile {
+        CurseforgeFile { project_id, file_id, url: url.into() }
+    }
+
     #[test]
     fn lock_entries_keep_python_spacing() {
-        let entry = LockEntry { path: "mods/a.jar".into(), project_id: 1, file_id: 2, sha1: "ab".into(), size: 3, url: "u".into() };
-        assert_eq!(spaced_json(&entry).unwrap(), r#"{"path": "mods/a.jar", "projectId": 1, "fileId": 2, "sha1": "ab", "size": 3, "url": "u"}"#);
+        let entry = LockEntry::curseforge("mods/a.jar".into(), "ab".into(), 3, curseforge(1, 2, "u"));
+        assert_eq!(spaced_json(&entry).unwrap(), r#"{"path": "mods/a.jar", "sha1": "ab", "size": 3, "curseforge": {"projectId": 1, "fileId": 2, "url": "u"}}"#);
+        let mut lock = lock_of(vec![entry]);
+        assert!(render_lock(&mut lock).unwrap().starts_with("{\n  \"formatVersion\": 2,\n  \"minecraft\": \"1.21.1\",\n  \"loader\": {\"name\": \"neoforge\", \"version\": \"21.1.1\"},\n"));
     }
 
     fn entry(path: &str, project_id: u64, sha1: &str) -> LockEntry {
-        LockEntry { path: path.into(), project_id, file_id: 0, sha1: sha1.into(), size: 0, url: String::new() }
+        LockEntry::curseforge(path.into(), sha1.into(), 0, curseforge(project_id, 0, ""))
     }
 
     fn lock_of(files: Vec<LockEntry>) -> Lockfile {
-        Lockfile { minecraft: Some("1.21.1".into()), loader: Some("neoforge-21.1.1".into()), files }
+        Lockfile { minecraft: Some("1.21.1".into()), loader: crate::pack::Loader::from_curseforge("neoforge-21.1.1"), files }
     }
 
     fn paths(lock: &Lockfile) -> Vec<&str> {
@@ -1061,7 +1057,7 @@ mod tests {
 
         let sha1 = hex::encode(Sha1::digest(b"tridot"));
         let addon = serde_json::json!({ "addonID": 7, "installedFile": { "id": 70, "fileName": "tridot.jar", "downloadUrl": "u", "hashes": [{ "type": 1, "value": sha1 }] } });
-        std::fs::write(dir.join(INSTANCE_JSON), serde_json::json!({ "installedAddons": [addon] }).to_string()).unwrap();
+        std::fs::write(dir.join("minecraftinstance.json"), serde_json::json!({ "installedAddons": [addon] }).to_string()).unwrap();
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         assert!(runtime.block_on(refresh_mod_list(&dir)).unwrap().is_empty());
@@ -1070,6 +1066,24 @@ mod tests {
         assert!(!git::tracked_files(&dir).unwrap().contains(&"mods/tridot.jar".to_string()));
         assert!(dir.join("mods/tridot.jar").exists());
         assert_eq!(managed_files(&dir).unwrap(), ["mods/tridot.jar"]);
+    }
+
+    #[test]
+    fn refresh_keeps_every_source_the_mod_list_recorded() {
+        let dir = test_repo("sources");
+        std::fs::write(dir.join("mods/both.jar"), "both").unwrap();
+        std::fs::write(dir.join("mods/modrinth.jar"), "modrinth").unwrap();
+        let sha1 = |text: &str| hex::encode(Sha1::digest(text));
+        let modrinth = |sha1: String| crate::pack::ModrinthFile { project_id: "AANobbMI".into(), version_id: "v".into(), sha1, sha512: "x".into(), size: 1, url: "https://cdn.modrinth.com/a.jar".into() };
+        let both = LockEntry { modrinth: Some(modrinth("twin".into())), ..LockEntry::curseforge("mods/both.jar".into(), sha1("both"), 4, curseforge(1, 2, "u")) };
+        let only_modrinth = LockEntry { path: "mods/modrinth.jar".into(), sha1: sha1("modrinth"), size: 8, curseforge: None, modrinth: Some(modrinth(sha1("modrinth"))) };
+        let mut lock = lock_of(vec![both.clone(), only_modrinth.clone()]);
+        write_lock(&dir, &mut lock).unwrap();
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        assert!(runtime.block_on(refresh_mod_list(&dir)).unwrap().is_empty());
+        let lock = Lockfile::parse(&std::fs::read_to_string(dir.join(LOCKFILE)).unwrap()).unwrap();
+        assert_eq!(lock.files, [both, only_modrinth]);
     }
 
     #[test]
@@ -1083,7 +1097,7 @@ mod tests {
             let sha1 = hex::encode(Sha1::digest(content));
             std::fs::write(repo.cached(&sha1), content).unwrap();
             let replaces = (name == "new.jar").then(|| "mods/old.jar".to_string());
-            let placement = Placement { entry: LockEntry { path: format!("mods/{name}"), project_id: 1, file_id: 1, sha1, size: 3, url: String::new() }, replaces };
+            let placement = Placement { entry: LockEntry::curseforge(format!("mods/{name}"), sha1, 3, curseforge(1, 1, "")), replaces };
             let result = tauri::async_runtime::block_on(place(&dir, vec![placement], &Log::console("test")));
             assert_eq!(result.is_ok(), name == "other.jar", "{name}: {result:?}");
         }

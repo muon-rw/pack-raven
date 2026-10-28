@@ -315,7 +315,7 @@ async fn update_mod_with_dependencies() {
 
     let lock = Pack::open(&dir).unwrap().lock;
     assert!(!dir.join(&old_path).exists());
-    assert!(lock.files.iter().any(|e| e.project_id == APOTHEOSIS && e.file_id == file_id));
+    assert!(lock.files.iter().any(|e| e.curseforge.as_ref().is_some_and(|f| f.project_id == APOTHEOSIS && f.file_id == file_id)));
     assert!(lock.files.iter().all(|e| dir.join(&e.path).exists()));
     assert_eq!(lock.files.len(), plan.dependencies.len() + 1);
 

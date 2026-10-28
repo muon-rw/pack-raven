@@ -2,6 +2,10 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Changed
+- packraven saves your pack's mod list in a new format that makes room for Modrinth. Everyone working on the pack needs this version or newer, and older versions ask you to update.
+
 ## [0.2.1] - 2026-10-28
 
 ### Changed

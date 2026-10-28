@@ -1,11 +1,10 @@
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::git;
+use crate::instance::Instance;
 use crate::jobs::Log;
 use crate::modsync;
 use crate::pack::{PackConfig, CONFIG_FILE, LOCKFILE};
@@ -111,26 +110,14 @@ pub fn hooks_state(dir: &Path) -> HooksState {
     }
 }
 
-fn curseforge_file_names(instance: &Value) -> HashSet<String> {
-    let mut names = HashSet::new();
-    for addon in instance.get("installedAddons").and_then(Value::as_array).into_iter().flatten() {
-        for name in [addon.get("fileNameOnDisk"), addon.pointer("/installedFile/fileNameOnDisk"), addon.pointer("/installedFile/fileName")].into_iter().flatten().filter_map(Value::as_str) {
-            names.insert(name.to_string());
-            names.insert(format!("{name}.disabled"));
-        }
-    }
-    names
-}
-
-fn tracked_binaries(dir: &Path, instance: &Value) -> Vec<TrackedBinary> {
-    let curseforge = curseforge_file_names(instance);
+fn tracked_binaries(dir: &Path, instance: &Instance) -> Vec<TrackedBinary> {
     let Ok(out) = git::run(dir, &[&["ls-files", "--"][..], &BINARY_PATTERNS].concat()) else { return Vec::new() };
     out.lines()
         .map(|path| {
             let name = path.rsplit('/').next().unwrap_or(path);
             let kind = if path.starts_with("config/spark") {
                 BinaryKind::Generated
-            } else if curseforge.contains(name) {
+            } else if instance.installed_names.contains(name) {
                 BinaryKind::Curseforge
             } else {
                 BinaryKind::Local
@@ -140,22 +127,15 @@ fn tracked_binaries(dir: &Path, instance: &Value) -> Vec<TrackedBinary> {
         .collect()
 }
 
-fn read_instance(dir: &Path) -> Result<Value> {
-    std::fs::read_to_string(dir.join("minecraftinstance.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str(t.trim_start_matches('\u{feff}')).ok())
-        .with_context(|| format!("{} is not a CurseForge instance (no minecraftinstance.json)", dir.display()))
-}
-
 pub fn inspect(dir: &Path, added: &[PathBuf]) -> Result<InstanceInfo> {
-    let instance = read_instance(dir)?;
+    let instance = Instance::read(dir)?;
     let has_git = dir.join(".git").exists();
     Ok(InstanceInfo {
         dir: dir.to_path_buf(),
-        name: instance.get("name").and_then(Value::as_str).map(String::from).unwrap_or_else(|| dir.file_name().unwrap_or_default().to_string_lossy().into_owned()),
-        minecraft: instance.get("gameVersion").and_then(Value::as_str).map(String::from),
-        loader: instance.pointer("/baseModLoader/name").and_then(Value::as_str).map(String::from),
-        addon_count: instance.get("installedAddons").and_then(Value::as_array).map_or(0, Vec::len),
+        name: instance.name.clone().unwrap_or_else(|| dir.file_name().unwrap_or_default().to_string_lossy().into_owned()),
+        minecraft: instance.minecraft.clone(),
+        loader: instance.loader.as_ref().map(ToString::to_string),
+        addon_count: instance.addon_count,
         has_git,
         has_lock: dir.join(LOCKFILE).exists(),
         missing_mods: modsync::missing_count(dir),
@@ -247,7 +227,7 @@ pub async fn setup(dir: PathBuf, options: SetupOptions, identity: &crate::git::I
 
     if options.untrack_binaries {
         let removable: Vec<String> =
-            tracked_binaries(&dir, &read_instance(&dir)?).into_iter().filter(|b| b.kind != BinaryKind::Local).map(|b| b.path).collect();
+            tracked_binaries(&dir, &Instance::read(&dir)?).into_iter().filter(|b| b.kind != BinaryKind::Local).map(|b| b.path).collect();
         for chunk in removable.chunks(100) {
             let mut args = vec!["rm", "--cached", "--quiet", "--"];
             args.extend(chunk.iter().map(String::as_str));

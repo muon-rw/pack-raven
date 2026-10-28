@@ -20,6 +20,7 @@ mod java;
 mod history;
 mod gitops;
 mod http;
+mod instance;
 mod instance_locks;
 mod jobs;
 mod keychain;

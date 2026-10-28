@@ -69,14 +69,17 @@ export interface MinecraftAccount {
   uuid: string
 }
 
+// packraven.toml lists CurseForge projects by number and Modrinth ones as mr:<id>.
+export type StoredModKey = number | string
+
 export interface PackConfig {
   author: string
   curseforge: { project_id: number; release_type: string; manual_release: boolean }
   export: { exclude: string[] }
   server: {
     exclude: string[]
-    client_only: number[]
-    keep: number[]
+    client_only: StoredModKey[]
+    keep: StoredModKey[]
     memory: string
     jvm_args: string[]
     args: string[]
@@ -85,7 +88,7 @@ export interface PackConfig {
   }
   test: { port: number; client_memory: string }
   discord: { role_id: string; color: string; announce_on_approval: boolean; title: string; show_author: boolean; header: string; footer: string }
-  updates: { channel: ReleaseType; locked: number[] }
+  updates: { channel: ReleaseType; locked: StoredModKey[] }
 }
 
 export type ReleaseType = 'release' | 'beta' | 'alpha'
@@ -97,6 +100,7 @@ export interface UploadNames {
 
 export interface InstalledMod {
   path: string
+  key: string | null
   projectId: number
   fileId: number
   name: string
@@ -114,6 +118,7 @@ export interface ModFile {
 
 export interface ModCheck {
   path: string
+  key: string
   projectId: number
   logo: string | null
   releaseType: ReleaseType | null
@@ -222,7 +227,7 @@ export type Override = 'auto' | 'client' | 'keep'
 
 export interface ModSide {
   path: string
-  projectId: number
+  key: string | null
   name: string
   url: string | null
   side: Side
@@ -583,8 +588,8 @@ export const api = {
   trackDirectly: (paths: string[]) => invoke<void>('track_directly', { paths }),
   revertMods: () => invoke<void>('revert_mods'),
   serverSides: () => invoke<ModSide[]>('server_sides'),
-  setSideOverride: (projectId: number, mode: Override) => invoke<void>('set_side_override', { projectId, mode }),
-  installedMods: () => invoke<{ mods: InstalledMod[]; locked: number[] }>('installed_mods'),
+  setSideOverride: (key: string, mode: Override) => invoke<void>('set_side_override', { key, mode }),
+  installedMods: () => invoke<{ mods: InstalledMod[]; locked: string[] }>('installed_mods'),
   checkModUpdates: () => invoke<ModCheck[]>('check_mod_updates'),
   modVersions: (path: string, projectId: number) => invoke<ModFile[]>('mod_versions', { path, projectId }),
   setUpdateChannel: (channel: ReleaseType) => invoke<void>('set_update_channel', { channel }),
@@ -596,7 +601,7 @@ export const api = {
   setVersion: (version: string) => invoke<void>('set_version', { version }),
   versionProblem: (version: string) => invoke<string | null>('version_problem', { version }),
   setUpVersionChecker: (version: string) => invoke<void>('set_up_version_checker', { version }),
-  setModLocked: (projectId: number, locked: boolean) => invoke<void>('set_mod_locked', { projectId, locked }),
+  setModLocked: (key: string, locked: boolean) => invoke<void>('set_mod_locked', { key, locked }),
   setModsEnabled: (paths: string[], enabled: boolean) => invoke<string[]>('set_mods_enabled', { paths, enabled }),
   modChangelog: (projectId: number, fileId: number) => invoke<string>('mod_changelog', { projectId, fileId }),
   modDescription: (projectId: number) => invoke<string>('mod_description', { projectId }),

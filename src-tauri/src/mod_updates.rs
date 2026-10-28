@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::curseforge::{self, CfFile, CfFileIndex, CfMod};
 use crate::modsync::{self, Placement};
-use crate::pack::{LockEntry, ModLoader, Pack, ReleaseType};
+use crate::pack::{CurseforgeFile, LockEntry, ModLoader, Pack, ReleaseType};
 use crate::sides::MetadataCache;
 
 const DISABLED_SUFFIX: &str = ".disabled";
@@ -15,6 +15,7 @@ const MAX_DEPENDENCY_DEPTH: usize = 5;
 #[serde(rename_all = "camelCase")]
 pub struct InstalledMod {
     path: String,
+    key: Option<String>,
     project_id: u64,
     file_id: u64,
     name: String,
@@ -27,7 +28,7 @@ pub struct InstalledMod {
 #[serde(rename_all = "camelCase")]
 pub struct InstalledMods {
     mods: Vec<InstalledMod>,
-    locked: Vec<u64>,
+    locked: Vec<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -43,6 +44,7 @@ pub struct ModFile {
 #[serde(rename_all = "camelCase")]
 pub struct ModCheck {
     path: String,
+    key: String,
     project_id: u64,
     logo: Option<String>,
     release_type: Option<ReleaseType>,
@@ -100,19 +102,21 @@ impl Target {
 }
 
 pub async fn installed(pack: &Pack, cache: &mut MetadataCache) -> InstalledMods {
-    let ids: Vec<u64> = pack.lock.files.iter().map(|e| e.project_id).collect();
+    let keys: Vec<_> = pack.lock.files.iter().filter_map(LockEntry::key).collect();
     // Offline, we still list every file, under its file name.
-    let _ = cache.ensure_names(&ids).await;
+    let _ = cache.ensure_names(&keys).await;
     let mut mods: Vec<InstalledMod> = pack
         .lock
         .files
         .iter()
         .map(|entry| {
-            let name = cache.known_name(entry.project_id);
+            let key = entry.key();
+            let name = key.as_ref().and_then(|key| cache.known_name(key));
             InstalledMod {
                 path: entry.path.clone(),
-                project_id: entry.project_id,
-                file_id: entry.file_id,
+                key: key.as_ref().map(ToString::to_string),
+                project_id: entry.curseforge.as_ref().map_or(0, |f| f.project_id),
+                file_id: entry.curseforge.as_ref().map_or(0, |f| f.file_id),
                 name: name.map_or_else(|| file_name(&entry.path).to_string(), |n| n.name.clone()),
                 url: name.and_then(|n| n.url.clone()),
                 authors: name.and_then(|n| n.authors.clone()).unwrap_or_default(),
@@ -121,7 +125,7 @@ pub async fn installed(pack: &Pack, cache: &mut MetadataCache) -> InstalledMods 
         })
         .collect();
     mods.sort_by_key(|m| m.name.to_lowercase());
-    InstalledMods { mods, locked: pack.config.updates.locked.clone() }
+    InstalledMods { mods, locked: pack.config.updates.locked.iter().map(ToString::to_string).collect() }
 }
 
 fn file_name(path: &str) -> &str {
@@ -130,31 +134,31 @@ fn file_name(path: &str) -> &str {
 
 pub async fn check(pack: &Pack) -> Result<Vec<ModCheck>> {
     let target = Target::of(pack)?;
+    let entries: Vec<(&LockEntry, &CurseforgeFile)> = pack.lock.files.iter().filter_map(|e| Some((e, e.curseforge.as_ref()?))).collect();
     let mut per_project: HashMap<u64, usize> = HashMap::new();
-    for entry in &pack.lock.files {
-        *per_project.entry(entry.project_id).or_default() += 1;
+    for (_, file) in &entries {
+        *per_project.entry(file.project_id).or_default() += 1;
     }
     let project_ids: Vec<u64> = per_project.keys().copied().collect();
-    let file_ids: Vec<u64> = pack.lock.files.iter().map(|e| e.file_id).collect();
+    let file_ids: Vec<u64> = entries.iter().map(|(_, f)| f.file_id).collect();
     let projects = curseforge::mods(&project_ids).await?;
     let files = curseforge::files(&file_ids).await?;
 
-    Ok(pack
-        .lock
-        .files
-        .iter()
-        .map(|entry| {
-            let project = projects.get(&entry.project_id);
-            let installed = files.get(&entry.file_id);
+    Ok(entries
+        .into_iter()
+        .map(|(entry, file)| {
+            let project = projects.get(&file.project_id);
+            let installed = files.get(&file.file_id);
             // A pack can hold several files of one project, like resource pack variants, and we
             // can't tell which of them an update would replace.
             let newer = match project {
-                Some(project) if per_project[&entry.project_id] == 1 => newer_files(&target, project, entry),
+                Some(project) if per_project[&file.project_id] == 1 => newer_files(&target, project, file.file_id),
                 _ => Vec::new(),
             };
             ModCheck {
                 path: entry.path.clone(),
-                project_id: entry.project_id,
+                key: crate::pack::ModKey::Curseforge(file.project_id).to_string(),
+                project_id: file.project_id,
                 logo: project.and_then(|p| p.logo.as_ref()).map(|l| l.thumbnail_url.clone()),
                 release_type: installed.map(|f| release_type(f.release_type)),
                 requires: installed.map(|f| f.required_projects().collect()).unwrap_or_default(),
@@ -164,9 +168,9 @@ pub async fn check(pack: &Pack) -> Result<Vec<ModCheck>> {
         .collect())
 }
 
-fn newer_files(target: &Target, project: &CfMod, entry: &LockEntry) -> Vec<ModFile> {
+fn newer_files(target: &Target, project: &CfMod, installed_file_id: u64) -> Vec<ModFile> {
     let mut newest: HashMap<u8, &CfFileIndex> = HashMap::new();
-    for index in project.latest_files_indexes.iter().filter(|i| target.fits(i) && i.file_id > entry.file_id) {
+    for index in project.latest_files_indexes.iter().filter(|i| target.fits(i) && i.file_id > installed_file_id) {
         let slot = newest.entry(index.release_type).or_insert(index);
         if index.file_id > slot.file_id {
             *slot = index;
@@ -345,7 +349,7 @@ pub async fn plan(pack: &Pack, requests: &[ModRequest]) -> Result<ModPlan> {
     let file = |id: u64| files.get(&id).with_context(|| format!("CurseForge has no file {id}"));
     let new_projects: Vec<u64> = requests.iter().filter(|r| r.replaces.is_none()).map(|r| file(r.file_id).map(|f| f.mod_id)).collect::<Result<_>>()?;
     let new_projects = if new_projects.is_empty() { HashMap::new() } else { curseforge::mods(&new_projects).await? };
-    let mut present: HashSet<u64> = pack.lock.files.iter().map(|e| e.project_id).collect();
+    let mut present: HashSet<u64> = pack.lock.files.iter().filter_map(LockEntry::curseforge_project).collect();
     let mut placements = Vec::new();
     let mut installs = Vec::new();
     for request in requests {
@@ -414,14 +418,8 @@ pub(crate) fn lock_entry(file: &CfFile, folder: &str, disabled: bool) -> Result<
     }
     let sha1 = file.sha1().with_context(|| format!("CurseForge has no SHA-1 for {}", file.file_name))?;
     let suffix = if disabled { DISABLED_SUFFIX } else { "" };
-    Ok(LockEntry {
-        path: format!("{folder}/{}{suffix}", file.file_name),
-        project_id: file.mod_id,
-        file_id: file.id,
-        sha1: sha1.to_string(),
-        size: file.file_length,
-        url: file.download_url.clone().unwrap_or_else(|| modsync::cdn_url(file.id, &file.file_name)),
-    })
+    let url = file.download_url.clone().unwrap_or_else(|| modsync::cdn_url(file.id, &file.file_name));
+    Ok(LockEntry::curseforge(format!("{folder}/{}{suffix}", file.file_name), sha1.to_string(), file.file_length, CurseforgeFile { project_id: file.mod_id, file_id: file.id, url }))
 }
 
 #[cfg(test)]
@@ -440,16 +438,12 @@ mod tests {
         Target { minecraft: "1.21.1".into(), loaders: vec![6] }
     }
 
-    fn entry(file_id: u64) -> LockEntry {
-        LockEntry { path: "mods/a.jar".into(), project_id: 1, file_id, sha1: String::new(), size: 0, url: String::new() }
-    }
-
     #[test]
     fn offers_the_newest_file_of_each_release_type() {
         let fabric = index(900, 1, Some(4));
         let other_version = CfFileIndex { game_version: "1.20.1".into(), ..index(950, 1, Some(6)) };
         let project = project(vec![index(500, 1, Some(6)), index(400, 2, Some(6)), index(300, 3, Some(6)), fabric, other_version]);
-        let newer: Vec<(u64, ReleaseType)> = newer_files(&target(), &project, &entry(350)).iter().map(|f| (f.file_id, f.release_type)).collect();
+        let newer: Vec<(u64, ReleaseType)> = newer_files(&target(), &project, 350).iter().map(|f| (f.file_id, f.release_type)).collect();
         assert_eq!(newer, [(500, ReleaseType::Release), (400, ReleaseType::Beta)]);
     }
 
@@ -478,6 +472,6 @@ mod tests {
         let entry = lock_entry(&file, "mods", true).unwrap();
         assert_eq!(entry.path, "mods/a-2.jar.disabled");
         assert_eq!(entry.sha1, "abc");
-        assert_eq!(entry.url, "https://edge.forgecdn.net/files/0/5/a-2.jar");
+        assert_eq!(entry.download_url(), Some("https://edge.forgecdn.net/files/0/5/a-2.jar"));
     }
 }

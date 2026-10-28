@@ -85,7 +85,7 @@ const KNOWN: [Known; 3] = [
 ];
 
 fn installed(jars: &[String], lock: Option<&Lockfile>, known: &Known) -> bool {
-    let by_project = lock.is_some_and(|lock| lock.files.iter().any(|e| known.project_ids.contains(&e.project_id) && !e.path.ends_with(".disabled")));
+    let by_project = lock.is_some_and(|lock| lock.files.iter().any(|e| e.curseforge_project().is_some_and(|id| known.project_ids.contains(&id)) && !e.path.ends_with(".disabled")));
     by_project || jars.iter().any(|name| known.jar_prefixes.iter().any(|p| name.starts_with(p)))
 }
 

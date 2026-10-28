@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::Value;
 
-use crate::pack::Pack;
+use crate::pack::{ModKey, Pack};
 use crate::setup::same_dir;
 
 const INSTANCE_JSON: &str = "minecraftinstance.json";
@@ -111,14 +111,17 @@ fn database_with_locks(database: &str, dir: &Path, wanted: &BTreeSet<u64>) -> Op
 pub fn sync(pack: &mut Pack, last_seen_path: &Path, app: &CurseForgeApp) -> Result<()> {
     let Some(curseforge) = curseforge_locks(&pack.dir) else { return Ok(()) };
     let last_seen: BTreeSet<u64> = std::fs::read_to_string(last_seen_path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-    let mut ours: BTreeSet<u64> = pack.config.updates.locked.iter().copied().collect();
+    let mut ours: BTreeSet<u64> = pack.config.updates.locked.iter().filter_map(ModKey::curseforge_id).collect();
     let before = ours.clone();
     ours.extend(curseforge.difference(&last_seen));
     for id in last_seen.difference(&curseforge) {
         ours.remove(id);
     }
     if ours != before {
-        pack.config.updates.locked = ours.iter().copied().collect();
+        let locked = &mut pack.config.updates.locked;
+        locked.retain(|key| key.curseforge_id().is_none());
+        locked.extend(ours.iter().copied().map(ModKey::Curseforge));
+        locked.sort();
         pack.save_config()?;
     }
     // A running CurseForge rewrites both files from memory, which would undo our write and then
@@ -190,17 +193,19 @@ mod tests {
         let mut pack = Pack::open(&dir).unwrap();
 
         sync(&mut pack, &seen, &closed).unwrap();
-        assert_eq!(pack.config.updates.locked, [7], "the first sync adopts CurseForge's locks");
+        let keys = |ids: &[u64]| ids.iter().copied().map(ModKey::Curseforge).collect::<Vec<_>>();
+        assert_eq!(pack.config.updates.locked, keys(&[7]), "the first sync adopts CurseForge's locks");
 
-        pack.config.updates.locked = vec![7, 12];
+        pack.config.updates.locked = keys(&[7, 12]);
         sync(&mut pack, &seen, &CurseForgeApp::Running).unwrap();
         assert_eq!(curseforge_locks(&dir).unwrap(), BTreeSet::from([7]), "we leave a running CurseForge's files alone");
         sync(&mut pack, &seen, &CurseForgeApp::Running).unwrap();
-        assert_eq!(pack.config.updates.locked, [7, 12], "a pending lock survives syncs while CurseForge runs");
+        assert_eq!(pack.config.updates.locked, keys(&[7, 12]), "a pending lock survives syncs while CurseForge runs");
 
-        pack.config.updates.locked = vec![12];
+        pack.config.updates.locked = vec![ModKey::Curseforge(12), ModKey::Modrinth("AANobbMI".into())];
         sync(&mut pack, &seen, &closed).unwrap();
-        assert_eq!(pack.config.updates.locked, [12]);
+        assert_eq!(pack.config.updates.locked, [ModKey::Curseforge(12), ModKey::Modrinth("AANobbMI".into())], "Modrinth locks stay as they are");
+        pack.config.updates.locked.pop();
         assert_eq!(curseforge_locks(&dir).unwrap(), BTreeSet::from([12]), "we write packraven's locks back");
 
         let text = std::fs::read_to_string(dir.join(INSTANCE_JSON)).unwrap();

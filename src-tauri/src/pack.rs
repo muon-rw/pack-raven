@@ -9,7 +9,7 @@ pub const CONFIG_FILE: &str = "packraven.toml";
 pub const LOCKFILE: &str = "mods.lock.json";
 // Bump this whenever older packraven versions would misread the new mods.lock.json. Old versions will
 // refuse a newer format rather than rewrite it in theirs, so the user will be prompted for an update.
-pub const LOCK_FORMAT: u64 = 1;
+pub const LOCK_FORMAT: u64 = 2;
 const NEWER_LOCK_FORMAT: &str = "A newer version of packraven wrote this pack's mods.lock.json. Update packraven in App settings, then try again.";
 pub const CHANGELOG: &str = "changelog.md";
 pub const CHANGELOG_ARCHIVE: &str = "changelogs";
@@ -33,7 +33,7 @@ pub struct PackConfig {
 #[serde(default)]
 pub struct UpdatesConfig {
     pub channel: ReleaseType,
-    pub locked: Vec<u64>,
+    pub locked: Vec<ModKey>,
 }
 
 impl Default for UpdatesConfig {
@@ -90,8 +90,8 @@ pub struct ExportConfig {
 #[serde(default)]
 pub struct ServerConfig {
     pub exclude: Vec<String>,
-    pub client_only: Vec<u64>,
-    pub keep: Vec<u64>,
+    pub client_only: Vec<ModKey>,
+    pub keep: Vec<ModKey>,
     pub memory: String,
     pub jvm_args: Vec<String>,
     pub args: Vec<String>,
@@ -165,55 +165,263 @@ impl Default for TestConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ModKey {
+    Curseforge(u64),
+    Modrinth(String),
+}
+
+impl ModKey {
+    pub fn curseforge_id(&self) -> Option<u64> {
+        match self {
+            ModKey::Curseforge(id) => Some(*id),
+            ModKey::Modrinth(_) => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ModKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ModKey::Curseforge(id) => write!(f, "cf:{id}"),
+            ModKey::Modrinth(id) => write!(f, "mr:{id}"),
+        }
+    }
+}
+
+impl std::str::FromStr for ModKey {
+    type Err = String;
+
+    fn from_str(text: &str) -> std::result::Result<Self, String> {
+        let invalid = || format!("{text} isn't a mod key like cf:238222 or mr:AANobbMI");
+        match text.split_once(':') {
+            Some(("cf", id)) => id.parse().map(ModKey::Curseforge).map_err(|_| invalid()),
+            Some(("mr", id)) if !id.is_empty() => Ok(ModKey::Modrinth(id.to_string())),
+            // packraven 0.2.1 and earlier knew mods only by CurseForge project.
+            None => text.parse().map(ModKey::Curseforge).map_err(|_| invalid()),
+            _ => Err(invalid()),
+        }
+    }
+}
+
+// packraven.toml lists CurseForge projects as bare numbers, which every packraven version reads, so we
+// keep writing them that way and only prefix Modrinth's.
+impl Serialize for ModKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            ModKey::Curseforge(id) => serializer.serialize_u64(*id),
+            ModKey::Modrinth(_) => serializer.collect_str(self),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ModKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Stored {
+            Number(u64),
+            Text(String),
+        }
+        match Stored::deserialize(deserializer)? {
+            Stored::Number(id) => Ok(ModKey::Curseforge(id)),
+            Stored::Text(text) => text.parse().map_err(serde::de::Error::custom),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Loader {
+    pub name: String,
+    pub version: String,
+}
+
+impl Loader {
+    // CurseForge names loader profiles like neoforge-21.1.259, and Fabric ones like fabric-0.19.2-1.21.1.
+    pub fn from_curseforge(id: &str) -> Option<Self> {
+        let (name, rest) = id.split_once('-')?;
+        let name = name.to_ascii_lowercase();
+        let version = match name.as_str() {
+            "fabric" | "quilt" => rest.split_once('-').map_or(rest, |(version, _)| version),
+            _ => rest,
+        };
+        Some(Self { name, version: version.to_string() })
+    }
+}
+
+impl std::fmt::Display for Loader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}-{}", self.name, self.version)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LockEntry {
     pub path: String,
+    pub sha1: String,
+    pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curseforge: Option<CurseforgeFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modrinth: Option<ModrinthFile>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CurseforgeFile {
     pub project_id: u64,
     pub file_id: u64,
+    pub url: String,
+}
+
+// In a pack on both platforms, the jar on disk is CurseForge's. Modrinth's copy of the same release can
+// differ byte for byte, so we record Modrinth's file in full.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModrinthFile {
+    pub project_id: String,
+    pub version_id: String,
     pub sha1: String,
+    pub sha512: String,
     pub size: u64,
     pub url: String,
 }
 
+impl LockEntry {
+    pub fn curseforge(path: String, sha1: String, size: u64, file: CurseforgeFile) -> Self {
+        Self { path, sha1, size, curseforge: Some(file), modrinth: None }
+    }
+
+    pub fn key(&self) -> Option<ModKey> {
+        match (&self.curseforge, &self.modrinth) {
+            (Some(file), _) => Some(ModKey::Curseforge(file.project_id)),
+            (None, Some(file)) => Some(ModKey::Modrinth(file.project_id.clone())),
+            (None, None) => None,
+        }
+    }
+
+    pub fn has_key(&self, key: &ModKey) -> bool {
+        match key {
+            ModKey::Curseforge(id) => self.curseforge.as_ref().is_some_and(|f| f.project_id == *id),
+            ModKey::Modrinth(id) => self.modrinth.as_ref().is_some_and(|f| f.project_id == *id),
+        }
+    }
+
+    pub fn curseforge_project(&self) -> Option<u64> {
+        self.curseforge.as_ref().map(|f| f.project_id)
+    }
+
+    pub fn download_url(&self) -> Option<&str> {
+        match (&self.curseforge, &self.modrinth) {
+            (Some(file), _) => Some(&file.url),
+            (None, Some(file)) if file.sha1 == self.sha1 => Some(&file.url),
+            _ => None,
+        }
+    }
+
+    // Baselines from CurseForge exports carry no hashes, only file IDs.
+    pub fn same_file(&self, other: &LockEntry) -> bool {
+        match (&self.curseforge, &other.curseforge) {
+            (Some(mine), Some(theirs)) => mine.file_id == theirs.file_id,
+            _ => self.sha1 == other.sha1,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(try_from = "serde_json::Value", into = "StoredLockfile")]
 pub struct Lockfile {
     pub minecraft: Option<String>,
-    pub loader: Option<String>,
+    pub loader: Option<Loader>,
     pub files: Vec<LockEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredLockfile {
+    format_version: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    minecraft: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    loader: Option<Loader>,
+    files: Vec<LockEntry>,
+}
+
+impl From<Lockfile> for StoredLockfile {
+    fn from(lock: Lockfile) -> Self {
+        Self { format_version: LOCK_FORMAT, minecraft: lock.minecraft, loader: lock.loader, files: lock.files }
+    }
+}
+
+// packraven 0.2.1 and earlier wrote format 1: CurseForge files only, with CurseForge's loader profile name.
+#[derive(Deserialize)]
+struct LockfileV1 {
+    minecraft: Option<String>,
+    loader: Option<String>,
+    files: Vec<LockEntryV1>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LockEntryV1 {
+    path: String,
+    project_id: u64,
+    file_id: u64,
+    sha1: String,
+    size: u64,
+    url: String,
+}
+
+impl From<LockfileV1> for Lockfile {
+    fn from(lock: LockfileV1) -> Self {
+        let files = lock
+            .files
+            .into_iter()
+            .map(|e| LockEntry::curseforge(e.path, e.sha1, e.size, CurseforgeFile { project_id: e.project_id, file_id: e.file_id, url: e.url }))
+            .collect();
+        Self { minecraft: lock.minecraft, loader: lock.loader.as_deref().and_then(Loader::from_curseforge), files }
+    }
+}
+
+impl TryFrom<serde_json::Value> for Lockfile {
+    type Error = anyhow::Error;
+
+    fn try_from(value: serde_json::Value) -> Result<Self> {
+        // Lockfiles from before we recorded a format are format 1.
+        match value.get("formatVersion").map_or(Some(1), serde_json::Value::as_u64) {
+            Some(1) => Ok(serde_json::from_value::<LockfileV1>(value).context("parsing mods.lock.json")?.into()),
+            Some(LOCK_FORMAT) => {
+                let stored: StoredLockfile = serde_json::from_value(value).context("parsing mods.lock.json")?;
+                Ok(Self { minecraft: stored.minecraft, loader: stored.loader, files: stored.files })
+            }
+            _ => bail!(NEWER_LOCK_FORMAT),
+        }
+    }
 }
 
 impl Lockfile {
     pub fn parse(text: &str) -> Result<Self> {
-        let value: serde_json::Value = serde_json::from_str(text).context("parsing mods.lock.json")?;
-        // Lockfiles from before we recorded a format are format 1.
-        let format = value.get("formatVersion").map_or(Some(1), serde_json::Value::as_u64);
-        if !format.is_some_and(|format| format <= LOCK_FORMAT) {
-            bail!(NEWER_LOCK_FORMAT);
-        }
-        serde_json::from_value(value).context("parsing mods.lock.json")
+        Self::try_from(serde_json::from_str::<serde_json::Value>(text).context("parsing mods.lock.json")?)
     }
 
     pub fn minecraft(&self) -> Result<&str> {
         self.minecraft.as_deref().context("mods.lock.json has no minecraft version; commit once so the git hooks regenerate it")
     }
 
-    pub fn loader(&self) -> Result<&str> {
-        self.loader.as_deref().context("mods.lock.json has no loader; commit once so the git hooks regenerate it")
+    pub fn loader(&self) -> Result<&Loader> {
+        self.loader.as_ref().context("mods.lock.json has no loader; commit once so the git hooks regenerate it")
     }
 
     pub fn mod_loader(&self) -> Result<ModLoader<'_>> {
         let loader = self.loader()?;
-        if let Some(version) = loader.strip_prefix("neoforge-") {
-            Ok(ModLoader::NeoForge(version))
-        } else if let Some(version) = loader.strip_prefix("forge-") {
-            Ok(ModLoader::Forge(version))
-        } else if let Some(versions) = loader.strip_prefix("fabric-") {
-            // CurseForge names Fabric profiles fabric-<loader>-<minecraft>.
-            Ok(ModLoader::Fabric(versions.split_once('-').map_or(versions, |(version, _)| version)))
-        } else {
-            bail!("packraven supports NeoForge, Forge and Fabric packs, found {loader}")
-        }
+        let version = loader.version.as_str();
+        Ok(match loader.name.as_str() {
+            "neoforge" => ModLoader::NeoForge(version),
+            "forge" => ModLoader::Forge(version),
+            "fabric" => ModLoader::Fabric(version),
+            _ => bail!("packraven supports NeoForge, Forge and Fabric packs, found {loader}"),
+        })
     }
 }
 
@@ -253,11 +461,12 @@ impl Pack {
         if !dir.join(LOCKFILE).exists() {
             bail!("{} has no {LOCKFILE}; add the pack again from Add pack", dir.display());
         }
+        // A newer packraven may have written both files, and only the lockfile's format tells you to update.
+        let lock = Lockfile::parse(&std::fs::read_to_string(dir.join(LOCKFILE))?)?;
         let config = match std::fs::read_to_string(dir.join(CONFIG_FILE)) {
             Ok(text) => toml::from_str(&text).context("parsing packraven.toml")?,
             Err(_) => PackConfig::default(),
         };
-        let lock = Lockfile::parse(&std::fs::read_to_string(dir.join(LOCKFILE))?)?;
         Ok(Self { dir: dir.to_path_buf(), config, lock })
     }
 
@@ -291,7 +500,7 @@ impl Pack {
     }
 
     pub fn has_bcc(&self) -> bool {
-        self.lock.files.iter().any(|e| e.project_id == BCC_PROJECT_ID && !e.path.ends_with(".disabled"))
+        self.lock.files.iter().any(|e| e.curseforge_project() == Some(BCC_PROJECT_ID) && !e.path.ends_with(".disabled"))
     }
 
     // BCC only writes its config the first time the game loads it, so we write one up front to
@@ -370,7 +579,7 @@ mod tests {
     use super::*;
 
     fn lock(loader: &str) -> Lockfile {
-        Lockfile { minecraft: Some("1.21.1".into()), loader: Some(loader.into()), files: vec![] }
+        Lockfile { minecraft: Some("1.21.1".into()), loader: Loader::from_curseforge(loader), files: vec![] }
     }
 
     #[test]
@@ -390,6 +599,53 @@ mod tests {
             let error = Lockfile::parse(&format!(r#"{{"formatVersion": {newer}, "entries": []}}"#)).unwrap_err();
             assert_eq!(error.to_string(), NEWER_LOCK_FORMAT, "{newer}");
         }
+    }
+
+    #[test]
+    fn migrates_format_1_lockfiles() {
+        let lock = Lockfile::parse(
+            r#"{"minecraft": "1.21.1", "loader": "fabric-0.19.2-1.21.1", "files": [{"path": "mods/a.jar", "projectId": 7, "fileId": 9, "sha1": "abc", "size": 3, "url": "https://example.com/a.jar"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(lock.loader, Some(Loader { name: "fabric".into(), version: "0.19.2".into() }));
+        let file = CurseforgeFile { project_id: 7, file_id: 9, url: "https://example.com/a.jar".into() };
+        assert_eq!(lock.files, [LockEntry::curseforge("mods/a.jar".into(), "abc".into(), 3, file)]);
+        assert_eq!(lock.files[0].key(), Some(ModKey::Curseforge(7)));
+        assert_eq!(lock.files[0].download_url(), Some("https://example.com/a.jar"));
+    }
+
+    #[test]
+    fn round_trips_the_current_format() {
+        let modrinth = ModrinthFile { project_id: "AANobbMI".into(), version_id: "v".into(), sha1: "other".into(), sha512: "x".into(), size: 4, url: "https://cdn.modrinth.com/a.jar".into() };
+        let entry = LockEntry { modrinth: Some(modrinth), ..LockEntry::curseforge("mods/a.jar".into(), "abc".into(), 3, CurseforgeFile { project_id: 7, file_id: 9, url: String::new() }) };
+        let lock = Lockfile { minecraft: Some("1.21.1".into()), loader: Loader::from_curseforge("neoforge-21.1.259"), files: vec![entry] };
+        let text = serde_json::to_string(&lock).unwrap();
+        assert!(text.starts_with(&format!(r#"{{"formatVersion":{LOCK_FORMAT},"#)), "{text}");
+        let read = Lockfile::parse(&text).unwrap();
+        assert_eq!((read.minecraft, read.loader, read.files), (lock.minecraft, lock.loader, lock.files));
+    }
+
+    #[test]
+    fn modrinth_only_entries_download_from_modrinth_when_the_jar_is_theirs() {
+        let modrinth = ModrinthFile { project_id: "AANobbMI".into(), version_id: "v".into(), sha1: "abc".into(), sha512: "x".into(), size: 3, url: "https://cdn.modrinth.com/a.jar".into() };
+        let entry = LockEntry { path: "mods/a.jar".into(), sha1: "abc".into(), size: 3, curseforge: None, modrinth: Some(modrinth) };
+        assert_eq!(entry.key(), Some(ModKey::Modrinth("AANobbMI".into())));
+        assert_eq!(entry.download_url(), Some("https://cdn.modrinth.com/a.jar"));
+        assert_eq!(LockEntry { sha1: "different".into(), ..entry }.download_url(), None);
+    }
+
+    #[test]
+    fn keeps_curseforge_keys_as_numbers_in_packraven_toml() {
+        let mut config = PackConfig::default();
+        config.server.client_only = vec![ModKey::Curseforge(238222), ModKey::Modrinth("AANobbMI".into())];
+        let text = toml::to_string(&config).unwrap();
+        assert!(text.contains(r#"client_only = [238222, "mr:AANobbMI"]"#), "{text}");
+        let read: PackConfig = toml::from_str(&text).unwrap();
+        assert_eq!(read.server.client_only, config.server.client_only);
+        assert_eq!("cf:5".parse(), Ok(ModKey::Curseforge(5)));
+        assert_eq!("5".parse(), Ok(ModKey::Curseforge(5)));
+        assert!("mr:".parse::<ModKey>().is_err());
+        assert_eq!(ModKey::Modrinth("AANobbMI".into()).to_string(), "mr:AANobbMI");
     }
 
     #[test]

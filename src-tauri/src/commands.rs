@@ -12,7 +12,7 @@ use crate::export;
 use crate::git;
 use crate::jobs::{JobQueue, Jobs};
 use crate::launch;
-use crate::pack::{Pack, PackConfig};
+use crate::pack::{ModKey, Pack, PackConfig};
 use crate::publish::{self, PublishContext, PublishOptions};
 use crate::settings::Settings;
 use crate::sides::{self, MetadataCache, ModSide};
@@ -176,7 +176,7 @@ pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
         version: pack.version(),
         bcc_installed: pack.has_bcc(),
         minecraft: pack.lock.minecraft.clone(),
-        loader: pack.lock.loader.clone(),
+        loader: pack.lock.loader.as_ref().map(ToString::to_string),
         lock_count: pack.lock.files.len(),
         addons: addon_counts(&pack),
         not_on_curseforge: mod_list.not_on_curseforge,
@@ -308,14 +308,15 @@ pub async fn server_sides(state: State<'_, AppState>) -> CmdResult<Vec<ModSide>>
 }
 
 #[tauri::command]
-pub fn set_side_override(state: State<'_, AppState>, project_id: u64, mode: String) -> CmdResult<()> {
+pub fn set_side_override(state: State<'_, AppState>, key: String, mode: String) -> CmdResult<()> {
+    let key: ModKey = key.parse()?;
     let mut pack = state.pack().map_err(err)?;
     let server = &mut pack.config.server;
-    server.client_only.retain(|id| *id != project_id);
-    server.keep.retain(|id| *id != project_id);
+    server.client_only.retain(|k| *k != key);
+    server.keep.retain(|k| *k != key);
     match mode.as_str() {
-        "client" => server.client_only.push(project_id),
-        "keep" => server.keep.push(project_id),
+        "client" => server.client_only.push(key),
+        "keep" => server.keep.push(key),
         _ => {}
     }
     server.client_only.sort_unstable();
@@ -510,8 +511,13 @@ pub fn publish(app: AppHandle, state: State<'_, AppState>, options: PublishOptio
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseStatus {
-    #[serde(flatten)]
-    release: publish::Release,
+    version: String,
+    project_id: u64,
+    file_id: u64,
+    server_file_id: u64,
+    published_at: String,
+    announce: bool,
+    announced_at: Option<String>,
     status: String,
     server_status: String,
     server_pack_linked: Option<bool>,
@@ -521,14 +527,21 @@ pub struct ReleaseStatus {
 pub async fn releases(state: State<'_, AppState>) -> CmdResult<Vec<ReleaseStatus>> {
     let mut result = Vec::new();
     for release in publish::load_releases(&state.pack_data().join("releases.json")).into_iter().rev() {
-        let file = curseforge::file(release.project_id, release.file_id).await.ok().flatten();
-        let server = curseforge::file(release.project_id, release.server_file_id).await.ok().flatten();
+        let Some(published) = release.curseforge else { continue };
+        let file = curseforge::file(published.project_id, published.file_id).await.ok().flatten();
+        let server = curseforge::file(published.project_id, published.server_file_id).await.ok().flatten();
         let describe = |f: &Option<curseforge::CfFile>| f.as_ref().map(|f| curseforge::file_status_name(f.file_status).to_string()).unwrap_or_else(|| "Not public yet".into());
         result.push(ReleaseStatus {
             status: describe(&file),
             server_status: describe(&server),
-            server_pack_linked: file.as_ref().and_then(|f| f.server_pack_file_id).map(|id| id == release.server_file_id),
-            release,
+            server_pack_linked: file.as_ref().and_then(|f| f.server_pack_file_id).map(|id| id == published.server_file_id),
+            version: release.version,
+            project_id: published.project_id,
+            file_id: published.file_id,
+            server_file_id: published.server_file_id,
+            published_at: release.published_at,
+            announce: release.announce,
+            announced_at: release.announced_at,
         });
     }
     Ok(result)
