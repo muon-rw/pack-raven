@@ -44,7 +44,7 @@
   // tree shortcuts like Ctrl+C keep working. Opening a file to keep moves focus to the editor.
   let focusEditor = true
   const selection = new SvelteSet<string>()
-  let tabMenu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  let tabMenu = $state<{ x: number; y: number; items: MenuItem[]; scroller: EventTarget | null } | null>(null)
   let query = $state('')
   let searchField: HTMLInputElement | undefined = $state()
   let results: FileSearchResults | undefined = $state()
@@ -238,12 +238,13 @@
     if ((await closeTabs(closing)) && activeClosing) workspace.active = tab.path
   }
 
-  function openTabMenu(x: number, y: number, tab: Tab | null) {
+  function openTabMenu(x: number, y: number, tab: Tab | null, scroller: EventTarget | null) {
     const index = tab ? workspace.tabs.indexOf(tab) : -1
     const last = workspace.tabs.length - 1
     tabMenu = {
       x,
       y,
+      scroller,
       items: [
         ...(tab
           ? [
@@ -264,8 +265,8 @@
     event.preventDefault()
     event.stopPropagation()
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-    if (!event.clientX && !event.clientY) openTabMenu(rect.left + 12, rect.bottom, tab)
-    else openTabMenu(event.clientX, event.clientY, tab)
+    if (!event.clientX && !event.clientY) openTabMenu(rect.left + 12, rect.bottom, tab, event.currentTarget)
+    else openTabMenu(event.clientX, event.clientY, tab, event.currentTarget)
   }
 
   async function reopenTab() {
@@ -408,7 +409,7 @@
     if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
       event.preventDefault()
       const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-      openTabMenu(rect.left + 12, rect.bottom, tabs[index])
+      openTabMenu(rect.left + 12, rect.bottom, tabs[index], event.currentTarget)
       return
     }
     const to = event.key === 'ArrowRight' ? index + 1 : event.key === 'ArrowLeft' ? index - 1 : null
@@ -967,7 +968,7 @@
 <PackOverrideDialog request={overriding} {pack} onclose={() => (overriding = null)} ondone={showOverride} />
 
 {#if tabMenu}
-  <ContextMenu x={tabMenu.x} y={tabMenu.y} label="Tab actions" items={tabMenu.items} onclose={() => (tabMenu = null)} />
+  <ContextMenu x={tabMenu.x} y={tabMenu.y} label="Tab actions" items={tabMenu.items} scroller={tabMenu.scroller} onclose={() => (tabMenu = null)} />
 {/if}
 
 <style>

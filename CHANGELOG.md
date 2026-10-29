@@ -7,6 +7,8 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 - Switching modpacks while your selected modpack was checking for updates could result in a stale update list, until you manually clicked Check for Updates
 - Improved performance of mod update checks for packs that publish to both CurseForge and Modrinth
 - Returning to packraven with the Mods view already open now rechecks for updates when the last check is stale
+- You can now click and drag rail tabs directly into a side-by-side window view
+- Fixed the right click context menu for rail tabs closing instantly while an active log was on-screen
 
 ## [0.3.1] - 2026-10-29
 ### Changed

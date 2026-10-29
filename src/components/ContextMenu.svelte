@@ -29,7 +29,21 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
 
-  let { x, y, label, items, onclose }: { x: number; y: number; label: string; items: MenuItem[]; onclose: () => void } = $props()
+  let {
+    x,
+    y,
+    label,
+    items,
+    scroller,
+    onclose,
+  }: {
+    x: number
+    y: number
+    label: string
+    items: MenuItem[]
+    scroller?: EventTarget | null
+    onclose: () => void
+  } = $props()
 
   let menu: HTMLDivElement
   let submenu: HTMLDivElement | undefined = $state()
@@ -50,12 +64,18 @@
     return Array.from(container?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])
   }
 
+  // A live log or another pane scrolling shouldn't close a menu you opened elsewhere, so we only
+  // watch the scrollers around the element you right-clicked.
   onMount(() => {
     const { width, height } = menu.getBoundingClientRect()
     position = fit({ left: x, right: x, top: y + height > innerHeight - 4 ? y - height : y }, width, height)
     // A hidden menu can't take focus, so we wait for the positioned one to render.
     tick().then(() => buttons(menu)[0]?.focus())
-    const dismiss = () => close(false)
+    const source = scroller ?? returnFocus
+    const dismiss = (event: Event) => {
+      const target = event.target
+      if (!source || target === document || target === window || (target instanceof Node && source instanceof Node && target.contains(source))) close(false)
+    }
     addEventListener('scroll', dismiss, true)
     return () => removeEventListener('scroll', dismiss, true)
   })

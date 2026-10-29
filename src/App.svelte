@@ -36,7 +36,7 @@
   import ContextMenu from './components/ContextMenu.svelte'
   import type { MenuItem } from './lib/menu'
   import { clamp } from './lib/storedSplit.svelte'
-  import { closePane, focusedView, isSplit, layout, only, openBeside, paneSplit, show, showFrom, splitCompanion, swapPanes, titles, toggleSplit, views, type View } from './lib/panes.svelte'
+  import { closePane, focusedView, isSplit, layout, only, openBeside, paneSplit, placeInPane, show, showFrom, splitCompanion, swapPanes, titles, toggleSplit, views, type View } from './lib/panes.svelte'
 
   type Tone = 'ok' | 'warn' | 'bad' | 'busy' | 'idle'
   type NavItem = { id: View; title: string; key?: string; alias?: string; status?: string; tone?: Tone; count?: number; countText?: string }
@@ -402,14 +402,75 @@
   }
 
   function onRailClick(event: MouseEvent, id: View) {
+    if (suppressRailClick) return
     if (commandKey(event) && packs?.active) openBeside(id)
     else show(id)
   }
 
-  let railMenu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  const RAIL_DRAG_THRESHOLD = 5
+  let panesEl = $state<HTMLDivElement>()
+  let railPress: { x: number; y: number; id: View; pointerId: number; target: HTMLElement } | null = null
+  let railGhost = $state<{ x: number; y: number; id: View } | null>(null)
+  let dropSide = $state<0 | 1 | null>(null)
+  let suppressRailClick = false
+
+  function onRailPointerDown(event: PointerEvent, id: View) {
+    if (event.button !== 0 || !packs?.active || view === 'add') return
+    railPress = { x: event.clientX, y: event.clientY, id, pointerId: event.pointerId, target: event.currentTarget as HTMLElement }
+  }
+
+  function onRailPointerMove(event: PointerEvent) {
+    if (!railPress) return
+    if (!railGhost) {
+      if (Math.hypot(event.clientX - railPress.x, event.clientY - railPress.y) < RAIL_DRAG_THRESHOLD) return
+      railPress.target.setPointerCapture(railPress.pointerId)
+    }
+    railGhost = { x: event.clientX, y: event.clientY, id: railPress.id }
+    const rect = panesEl?.getBoundingClientRect()
+    if (!rect || event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+      dropSide = null
+      return
+    }
+    const splitEdge = paneMode === 'split' ? rect.left + leftWidth : rect.left + rect.width / 2
+    dropSide = event.clientX < splitEdge ? 0 : 1
+  }
+
+  function onRailPointerUp() {
+    railPress = null
+    if (!railGhost) return
+    const { id } = railGhost
+    const side = dropSide
+    railGhost = null
+    dropSide = null
+    suppressRailClick = true
+    setTimeout(() => (suppressRailClick = false))
+    if (side !== null) placeInPane(id, side)
+  }
+
+  function cancelRailDrag() {
+    const press = railPress
+    const wasDragging = !!railGhost
+    railPress = null
+    railGhost = null
+    dropSide = null
+    if (wasDragging) {
+      suppressRailClick = true
+      setTimeout(() => (suppressRailClick = false))
+      if (press?.target.hasPointerCapture(press.pointerId)) press.target.releasePointerCapture(press.pointerId)
+    }
+  }
+
+  function dropLabel(side: 0 | 1) {
+    const unit = splitTotal > 0 && splitTotal < 2 * PANE_MIN ? 'tab' : 'pane'
+    const label = `${side === 0 ? 'Left' : 'Right'} ${unit}`
+    return !split && railGhost?.id === layout.panes[0] ? `${label} · split with ${titles[splitCompanion()]}` : label
+  }
+
+  let railMenu = $state<{ x: number; y: number; items: MenuItem[]; scroller: EventTarget | null } | null>(null)
 
   function onRailMenu(event: MouseEvent, id: View, key?: string) {
     event.preventDefault()
+    cancelRailDrag()
     if (!packs?.active) return
     const at = layout.panes.indexOf(id)
     const other = 1 - layout.focused
@@ -444,7 +505,7 @@
     // The keyboard menu key fires contextmenu without pointer coordinates.
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
     const fromKeyboard = !event.clientX && !event.clientY
-    railMenu = { x: fromKeyboard ? rect.left + 24 : event.clientX, y: fromKeyboard ? rect.bottom : event.clientY, items }
+    railMenu = { x: fromKeyboard ? rect.left + 24 : event.clientX, y: fromKeyboard ? rect.bottom : event.clientY, items, scroller: event.currentTarget }
   }
 
   // The close button leaves with its pane, so we hand focus to the pane that stays.
@@ -454,10 +515,10 @@
     document.getElementById('pane-0')?.focus({ preventScroll: true })
   }
 
-  const openBesideHint = `${isMac ? '⌘-click' : 'Ctrl+click'} to open beside`
+  const openBesideHint = `${isMac ? '⌘-click' : 'Ctrl+click'} or drag to open beside`
 
   function railTitle(status?: string) {
-    return packs?.active ? [status, openBesideHint].filter(Boolean).join('. ') : status
+    return status ?? (packs?.active && !split ? openBesideHint : undefined)
   }
 
   function sideOf(id: View) {
@@ -483,9 +544,22 @@
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === 'Escape' && railGhost) {
+      e.preventDefault()
+      cancelRailDrag()
+    } else {
+      onKey(e)
+    }
+  }}
+  onpointermove={onRailPointerMove}
+  onpointerup={onRailPointerUp}
+  onpointercancel={cancelRailDrag}
+  onblur={cancelRailDrag}
+/>
 
-<div class="shell">
+<div class="shell" class:dragging-rail={!!railGhost}>
   <aside class="rail">
     <div class="brand"><RavenMark /><span>packraven</span><ThemeToggle /></div>
 
@@ -548,6 +622,8 @@
                     onclick={(e) => onRailClick(e, item.id)}
                     onauxclick={(e) => e.button === 1 && openBeside(item.id)}
                     oncontextmenu={(e) => onRailMenu(e, item.id, item.key)}
+                    onpointerdown={(e) => onRailPointerDown(e, item.id)}
+                    onlostpointercapture={cancelRailDrag}
                   >
                     <span class="dot" aria-hidden="true"></span>
                     <span class="label">{item.title}{#if item.status}<span class="visually-hidden">, {item.status}</span>{/if}{#if side}<span class="visually-hidden">, {side} pane</span>{/if}</span>
@@ -580,7 +656,9 @@
       title={railTitle()}
       onclick={(e) => onRailClick(e, 'settings')}
       onauxclick={(e) => e.button === 1 && packs?.active && openBeside('settings')}
-      oncontextmenu={(e) => onRailMenu(e, 'settings')}>
+      oncontextmenu={(e) => onRailMenu(e, 'settings')}
+      onpointerdown={(e) => onRailPointerDown(e, 'settings')}
+      onlostpointercapture={cancelRailDrag}>
       <span class="label">App settings{#if sideOf('settings')}<span class="visually-hidden">, {sideOf('settings')} pane</span>{/if}</span>
       {#if updateWaiting(selfUpdate.view)}
         <span class="chip ok" id="rail-update" title="packraven {selfUpdate.view.status.version} is {selfUpdate.view.status.phase}">
@@ -623,7 +701,7 @@
         </button>
       </div>
     {/if}
-    <div class="panes" class:split={paneMode === 'split'} bind:clientWidth={panesWidth} style:grid-template-columns={paneMode === 'split' ? `${leftWidth}px ${PANE_GAP}px minmax(0, 1fr)` : null}>
+    <div class="panes" class:split={paneMode === 'split'} bind:this={panesEl} bind:clientWidth={panesWidth} style:grid-template-columns={paneMode === 'split' ? `${leftWidth}px ${PANE_GAP}px minmax(0, 1fr)` : null}>
       {#each layout.panes as pane, index (pane)}
         <Pane
           view={pane}
@@ -643,6 +721,15 @@
           <Splitter value={leftWidth} min={PANE_MIN} max={splitTotal - PANE_MIN} total={splitTotal} label="Resize the panes" controls="pane-0" onresize={(px) => paneSplit.set(px / splitTotal)} onreset={() => paneSplit.reset()} />
         {/if}
       {/each}
+      {#if dropSide !== null}
+        <div
+          class="pane-drop {dropSide === 0 ? 'left' : 'right'}"
+          style:width={paneMode === 'split' ? `${dropSide === 0 ? leftWidth : splitTotal - leftWidth}px` : '50%'}
+          aria-hidden="true"
+        >
+          <span>{dropLabel(dropSide)}</span>
+        </div>
+      {/if}
     </div>
   </main>
 </div>
@@ -723,8 +810,14 @@
   {/if}
 {/snippet}
 
+{#if railGhost}
+  <div class="rail-ghost" style:left="{railGhost.x + 14}px" style:top="{railGhost.y + 10}px" aria-hidden="true">
+    {titles[railGhost.id]}
+  </div>
+{/if}
+
 {#if railMenu}
-  <ContextMenu x={railMenu.x} y={railMenu.y} label="Pane actions" items={railMenu.items} onclose={() => (railMenu = null)} />
+  <ContextMenu x={railMenu.x} y={railMenu.y} label="Pane actions" items={railMenu.items} scroller={railMenu.scroller} onclose={() => (railMenu = null)} />
 {/if}
 
 <IgnoreDialog />
@@ -958,12 +1051,12 @@
     border-color: transparent;
   }
 
-  .item:hover:not(:disabled) {
+  .item:is(:hover, :focus-visible):not(:disabled) {
     background: var(--rail-hi);
   }
 
   .item.current,
-  .item.current:hover:not(:disabled) {
+  .item.current:is(:hover, :focus-visible):not(:disabled) {
     font-weight: 700;
     background: var(--rail-current);
   }
@@ -995,6 +1088,10 @@
   .item:hover kbd,
   .item:focus-visible kbd {
     display: inline;
+  }
+
+  .item:has(kbd):is(:hover, :focus-visible) :is(.count, .side, .who) {
+    visibility: hidden;
   }
 
   .item .count {
@@ -1098,11 +1195,69 @@
   }
 
   .panes {
+    position: relative;
     flex: 1;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
     min-height: 0;
+  }
+
+  .dragging-rail,
+  .dragging-rail .item {
+    cursor: grabbing;
+    user-select: none;
+  }
+
+  .item {
+    touch-action: pan-y;
+  }
+
+  .pane-drop {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 10;
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--here) 55%, transparent);
+    box-shadow: inset 0 0 0 2px var(--forest);
+    pointer-events: none;
+  }
+
+  .pane-drop.left {
+    left: 0;
+  }
+
+  .pane-drop.right {
+    right: 0;
+  }
+
+  .pane-drop span {
+    padding: 4px 12px;
+    font-size: var(--step--1);
+    font-weight: 700;
+    white-space: nowrap;
+    color: var(--ochre-ink);
+    background: var(--here);
+    border: 1px solid var(--here-border);
+    border-radius: var(--radius-control);
+    box-shadow: 0 6px 16px var(--shadow);
+  }
+
+  .rail-ghost {
+    position: fixed;
+    z-index: 30;
+    padding: 2px 8px;
+    font-size: var(--step--1);
+    font-weight: 700;
+    white-space: nowrap;
+    color: var(--ochre-ink);
+    background: var(--here);
+    border: 1px solid var(--here-border);
+    border-radius: var(--radius-control);
+    box-shadow: 0 6px 16px var(--shadow);
+    pointer-events: none;
   }
 
   .panes.split {

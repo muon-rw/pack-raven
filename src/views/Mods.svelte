@@ -1142,7 +1142,7 @@
 <UpdateReview request={reviewing} onconfirm={confirmUpdates} oncancel={() => (reviewing = null)} />
 
 {#if menu}
-  <ContextMenu x={menu.x} y={menu.y} label={menu.label} items={menu.items} onclose={() => (menu = null)} />
+  <ContextMenu x={menu.x} y={menu.y} label={menu.label} items={menu.items} scroller={tableRegion} onclose={() => (menu = null)} />
 {/if}
 
 <style>

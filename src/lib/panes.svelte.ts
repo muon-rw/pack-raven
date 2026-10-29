@@ -98,6 +98,35 @@ export function swapPanes() {
   layout.focused = 1 - layout.focused
 }
 
+// Dragging a rail item onto the left or right half of the work area puts it on that side,
+// splitting when only one view was open or swapping when the item was already on the other side.
+export function placeInPane(view: View, side: 0 | 1) {
+  const current = focusedView()
+  if (view === 'add' || current === 'add') return show(view)
+  const at = layout.panes.indexOf(view)
+  if (isSplit()) {
+    if (at === side) layout.focused = side
+    else if (at >= 0) {
+      layout.panes.reverse()
+      layout.focused = side
+    } else {
+      previous = layout.panes[side]
+      layout.panes[side] = view
+      layout.focused = side
+    }
+  } else if (at === 0) {
+    openBeside(splitCompanion())
+    if (side === 1) layout.panes.reverse()
+    layout.focused = side
+  } else if (side === 0) {
+    layout.panes.unshift(view)
+    layout.focused = 0
+  } else {
+    layout.panes.push(view)
+    layout.focused = 1
+  }
+}
+
 // We split with the view you were on before, or Files when there's none to go back to.
 export function splitCompanion(): View {
   const current = focusedView()

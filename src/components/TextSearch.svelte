@@ -652,7 +652,7 @@
 </div>
 
 {#if menu}
-  <ContextMenu x={menu.x} y={menu.y} label="Search result actions" items={menu.items} onclose={() => (menu = null)} />
+  <ContextMenu x={menu.x} y={menu.y} label="Search result actions" items={menu.items} scroller={list} onclose={() => (menu = null)} />
 {/if}
 
 <style>

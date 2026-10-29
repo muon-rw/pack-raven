@@ -48,7 +48,7 @@
   let loadError = $state<string | null>(null)
   let lastAction = $state<string | null>(null)
   let notice = $state<string | null>(null)
-  let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  let menu = $state<{ x: number; y: number; items: MenuItem[]; scroller: EventTarget | null } | null>(null)
   let conflicts = $state<ModConflict[] | null>(null)
   let checkingPull = $state(false)
   let reviewingIgnored = $state<string[] | null>(null)
@@ -357,7 +357,7 @@
     } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
       ensureSelected()
       const rect = (event.target as HTMLElement).getBoundingClientRect()
-      openSelectionMenu(rect.left + 24, rect.bottom)
+      openSelectionMenu(rect.left + 24, rect.bottom, event.target)
     } else {
       return
     }
@@ -373,11 +373,11 @@
     // The keyboard menu key fires contextmenu without pointer coordinates.
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
     const fromKeyboard = !event.clientX && !event.clientY
-    openSelectionMenu(fromKeyboard ? rect.left + 24 : event.clientX, fromKeyboard ? rect.bottom : event.clientY)
+    openSelectionMenu(fromKeyboard ? rect.left + 24 : event.clientX, fromKeyboard ? rect.bottom : event.clientY, event.currentTarget)
   }
 
   // A deleted file has nothing on disk to open or show, but you can still copy its path.
-  async function openSelectionMenu(x: number, y: number) {
+  async function openSelectionMenu(x: number, y: number, scroller: EventTarget | null) {
     const staged = selectedStaged
     const unstaged = selectedUnstaged
     const paths = selectedPaths()
@@ -390,6 +390,7 @@
     menu = {
       x,
       y,
+      scroller,
       items: [
         ...(unstaged.length ? [{ label: `Stage${files(unstaged.length)}`, shortcut: 'Enter', run: () => stage(unstaged) }] : []),
         ...(staged.length ? [{ label: `Unstage${files(staged.length)}`, shortcut: unstaged.length ? undefined : 'Enter', run: () => unstage(staged) }] : []),
@@ -819,7 +820,7 @@
 <UntrackIgnoredDialog paths={reviewingIgnored} ondone={untrackedIgnored} oncancel={() => (reviewingIgnored = null)} />
 
 {#if menu}
-  <ContextMenu x={menu.x} y={menu.y} label="Change actions" items={menu.items} onclose={() => (menu = null)} />
+  <ContextMenu x={menu.x} y={menu.y} label="Change actions" items={menu.items} scroller={menu.scroller} onclose={() => (menu = null)} />
 {/if}
 
 <style>

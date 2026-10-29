@@ -843,6 +843,47 @@ test('views open side by side and keep their shortcuts to the focused pane', asy
   await expect(page.getByRole('region', { name: /pane$/ })).toHaveCount(2)
   await page.keyboard.press('ControlOrMeta+Backslash')
   await expect(page.getByRole('region', { name: /pane$/ })).toHaveCount(0)
+
+  // Dragging a rail item onto the left or right half of the work area opens it on that side,
+  // and Escape cancels a drag without switching views.
+  const panes = await page.locator('.panes').boundingBox()
+  const filesBtn = await rail.getByRole('button', { name: /^Files/ }).boundingBox()
+  await page.mouse.move(filesBtn!.x + filesBtn!.width / 2, filesBtn!.y + filesBtn!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(panes!.x + panes!.width * 0.25, panes!.y + panes!.height / 2)
+  await expect(page.locator('.pane-drop.left')).toHaveText('Left pane')
+  await page.keyboard.press('Escape')
+  await page.mouse.up()
+  await expect(page.getByRole('region', { name: /pane$/ })).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 2, name: 'Git', exact: true })).toBeVisible()
+
+  await page.mouse.move(filesBtn!.x + filesBtn!.width / 2, filesBtn!.y + filesBtn!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(panes!.x + panes!.width * 0.25, panes!.y + panes!.height / 2)
+  await page.mouse.up()
+  await expect(page.getByRole('region', { name: 'Files, left pane' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Git, right pane' })).toBeVisible()
+})
+
+test('a rail context menu stays open while a live log scrolls', async ({ page }) => {
+  await openApp(page, 'test', 'ready')
+  await page.evaluate(() => {
+    const emit = (globalThis as unknown as { __mockEmit: (event: string, payload: unknown) => void }).__mockEmit
+    for (let i = 1; i <= 40; i++) emit('job-log', { job: 'server', stream: 'stdout', text: `[12:00:00] [Server thread/INFO] [minecraft/DedicatedServer]: Line ${i}` })
+  })
+  const rail = page.getByRole('navigation', { name: 'Pack' })
+  await rail.getByRole('button', { name: /^Mods/ }).click({ button: 'right' })
+  const menu = page.getByRole('menu', { name: 'Pane actions' })
+  await expect(menu).toBeVisible()
+
+  await page.evaluate(() => {
+    const emit = (globalThis as unknown as { __mockEmit: (event: string, payload: unknown) => void }).__mockEmit
+    for (let i = 41; i <= 80; i++) emit('job-log', { job: 'server', stream: 'stdout', text: `[12:00:01] [Server thread/INFO] [minecraft/DedicatedServer]: Line ${i}` })
+  })
+  await expect(page.getByText('Line 80')).toBeVisible()
+  await expect(menu).toBeVisible()
+  await menu.getByRole('menuitem', { name: 'Open beside' }).click()
+  await expect(page.getByRole('region', { name: 'Mods, right pane' })).toBeVisible()
 })
 
 test('tracked files your .gitignore covers can be untracked, or kept with an exception', async ({ page }) => {

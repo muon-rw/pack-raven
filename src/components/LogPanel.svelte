@@ -56,10 +56,11 @@
   let selected = $state<number | null>(null)
   let spoken = $state('')
   let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
-  let viewport: HTMLDivElement
+  let viewport: HTMLDivElement = $state()!
   let filterField: HTMLInputElement
   let dragging = false
   let lastInput = 0
+  let programmaticTop = -1
 
   // A new log starts at its end, with nothing folded or selected.
   $effect(() => {
@@ -172,6 +173,7 @@
     if (!viewport) return
     viewport.scrollTop = top
     scrollTop = viewport.scrollTop
+    programmaticTop = scrollTop
   }
 
   function scrollToEnd() {
@@ -184,6 +186,10 @@
     // A scroll event queued before the panel unmounts still arrives after.
     if (!viewport) return
     scrollTop = viewport.scrollTop
+    if (scrollTop === programmaticTop) {
+      programmaticTop = -1
+      return
+    }
     const nearBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < ROW * 2
     if (nearBottom) pinned = true
     else if (dragging || performance.now() - lastInput < 300) pinned = false
@@ -627,7 +633,7 @@
 </div>
 
 {#if menu}
-  <ContextMenu x={menu.x} y={menu.y} label="Log line actions" items={menu.items} onclose={() => (menu = null)} />
+  <ContextMenu x={menu.x} y={menu.y} label="Log line actions" items={menu.items} scroller={viewport} onclose={() => (menu = null)} />
 {/if}
 
 <style>

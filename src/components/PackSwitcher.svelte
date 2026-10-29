@@ -49,7 +49,7 @@
   }
 </script>
 
-<svelte:window onclick={(e) => open && !menu?.contains(e.target as Node) && !trigger.contains(e.target as Node) && close(false)} />
+<svelte:window onpointerdown={(e) => open && !menu?.contains(e.target as Node) && !trigger.contains(e.target as Node) && close(false)} />
 
 <div class="switcher">
   <h1>

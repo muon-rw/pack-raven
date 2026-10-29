@@ -58,7 +58,7 @@
   let cutPaths = $state<string[]>([])
   let jump = $state<{ text: string; found: boolean } | null>(null)
   let jumpTimer = 0
-  let tree: HTMLDivElement
+  let tree: HTMLDivElement = $state()!
 
   let press: { x: number; y: number; row: Row; pointerId: number; target: HTMLElement } | null = null
   let ghost = $state<{ x: number; y: number } | null>(null)
@@ -964,7 +964,7 @@
 {/if}
 
 {#if menu}
-  <ContextMenu x={menu.x} y={menu.y} label="File actions" items={menu.items} onclose={() => (menu = null)} />
+  <ContextMenu x={menu.x} y={menu.y} label="File actions" items={menu.items} scroller={tree} onclose={() => (menu = null)} />
 {/if}
 
 <style>
