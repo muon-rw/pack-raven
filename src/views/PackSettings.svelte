@@ -5,6 +5,7 @@
   import { onMount } from 'svelte'
   import { ask } from '@tauri-apps/plugin-dialog'
   import { api, errorText, type PackConfig, type PackJavaDefault } from '../lib/api'
+  import OverridePermissions from '../components/OverridePermissions.svelte'
   import { scanJava } from '../lib/java.svelte'
   import { serverView } from '../lib/nav.svelte'
 
@@ -41,6 +42,7 @@
       // Only the App settings hint depends on this, so a failed read shouldn't hide the pack's settings.
       appRunArgs = await api.getSettings().then((settings) => activeLines(settings.runArgs), () => 0)
       config = await api.getPackConfig()
+      checkModrinthProject(config.modrinth.project_id.trim())
       webhook = (await api.getWebhook()) ?? ''
       packJava = (await api.getPackJava()) ?? ''
       configError = null
@@ -65,6 +67,7 @@
     // Svelte binds a cleared number field to null, which packraven.toml can't hold. We treat an
     // empty project ID as not set, but the test server needs a port.
     config.curseforge.project_id = Number(config.curseforge.project_id) || 0
+    config.modrinth.project_id = config.modrinth.project_id.trim()
     portMissing = !config.test.port
     if (portMissing) {
       messageFailed = true
@@ -78,7 +81,10 @@
     try {
       // Server saves its own settings as you change them, so we keep whatever it wrote since we loaded.
       const fresh = await api.getPackConfig()
-      await api.savePackConfig({ ...config, server: fresh.server, updates: fresh.updates })
+      const { allowed_override_jars, exclude, allowed_authors } = fresh.modrinth
+      const modrinth = { ...config.modrinth, allowed_override_jars, exclude, allowed_authors }
+      const curseforge = { ...config.curseforge, allowed_override_jars: fresh.curseforge.allowed_override_jars, exclude: fresh.curseforge.exclude }
+      await api.savePackConfig({ ...config, server: fresh.server, updates: fresh.updates, modrinth, curseforge })
       await api.setWebhook(webhook)
       await api.setPackJava(packJava.trim() || null)
       await api.setRunArgs(fromDraft(runArgs))
@@ -86,6 +92,12 @@
       onchange()
       messageFailed = false
       message = argsProblem ? 'Saved, but an extra launch argument will stop test runs from starting' : 'Saved'
+      const project = config?.modrinth.project_id ?? ''
+      await checkModrinthProject(project)
+      if (project && modrinthProject?.title === null) {
+        messageFailed = true
+        message = "Saved, but Modrinth has no project with that ID or slug, so publishing to Modrinth would fail"
+      }
     } catch (error) {
       messageFailed = true
       message = `Couldn't save: ${errorText(error)}`
@@ -106,6 +118,18 @@
       discordMessage = errorText(error)
     } finally {
       testing = false
+    }
+  }
+
+  let modrinthProject = $state<{ id: string; title: string | null } | null>(null)
+
+  // A mistyped project would otherwise only show up when you publish.
+  async function checkModrinthProject(id: string) {
+    if (!id) return (modrinthProject = null)
+    try {
+      modrinthProject = { id, title: await api.modrinthProjectTitle(id) }
+    } catch {
+      modrinthProject = null
     }
   }
 
@@ -141,19 +165,32 @@
   {:else if config}
     <form class="form" onsubmit={(e) => { e.preventDefault(); save() }} oninput={() => !messageFailed && (message = null)}>
       <section>
-        <h3>CurseForge</h3>
+        <h3 id="publishing-title" tabindex="-1">Publishing</h3>
         <div class="grid">
-          <label>Project ID <input type="number" min="0" bind:value={config.curseforge.project_id} placeholder="Not set" /></label>
+          <label>CurseForge project ID <input type="number" min="0" bind:value={config.curseforge.project_id} placeholder="Not set" /></label>
+          <label>
+            Modrinth project
+            <input bind:value={config.modrinth.project_id} placeholder="Not set" spellcheck="false" aria-describedby="modrinth-project-hint" />
+            <span class="hint" id="modrinth-project-hint">
+              {#if modrinthProject && modrinthProject.id === config.modrinth.project_id.trim()}
+                {#if modrinthProject.title}On Modrinth as {modrinthProject.title}{:else}<span class="failed">Modrinth has no project with this ID or slug</span>{/if}
+              {:else}
+                The ID, or the slug from the project's URL
+              {/if}
+            </span>
+          </label>
           <label>
             Release type
-            <select bind:value={config.curseforge.release_type}>
+            <select bind:value={config.curseforge.release_type} aria-describedby="release-type-hint">
               <option value="release">Release</option>
               <option value="beta">Beta</option>
               <option value="alpha">Alpha</option>
             </select>
+            <span class="hint" id="release-type-hint">On both platforms</span>
           </label>
           <label>Author <input bind:value={config.author} /></label>
         </div>
+        <p class="hint">packraven publishes to each platform you give a project.</p>
         <label class="check">
           <input type="checkbox" bind:checked={config.curseforge.manual_release} /> Hold approved files until I release them on CurseForge
         </label>
@@ -232,7 +269,7 @@
           <input type="checkbox" bind:checked={config.discord.show_author} /> Show the project author, with their CurseForge avatar and a link to their profile
         </label>
         <label class="check">
-          <input type="checkbox" bind:checked={config.discord.announce_on_approval} /> Announce each release once CurseForge approves it
+          <input type="checkbox" bind:checked={config.discord.announce_on_approval} /> Announce each release once every platform it's on has approved it
         </label>
         <p class="hint">packraven checks every few minutes while it's running in the tray. You can also announce a release by hand from Releases.</p>
       </section>
@@ -242,6 +279,9 @@
         <span id="pack-save-status" class:muted={!messageFailed} class:failed={messageFailed} role="status">{message ?? ''}</span>
       </div>
     </form>
+
+    <OverridePermissions platform="curseforge" targeted={config.curseforge.project_id > 0} reloadKey={config} {onchange} />
+    <OverridePermissions platform="modrinth" targeted={!!config.modrinth.project_id.trim()} reloadKey={config} {onchange} />
   {/if}
 
   <section class="removal">
@@ -276,6 +316,7 @@
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    align-items: start;
     gap: 14px 18px;
   }
 
@@ -341,4 +382,10 @@
   .path {
     overflow-wrap: anywhere;
   }
+
+  .grid > label .hint {
+    display: block;
+    margin-top: 4px;
+  }
+
 </style>

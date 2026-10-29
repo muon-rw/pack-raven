@@ -3,11 +3,12 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 
 use crate::git;
+use crate::instance::Instance;
 use crate::jobs::Log;
 use crate::modsync;
-use crate::pack::{Lockfile, LOCKFILE};
+use crate::pack::{Loader, Lockfile, LOCKFILE};
 use crate::remote;
-use crate::setup::{self, InstanceInfo};
+use crate::setup;
 
 pub async fn join(dir: &Path, remote_url: &str, log: &Log) -> Result<String> {
     let remote_url = remote_url.trim();
@@ -17,7 +18,7 @@ pub async fn join(dir: &Path, remote_url: &str, log: &Log) -> Result<String> {
     if dir.join(".git").exists() {
         bail!("{} is already a git repository. Create a new profile in CurseForge to join the pack into.", dir.display());
     }
-    let profile = setup::inspect(dir, &[])?;
+    let profile = Instance::read(dir)?;
     git::run(dir, &["init", "-q"])?;
     log.info("Created a git repository");
     // Until the checkout, we've only added .git, so we remove it to leave the profile as you created it.
@@ -38,7 +39,7 @@ pub async fn join(dir: &Path, remote_url: &str, log: &Log) -> Result<String> {
     Ok(format!("Joined. packraven checked out {branch} and placed the {} files in its mod list.", lock.files.len()))
 }
 
-async fn fetch_pack(dir: &Path, remote_url: &str, profile: &InstanceInfo, log: &Log) -> Result<String> {
+async fn fetch_pack(dir: &Path, remote_url: &str, profile: &Instance, log: &Log) -> Result<String> {
     git::run(dir, &["remote", "add", "origin", remote_url])?;
     remote::run_logged(dir, &["fetch", "origin"], log).await?;
     if git::run(dir, &["branch", "-r"])?.trim().is_empty() {
@@ -55,13 +56,14 @@ async fn fetch_pack(dir: &Path, remote_url: &str, profile: &InstanceInfo, log: &
 
 // The automatic mod list update copies the profile's versions into mods.lock.json, so joining with
 // different ones would change the pack for everyone on your next commit.
-fn check_versions(pack: &Lockfile, profile: &InstanceInfo) -> Result<()> {
+fn check_versions(pack: &Lockfile, profile: &Instance) -> Result<()> {
     let fits = |wanted: &Option<String>, have: &Option<String>| wanted.is_none() || wanted == have;
-    if fits(&pack.minecraft, &profile.minecraft) && fits(&pack.loader, &profile.loader) {
+    let loader_fits = pack.loader.is_none() || pack.loader == profile.loader;
+    if fits(&pack.minecraft, &profile.minecraft) && loader_fits {
         return Ok(());
     }
-    let describe = |minecraft: &Option<String>, loader: &Option<String>| {
-        format!("Minecraft {} with {}", minecraft.as_deref().unwrap_or("(any version)"), loader.as_deref().unwrap_or("no mod loader"))
+    let describe = |minecraft: &Option<String>, loader: &Option<Loader>| {
+        format!("Minecraft {} with {}", minecraft.as_deref().unwrap_or("(any version)"), loader.as_ref().map_or_else(|| "no mod loader".into(), ToString::to_string))
     };
     bail!(
         "The pack needs {}, but this profile has {}. Create a CurseForge profile with the pack's versions, then join again.",

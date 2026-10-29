@@ -1,4 +1,5 @@
 mod announcer;
+mod allowlist;
 mod archive;
 mod associations;
 mod changelog;
@@ -20,11 +21,13 @@ mod java;
 mod history;
 mod gitops;
 mod http;
+mod instance;
 mod instance_locks;
 mod jobs;
 mod keychain;
 mod join;
 mod launch;
+mod links;
 mod minecraft_auth;
 mod minecraft_commands;
 mod logs;
@@ -48,6 +51,7 @@ mod setup;
 mod sides;
 mod system_commands;
 mod testrun;
+mod twins;
 mod text_search;
 mod watcher;
 #[cfg(test)]
@@ -199,6 +203,8 @@ pub fn run() {
             mod_commands::set_update_channel,
             mod_commands::search_mods,
             mod_commands::mod_categories,
+            mod_commands::modrinth_counterparts,
+            mod_commands::curseforge_counterparts,
             mod_commands::preview_mods,
             mod_commands::change_mods,
             mod_commands::cancel_mod_change,
@@ -210,6 +216,14 @@ pub fn run() {
             mod_commands::remove_mods,
             commands::publish_preflight,
             commands::build_client_export,
+            commands::build_modrinth_export,
+            commands::upload_release_to_modrinth,
+            commands::set_override_choice,
+            commands::modrinth_project_title,
+            commands::look_up_override_candidates,
+            commands::override_choices,
+            commands::set_modrinth_author,
+            commands::published_to,
             commands::build_server_pack,
             commands::start_test,
             commands::start_client,

@@ -11,6 +11,10 @@ export function modCountsSummary(counts: ModCounts): string | null {
   return parts.length ? parts.join(', ') : null
 }
 
-export function notOnCurseforgeSummary(paths: string[]): string {
-  return paths.length === 1 ? '1 file not on CurseForge' : `${paths.length} files not on CurseForge`
+export function hostsOf(overview: { modrinthProjectId: string }): string {
+  return overview.modrinthProjectId ? 'CurseForge or Modrinth' : 'CurseForge'
+}
+
+export function notOnHostsSummary(paths: readonly unknown[], hosts: string): string {
+  return paths.length === 1 ? `1 file not on ${hosts}` : `${paths.length} files not on ${hosts}`
 }

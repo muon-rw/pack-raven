@@ -16,7 +16,8 @@ const QUIET_PERIOD: Duration = Duration::from_secs(3);
 #[derive(Default, Clone, PartialEq)]
 pub struct ModListState {
     pub dir: PathBuf,
-    pub not_on_curseforge: Vec<String>,
+    pub unhosted: Vec<String>,
+    pub modrinth_error: Option<String>,
     pub error: Option<String>,
 }
 
@@ -26,8 +27,8 @@ struct ModListChanged;
 // Listeners reload the whole list, so we only tell them when the lockfile or what we report changed.
 pub fn record(app: &AppHandle, dir: &Path, result: Result<modsync::Refresh>) {
     let (state, lock_changed) = match result {
-        Ok(refresh) => (ModListState { dir: dir.to_path_buf(), not_on_curseforge: refresh.unknown, error: None }, refresh.changed),
-        Err(error) => (ModListState { dir: dir.to_path_buf(), not_on_curseforge: Vec::new(), error: Some(format!("{error:#}")) }, false),
+        Ok(refresh) => (ModListState { dir: dir.to_path_buf(), unhosted: refresh.unknown, modrinth_error: refresh.modrinth_error, error: None }, refresh.changed),
+        Err(error) => (ModListState { dir: dir.to_path_buf(), error: Some(format!("{error:#}")), ..Default::default() }, false),
     };
     let app_state = app.state::<AppState>();
     let state_changed = {

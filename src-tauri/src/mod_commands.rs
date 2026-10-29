@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 
 use anyhow::Context;
 use serde::Serialize;
@@ -8,9 +7,9 @@ use crate::commands::AppState;
 use crate::curseforge;
 use crate::history::{self, Action};
 use crate::jobs::Log;
-use crate::mod_updates::{self, AddonKind, Category, InstalledMods, ModCheck, ModFile, ModRequest, SearchPage, SearchRequest};
+use crate::mod_updates::{self, AddonKind, Category, InstalledMods, ModCheck, ModFile, ModRequest, RemoteText, SearchPage, SearchRequest};
 use crate::modsync;
-use crate::pack::{Pack, ReleaseType, BCC_PROJECT_ID};
+use crate::pack::{ModKey, Pack, Platform, ReleaseType, BCC_PROJECT_ID};
 use crate::sides::MetadataCache;
 
 type CmdResult<T> = Result<T, String>;
@@ -41,8 +40,8 @@ pub async fn check_mod_updates(state: State<'_, AppState>) -> CmdResult<Vec<ModC
 }
 
 #[tauri::command]
-pub async fn mod_versions(state: State<'_, AppState>, path: String, project_id: u64) -> CmdResult<Vec<ModFile>> {
-    mod_updates::versions(&state.pack().map_err(err)?, &path, project_id).await.map_err(err)
+pub async fn mod_versions(state: State<'_, AppState>, path: String, key: String) -> CmdResult<Vec<ModFile>> {
+    mod_updates::versions(&state.pack().map_err(err)?, &path, &key).await.map_err(err)
 }
 
 #[tauri::command]
@@ -58,21 +57,53 @@ pub async fn search_mods(state: State<'_, AppState>, request: SearchRequest) -> 
 }
 
 #[tauri::command]
-pub async fn mod_categories(kind: AddonKind) -> CmdResult<Vec<Category>> {
-    mod_updates::categories(kind).await.map_err(err)
+pub async fn mod_categories(platform: Platform, kind: AddonKind) -> CmdResult<Vec<Category>> {
+    mod_updates::categories(platform, kind).await.map_err(err)
+}
+
+#[derive(Serialize)]
+pub struct Counterpart {
+    key: String,
+    url: String,
+}
+
+#[tauri::command]
+pub async fn modrinth_counterparts(keys: Vec<String>) -> CmdResult<Vec<Counterpart>> {
+    let ids: Vec<u64> = keys.iter().filter_map(|k| k.parse::<ModKey>().ok()?.curseforge_id()).collect();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let found = crate::links::modrinth_counterparts(&ids).await.map_err(err)?;
+    Ok(found.into_iter().map(|(id, url)| Counterpart { key: ModKey::Curseforge(id).to_string(), url }).collect())
+}
+
+#[tauri::command]
+pub async fn curseforge_counterparts(keys: Vec<String>) -> CmdResult<Vec<Counterpart>> {
+    let ids: Vec<String> = keys
+        .iter()
+        .filter_map(|k| match k.parse::<ModKey>().ok()? {
+            ModKey::Modrinth(id) => Some(id),
+            ModKey::Curseforge(_) => None,
+        })
+        .collect();
+    if ids.is_empty() || curseforge::core_key().is_none() {
+        return Ok(Vec::new());
+    }
+    let found = crate::links::curseforge_counterparts(&ids).await.map_err(err)?;
+    Ok(found.into_iter().map(|(id, url)| Counterpart { key: ModKey::Modrinth(id).to_string(), url }).collect())
 }
 
 #[derive(Serialize)]
 pub struct ModPreview {
     dependencies: Vec<String>,
     unavailable: Vec<String>,
-    projects: Vec<u64>,
+    projects: Vec<String>,
 }
 
 #[tauri::command]
 pub async fn preview_mods(state: State<'_, AppState>, requests: Vec<ModRequest>) -> CmdResult<ModPreview> {
     let plan = mod_updates::plan(&state.pack().map_err(err)?, &requests).await.map_err(err)?;
-    let projects = plan.placements.iter().map(|p| p.entry.project_id).collect();
+    let projects = plan.placements.iter().filter_map(|p| p.entry.key()).map(|key| key.to_string()).collect();
     Ok(ModPreview { dependencies: plan.dependencies, unavailable: plan.unavailable, projects })
 }
 
@@ -81,12 +112,13 @@ fn sync_locks(state: &AppState, pack: &mut Pack) -> anyhow::Result<()> {
 }
 
 #[tauri::command(async)]
-pub fn set_mod_locked(state: State<'_, AppState>, project_id: u64, locked: bool) -> CmdResult<()> {
+pub fn set_mod_locked(state: State<'_, AppState>, key: String, locked: bool) -> CmdResult<()> {
+    let key: ModKey = key.parse()?;
     let mut pack = state.pack().map_err(err)?;
     let list = &mut pack.config.updates.locked;
-    list.retain(|id| *id != project_id);
+    list.retain(|k| *k != key);
     if locked {
-        list.push(project_id);
+        list.push(key);
         list.sort_unstable();
     }
     pack.save_config().map_err(err)?;
@@ -94,15 +126,15 @@ pub fn set_mod_locked(state: State<'_, AppState>, project_id: u64, locked: bool)
 }
 
 #[tauri::command]
-pub async fn mod_description(project_id: u64) -> CmdResult<String> {
-    crate::curseforge::description(project_id).await.map_err(err)
+pub async fn mod_description(key: String) -> CmdResult<RemoteText> {
+    mod_updates::description(&key).await.map_err(err)
 }
 
 const DISABLED_SUFFIX: &str = ".disabled";
 
 #[tauri::command]
-pub async fn mod_changelog(project_id: u64, file_id: u64) -> CmdResult<String> {
-    crate::curseforge::changelog(project_id, file_id).await.map_err(err)
+pub async fn mod_changelog(key: String, file: String) -> CmdResult<RemoteText> {
+    mod_updates::changelog(&key, &file).await.map_err(err)
 }
 
 #[tauri::command]
@@ -154,8 +186,8 @@ pub fn change_mods(app: AppHandle, state: State<'_, AppState>, requests: Vec<Mod
         .iter()
         .filter_map(|r| r.replaces.as_deref())
         .map(|path| {
-            let project = pack.lock.files.iter().find(|e| e.path == path).map(|e| e.project_id);
-            project.and_then(|id| cache.known_name(id)).map_or_else(|| path.rsplit('/').next().unwrap_or(path).to_string(), |n| n.name.clone())
+            let key = pack.lock.files.iter().find(|e| e.path == path).and_then(|e| e.key());
+            key.and_then(|key| cache.known_name(&key)).map_or_else(|| path.rsplit('/').next().unwrap_or(path).to_string(), |n| n.name.clone())
         })
         .collect();
     let dir = pack.dir;
@@ -192,7 +224,7 @@ async fn apply_mod_requests(pack: &Pack, requests: &[ModRequest], updated: &[Str
         message.push(format!("Added {} as required.", names(&plan.dependencies)));
     }
     if !plan.unavailable.is_empty() {
-        message.push(format!("CurseForge has no file of {} for this pack's version, so you'll need to find one.", names(&plan.unavailable)));
+        message.push(format!("There's no file of {} for this pack's version, so you'll need to find one.", names(&plan.unavailable)));
     }
     {
         let _guard = modsync::MOD_LIST_GUARD.lock().await;
@@ -218,7 +250,7 @@ pub fn set_up_version_checker(app: AppHandle, state: State<'_, AppState>, versio
             .find(|f| f.release_type == 1)
             .or(files.first())
             .context("CurseForge has no Better Compatibility Checker file for this pack's Minecraft version and loader")?;
-        let message = apply_mod_requests(&pack, &[ModRequest { file_id: file.id, replaces: None }], &[], &log).await?;
+        let message = apply_mod_requests(&pack, &[ModRequest { file: Some(format!("cf:{}", file.id)), project: None, kind: None, replaces: None }], &[], &log).await?;
         pack.write_bcc_config_if_missing(version.trim())?;
         Ok(message)
     })
@@ -250,12 +282,12 @@ pub async fn remove_mods(state: State<'_, AppState>, paths: Vec<String>) -> CmdR
 // Overrides and locks name projects, so we drop the ones whose last file you just removed.
 fn forget_removed_projects(root: &std::path::Path) -> anyhow::Result<()> {
     let mut pack = Pack::open(root)?;
-    let present: HashSet<u64> = pack.lock.files.iter().map(|e| e.project_id).collect();
+    let lock = &pack.lock;
     let lists = [&mut pack.config.server.client_only, &mut pack.config.server.keep, &mut pack.config.updates.locked];
     let mut changed = false;
     for list in lists {
         let before = list.len();
-        list.retain(|id| present.contains(id));
+        list.retain(|key| lock.files.iter().any(|e| e.has_key(key)));
         changed |= list.len() != before;
     }
     if changed {

@@ -13,6 +13,7 @@ pub(crate) const KEYCHAIN_SERVICE: &str = APP_IDENTIFIER;
 #[serde(rename_all = "lowercase")]
 pub enum Credential {
     Upload,
+    Modrinth,
     Github,
 }
 
@@ -20,6 +21,7 @@ impl Credential {
     fn keychain_user(self) -> &'static str {
         match self {
             Credential::Upload => "curseforge-upload-token",
+            Credential::Modrinth => "modrinth-token",
             Credential::Github => "github-token",
         }
     }
@@ -28,6 +30,7 @@ impl Credential {
     fn legacy_env_names(self) -> &'static [&'static str] {
         match self {
             Credential::Upload => &["CURSEFORGE_TOKEN", "CF_TOKEN"],
+            Credential::Modrinth => &["MODRINTH_TOKEN"],
             Credential::Github => &[],
         }
     }
@@ -48,6 +51,7 @@ pub enum Source {
 #[serde(default)]
 struct Sources {
     upload: Option<Source>,
+    modrinth: Option<Source>,
     github: Option<Source>,
 }
 
@@ -55,6 +59,7 @@ impl Sources {
     fn slot(&mut self, credential: Credential) -> &mut Option<Source> {
         match credential {
             Credential::Upload => &mut self.upload,
+            Credential::Modrinth => &mut self.modrinth,
             Credential::Github => &mut self.github,
         }
     }

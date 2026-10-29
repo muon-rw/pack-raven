@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { notOnCurseforgeSummary } from '../lib/modsync'
+  import { hostsOf, notOnHostsSummary } from '../lib/modsync'
   import Notice from '../components/Notice.svelte'
   import { onMount } from 'svelte'
   import { open } from '@tauri-apps/plugin-dialog'
@@ -19,27 +19,35 @@
   let diffError: string | null = $state(null)
   let loadingDiff = $state(false)
   let notesError: string | null = $state(null)
-  let keys = $state<{ upload: boolean } | null>(null)
+  let keys = $state<{ upload: boolean; modrinth: boolean } | null>(null)
 
   onMount(async () => {
-    api.credentialsStatus().then((c) => (keys = { upload: c.upload.present }), () => {})
+    api.credentialsStatus().then((c) => (keys = { upload: c.upload.present, modrinth: c.modrinth.present }), () => {})
     notes = savedNotes = await api.getNotes().catch(() => '')
     loadDiff()
   })
 
   // Before the first release we list what publishing needs here, where the work starts, rather
   // than only in Publish's checks at the end.
-  let firstRelease = $derived(
-    overview && !overview.lastTag && keys
-      ? [
-          { done: overview.projectId > 0, text: 'Set the CurseForge project ID', page: 'pack' as const, where: 'Pack settings' },
-          { done: keys.upload, text: 'Add a CurseForge upload token', page: 'settings' as const, where: 'App settings' },
-        ]
-      : null,
-  )
+  // We only ask for the tokens of the platforms you publish to.
+  let firstRelease = $derived.by(() => {
+    if (!overview || overview.lastTag || !keys) return null
+    const curseforge = overview.projectId > 0
+    const modrinth = !!overview.modrinthProjectId
+    return [
+      { done: curseforge || modrinth, text: 'Set a CurseForge or Modrinth project', page: 'pack' as const, anchor: 'publishing-title', where: 'Pack settings' },
+      curseforge ? { done: keys.upload, text: 'Add a CurseForge upload token', page: 'settings' as const, anchor: 'curseforge-access-title', where: 'App settings' } : null,
+      modrinth ? { done: keys.modrinth, text: 'Add a Modrinth token', page: 'settings' as const, anchor: 'modrinth-access-title', where: 'App settings' } : null,
+    ].filter((item) => item !== null)
+  })
+
+  function go(page: 'pack' | 'settings', anchor: string) {
+    nav.anchor = anchor
+    nav.view = page
+  }
 
   let savedVersion = $derived(overview?.version ?? null)
-  let lastVersion = $derived(overview?.lastTag?.replace(/^v/, '') ?? null)
+  let lastVersion = $derived(overview?.lastVersion ?? null)
   let installingBcc = $state(false)
   let bccError: string | null = $state(null)
   let bccBusy = $derived(installingBcc && job('mods').phase === 'running')
@@ -97,7 +105,7 @@
 
   async function resolveUnknown(action: 'track' | 'trash') {
     if (!overview) return
-    const paths = overview.notOnCurseforge
+    const paths = overview.unhosted
     unknownBusy = action
     try {
       if (action === 'track') {
@@ -177,17 +185,9 @@
 
   let changeCount = $derived(diff ? diff.added.length + diff.updated.length + diff.removed.length : 0)
   let archivedNote = $derived(
-    overview?.lastTag ? `packraven archived the notes for ${overview.lastTag} to changelogs/${overview.lastTag.replace(/^v/, '')}.md when you published it.` : null,
+    overview?.lastTag ? `packraven archived the notes for ${overview.lastTag} to changelogs/${overview.lastVersion}.md when you published it.` : null,
   )
-  let readiness = $derived(
-    [
-      diff?.since ? `${changeCount || 'No'} mod ${changeCount === 1 ? 'change' : 'changes'} since ${diff.since}` : null,
-      overview?.devJars.length ? `${overview.devJars.length} local dev ${overview.devJars.length === 1 ? 'build' : 'builds'} excluded` : null,
-    ]
-      .filter(Boolean)
-      .map((part) => `${part}.`)
-      .join(' '),
-  )
+  let readiness = $derived(diff?.since ? `${changeCount || 'No'} mod ${changeCount === 1 ? 'change' : 'changes'} since ${diff.since}.` : '')
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -241,7 +241,7 @@
           <li class:done={item.done}>
             <span class="mark" aria-hidden="true">{item.done ? '✓' : ''}</span>
             <span>
-              {item.text}{item.done ? '' : ' in '}{#if !item.done}<button class="link" onclick={() => (nav.view = item.page)}>{item.where}</button>{/if}<span class="visually-hidden">{item.done ? ', done' : ', not done yet'}</span>
+              {item.text}{item.done ? '' : ' in '}{#if !item.done}<button class="link" onclick={() => go(item.page, item.anchor)}>{item.where}</button>{/if}<span class="visually-hidden">{item.done ? ', done' : ', not done yet'}</span>
             </span>
           </li>
         {/each}
@@ -249,17 +249,18 @@
     </section>
   {/if}
 
-  {#if overview?.notOnCurseforge.length}
-    {@const paths = overview.notOnCurseforge}
+  {#if overview?.unhosted.length}
+    {@const paths = overview.unhosted}
+    {@const hosts = hostsOf(overview)}
     <Notice tone="warn">
       <div class="mod-list-notice">
         <p>
-          <strong>{notOnCurseforgeSummary(paths)}.</strong> packraven only downloads mods from CurseForge, so releases and collaborators won't get
+          <strong>{notOnHostsSummary(paths, hosts)}.</strong> packraven only downloads mods from {hosts}, so releases and collaborators won't get
           {paths.length === 1 ? 'this file' : 'these files'} unless you commit {paths.length === 1 ? 'it' : 'them'} directly. You can't publish until you add
           {paths.length === 1 ? 'it' : 'them'} to Git or remove {paths.length === 1 ? 'it' : 'them'}.
         </p>
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <ul class="folder-files" tabindex="0" aria-label="Files not on CurseForge">
+        <ul class="folder-files" tabindex="0" aria-label="Files not on {hosts}">
           {#each paths as path (path)}<li class="file">{path}</li>{/each}
         </ul>
         <div class="actions">
@@ -288,11 +289,6 @@
     <p class:muted={unknownResult.ok} class:failed={!unknownResult.ok} role="status">
       <LinkedText text={unknownResult.text} />
     </p>
-  {/if}
-  {#if overview?.devJars.length}
-    <Notice tone="warn">
-      <p>Local dev builds are in the mods folder and won't be part of a release: <span class="file">{overview.devJars.join(', ')}</span></p>
-    </Notice>
   {/if}
 
   <div class="columns" class:wide={notesMode === 'split'}>

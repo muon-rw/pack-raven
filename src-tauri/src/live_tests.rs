@@ -216,7 +216,7 @@ async fn server_pack_scripts_boot() {
 #[ignore]
 fn client_export_manifest() {
     let (_, pack) = pack();
-    let zip = export::client_export(&pack, "test", &scratch().join("build"), &Log::console("client-export")).unwrap();
+    let zip = export::client_export(&pack, &Default::default(), "test", &scratch().join("build"), &Log::console("client-export")).unwrap();
     println!("zip {} ({} KB)", zip.display(), std::fs::metadata(&zip).unwrap().len() / 1000);
 }
 
@@ -306,21 +306,22 @@ async fn update_mod_with_dependencies() {
     let checks = mod_updates::check(&pack).await.unwrap();
     println!("{checks:#?}");
     let newer = serde_json::to_value(&checks[0]).unwrap()["newer"].as_array().unwrap().clone();
-    let file_id = newer.iter().find(|f| f["releaseType"] == "release").expect("a newer release")["fileId"].as_u64().unwrap();
+    let file = newer.iter().find(|f| f["releaseType"] == "release").expect("a newer release")["file"].as_str().unwrap().to_string();
+    let file_id: u64 = file.trim_start_matches("cf:").parse().unwrap();
 
-    let plan = mod_updates::plan(&pack, &[ModRequest { file_id, replaces: Some(old_path.clone()) }]).await.unwrap();
+    let plan = mod_updates::plan(&pack, &[ModRequest { file: Some(file), project: None, kind: None, replaces: Some(old_path.clone()) }]).await.unwrap();
     println!("dependencies {:?}, unavailable {:?}", plan.dependencies, plan.unavailable);
     assert!(!plan.dependencies.is_empty(), "Apotheosis requires Placebo and Apothic Attributes");
     modsync::place(&dir, plan.placements, &log).await.unwrap();
 
     let lock = Pack::open(&dir).unwrap().lock;
     assert!(!dir.join(&old_path).exists());
-    assert!(lock.files.iter().any(|e| e.project_id == APOTHEOSIS && e.file_id == file_id));
+    assert!(lock.files.iter().any(|e| e.curseforge.as_ref().is_some_and(|f| f.project_id == APOTHEOSIS && f.file_id == file_id)));
     assert!(lock.files.iter().all(|e| dir.join(&e.path).exists()));
     assert_eq!(lock.files.len(), plan.dependencies.len() + 1);
 
     let written = std::fs::read_to_string(dir.join(crate::pack::LOCKFILE)).unwrap();
-    assert!(modsync::refresh_mod_list(&dir).await.unwrap().is_empty());
+    assert!(modsync::refresh_mod_list(&dir).await.unwrap().unknown.is_empty());
     assert_eq!(std::fs::read_to_string(dir.join(crate::pack::LOCKFILE)).unwrap(), written, "the watcher's refresh should agree with what we wrote");
 }
 
@@ -337,19 +338,20 @@ async fn install_mod_from_search() {
     std::fs::write(dir.join(crate::pack::LOCKFILE), r#"{"minecraft": "1.21.1", "loader": "neoforge-21.1.209", "files": []}"#).unwrap();
     let pack = Pack::open(&dir).unwrap();
 
-    let search = |text: &str, kind: &str| serde_json::from_value::<SearchRequest>(serde_json::json!({ "text": text, "kind": kind, "categoryId": null, "sort": "popularity", "index": 0 })).unwrap();
+    let search = |text: &str, kind: &str| serde_json::from_value::<SearchRequest>(serde_json::json!({ "platform": "curseforge", "text": text, "kind": kind, "category": null, "sort": "popularity", "index": 0 })).unwrap();
     let page = serde_json::to_value(mod_updates::search(&pack, &search("apotheosis", "mods")).await.unwrap()).unwrap();
-    let apotheosis = page["results"].as_array().unwrap().iter().find(|r| r["projectId"] == 313970).expect("Apotheosis in the results");
-    let file_id = apotheosis["file"]["fileId"].as_u64().expect("a file for 1.21.1 NeoForge");
+    let apotheosis = page["results"].as_array().unwrap().iter().find(|r| r["key"] == "cf:313970").expect("Apotheosis in the results");
+    let file = apotheosis["file"]["file"].as_str().expect("a file for 1.21.1 NeoForge").to_string();
+    let request = || ModRequest { file: Some(file.clone()), project: None, kind: None, replaces: None };
 
-    let ranked = serde_json::to_value(mod_updates::search(&pack, &serde_json::from_value(serde_json::json!({ "text": "storage drawers", "kind": "mods", "categoryId": null, "sort": "relevance", "index": 0 })).unwrap()).await.unwrap()).unwrap();
+    let ranked = serde_json::to_value(mod_updates::search(&pack, &serde_json::from_value(serde_json::json!({ "platform": "curseforge", "text": "storage drawers", "kind": "mods", "category": null, "sort": "relevance", "index": 0 })).unwrap()).await.unwrap()).unwrap();
     assert_eq!(ranked["results"][0]["name"], "Storage Drawers");
     assert!(ranked["results"].as_array().unwrap().iter().all(|r| !r["file"].is_null()));
 
     let resource_packs = serde_json::to_value(mod_updates::search(&pack, &search("", "resourcepacks")).await.unwrap()).unwrap();
     assert!(!resource_packs["results"].as_array().unwrap().is_empty(), "resource packs have no loader, so they must still match");
 
-    let plan = mod_updates::plan(&pack, &[ModRequest { file_id, replaces: None }]).await.unwrap();
+    let plan = mod_updates::plan(&pack, &[request()]).await.unwrap();
     assert_eq!(plan.installs, ["Apotheosis"]);
     println!("dependencies {:?}", plan.dependencies);
     assert!(!plan.dependencies.is_empty());
@@ -357,6 +359,124 @@ async fn install_mod_from_search() {
 
     let pack = Pack::open(&dir).unwrap();
     assert_eq!(pack.lock.files.len(), plan.dependencies.len() + 1);
-    let again = mod_updates::plan(&pack, &[ModRequest { file_id, replaces: None }]).await;
+    let again = mod_updates::plan(&pack, &[request()]).await;
     assert!(again.is_err(), "installing a project the pack already has should fail");
+}
+
+// Read-only on Modrinth: searches it, installs a mod and what it requires into a scratch pack, then checks for updates.
+#[tokio::test]
+#[ignore]
+async fn install_mod_from_modrinth() {
+    use crate::mod_updates::{self, ModRequest, SearchRequest};
+    use crate::modsync;
+
+    let dir = scratch().join("modrinth-install");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    crate::git::run(&dir, &["init", "-q"]).unwrap();
+    std::fs::write(dir.join(crate::pack::LOCKFILE), r#"{"minecraft": "1.21.1", "loader": "neoforge-21.1.209", "files": []}"#).unwrap();
+    let pack = Pack::open(&dir).unwrap();
+
+    let search = |text: &str, kind: &str| serde_json::from_value::<SearchRequest>(serde_json::json!({ "platform": "modrinth", "text": text, "kind": kind, "category": null, "sort": "relevance", "index": 0 })).unwrap();
+    let page = serde_json::to_value(mod_updates::search(&pack, &search("sophisticated backpacks", "mods")).await.unwrap()).unwrap();
+    let hit = page["results"].as_array().unwrap().iter().find(|r| r["name"] == "Sophisticated Backpacks").expect("Sophisticated Backpacks in the results");
+    let key = hit["key"].as_str().unwrap().to_string();
+    for kind in ["resourcepacks", "shaderpacks", "datapacks"] {
+        let results = serde_json::to_value(mod_updates::search(&pack, &search("", kind)).await.unwrap()).unwrap();
+        assert!(!results["results"].as_array().unwrap().is_empty(), "Modrinth should have {kind} for 1.21.1");
+    }
+    assert!(!mod_updates::categories(crate::pack::Platform::Modrinth, mod_updates::AddonKind::Mods).await.unwrap().is_empty());
+
+    let plan = mod_updates::plan(&pack, &[ModRequest { file: None, project: Some(key.clone()), kind: None, replaces: None }]).await.unwrap();
+    println!("installs {:?}, dependencies {:?}, unavailable {:?}", plan.installs, plan.dependencies, plan.unavailable);
+    assert_eq!(plan.installs, ["Sophisticated Backpacks"]);
+    assert!(plan.dependencies.iter().any(|d| d.contains("Sophisticated Core")), "it requires Sophisticated Core");
+    modsync::place(&dir, plan.placements, &Log::console("mods")).await.unwrap();
+
+    let pack = Pack::open(&dir).unwrap();
+    assert!(pack.lock.files.iter().all(|e| e.modrinth.is_some() && dir.join(&e.path).exists()));
+    let checks = mod_updates::check(&pack).await.unwrap();
+    assert_eq!(checks.len(), pack.lock.files.len());
+    let versions = mod_updates::versions(&pack, &pack.lock.files[0].path, &format!("mr:{}", pack.lock.files[0].modrinth.as_ref().unwrap().project_id)).await.unwrap();
+    assert!(!versions.is_empty());
+    let description = mod_updates::description(&key).await.unwrap();
+    assert!(description.markdown && !description.body.is_empty());
+}
+
+// Set PACKRAVEN_TWIN_SAMPLE to try more of the files Modrinth doesn't host byte for byte.
+#[tokio::test]
+#[ignore]
+async fn finds_modrinth_copies_of_the_pack() {
+    let (_, pack) = pack();
+    let mut entries: Vec<crate::pack::LockEntry> = pack.lock.files.clone();
+    let hashes: Vec<String> = entries.iter().map(|e| e.sha1.clone()).collect();
+    let exact = crate::modrinth::files_by_sha1(&hashes).await.unwrap();
+    for entry in &mut entries {
+        entry.modrinth = exact.get(&entry.sha1).cloned();
+    }
+    assert!(!exact.is_empty(), "Modrinth should host some of the pack's files byte for byte");
+    let exact_paths: Vec<String> = entries.iter().filter(|e| e.modrinth.is_some()).map(|e| e.path.clone()).collect();
+
+    let sample = std::env::var("PACKRAVEN_TWIN_SAMPLE").ok().and_then(|n| n.parse().ok()).unwrap_or(12);
+    let target = crate::twins::Target::of(&pack.lock).unwrap();
+    let mut wanting: Vec<&mut crate::pack::LockEntry> = entries.iter_mut().filter(|e| e.modrinth.is_none() && e.curseforge.is_some() && e.size < 20_000_000).take(sample).collect();
+    crate::twins::find(&pack.dir, &scratch().join("twins"), &target, &mut wanting).await.unwrap();
+    for entry in &wanting {
+        println!("{}: {}", if entry.modrinth.is_some() { "twin" } else { "miss" }, entry.path);
+    }
+    let tried: Vec<String> = wanting.iter().map(|e| e.path.clone()).collect();
+    for folder in ["mods", "resourcepacks", "shaderpacks", "datapacks"] {
+        let in_folder: Vec<&crate::pack::LockEntry> = entries.iter().filter(|e| e.path.starts_with(&format!("{folder}/"))).collect();
+        let exact = in_folder.iter().filter(|e| exact_paths.contains(&e.path)).count();
+        let tried_here = in_folder.iter().filter(|e| tried.contains(&e.path)).count();
+        let twins = in_folder.iter().filter(|e| tried.contains(&e.path) && e.modrinth.is_some()).count();
+        println!("{folder}: {} files, {exact} on Modrinth byte for byte, twins for {twins} of the {tried_here} others we tried", in_folder.len());
+    }
+}
+
+// Read-only: prints what Modrinth has of each mod whose CurseForge file it doesn't host.
+#[tokio::test]
+#[ignore]
+async fn reports_modrinth_version_skew() {
+    let (_, pack) = pack();
+    let mut cache = MetadataCache::load(&scratch().join("metadata-cache.json"));
+    let undecided = export::not_on(&pack, &cache, crate::pack::Platform::Modrinth).unwrap();
+    crate::publish::look_up_modrinth_skews(&pack, &mut cache).await.unwrap();
+    cache.save(&scratch().join("metadata-cache.json")).unwrap();
+    for entry in pack.lock.files.iter().filter(|e| undecided.contains(&e.path) && e.curseforge.is_some()) {
+        match cache.skew(&crate::publish::skew_key(&pack, entry)).flatten() {
+            None => println!("none   {}", entry.path),
+            Some(skew) => println!(
+                "linked {} -> {} ({:?}) shared={:?} modrinth_newest={:?} newer={} same_name_differs={}",
+                entry.path,
+                skew.link.title,
+                skew.link.evidence,
+                skew.shared.as_ref().map(|s| (&s.name, s.newer)),
+                skew.modrinth_newest,
+                skew.modrinth_newer,
+                skew.same_name_differs
+            ),
+        }
+    }
+}
+
+// Read-only: prints which of the pack's updates Modrinth has too, for a pack on both platforms.
+#[tokio::test]
+#[ignore]
+async fn reports_updates_on_both_platforms() {
+    let (_, pack) = pack();
+    let checks = serde_json::to_value(crate::mod_updates::check(&pack).await.unwrap()).unwrap();
+    for check in checks.as_array().unwrap().iter().filter(|c| !c["newer"].as_array().unwrap().is_empty()) {
+        let newer: Vec<String> = check["newer"].as_array().unwrap().iter().map(|f| format!("{} ({}, on Modrinth: {})", f["fileName"], f["releaseType"], f["onModrinth"])).collect();
+        println!("{}: {}", check["path"], newer.join("; "));
+    }
+}
+
+// Read-only: Sodium and JEI are on both platforms, under the same slugs and authors.
+#[tokio::test]
+#[ignore]
+async fn finds_curseforge_copies_of_modrinth_projects() {
+    let found = crate::links::curseforge_counterparts(&["AANobbMI".into(), "u6dRKJwZ".into()]).await.unwrap();
+    println!("{found:?}");
+    assert_eq!(found.len(), 2);
 }

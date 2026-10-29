@@ -160,6 +160,7 @@ pub async fn pack_java_default(state: State<'_, AppState>) -> CmdResult<PackJava
 pub struct CredentialsView {
     built_in_api_key: bool,
     upload: CredentialStatus,
+    modrinth: CredentialStatus,
     github: CredentialStatus,
     keychain: &'static str,
 }
@@ -169,6 +170,7 @@ pub fn credentials_status() -> CredentialsView {
     CredentialsView {
         built_in_api_key: crate::curseforge::core_key().is_some(),
         upload: credentials::status(Credential::Upload),
+        modrinth: credentials::status(Credential::Modrinth),
         github: credentials::status(Credential::Github),
         keychain: credentials::keychain_name(),
     }

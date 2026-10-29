@@ -107,7 +107,8 @@
   async function setOverride(mod: ModSide, select: HTMLSelectElement) {
     const mode = select.value as Override
     try {
-      await trackSave(api.setSideOverride(mod.projectId, mode))
+      if (mod.key === null) return
+      await trackSave(api.setSideOverride(mod.key, mode))
       markChanged()
     } catch (error) {
       select.value = mod.override

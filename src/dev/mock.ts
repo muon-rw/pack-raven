@@ -2,6 +2,7 @@
 // We load data from src/dev/fixtures.json when present (gitignored; you generate it from a real instance),
 // and otherwise from the committed demo-fixtures.json, a snapshot of a real pack.
 import demoFixtures from './demo-fixtures.json'
+import type { Platform, ReleaseStatus } from '../lib/api'
 
 // Add `?scenario=` to the URL to put the pack in one of the states we review the UI in.
 const scenarios = {
@@ -77,7 +78,8 @@ const pack = {
 
 const config = {
   author: 'muon-rw',
-  curseforge: { project_id: scenario === 'empty' ? 0 : 1234567, release_type: 'beta', manual_release: false },
+  curseforge: { project_id: scenario === 'empty' ? 0 : 1234567, release_type: 'beta', manual_release: false, allowed_override_jars: [] as string[], exclude: [] as string[] },
+  modrinth: { project_id: scenario === 'empty' ? '' : 'ravens-high-fantasy', allowed_override_jars: [] as string[], exclude: [] as string[], allowed_authors: [] as string[] },
   export: { exclude: [] },
   server: {
     exclude: [],
@@ -93,13 +95,62 @@ const config = {
   },
   test: { port: 25565, client_memory: '8G' },
   discord: { role_id: '112233445566778899', color: '#4d6b2f', announce_on_approval: true, title: '{project_name} - v{version}', show_author: true, header: '', footer: '[Install]({file_url})' },
-  updates: { channel: 'alpha', locked: [] as number[] },
+  updates: { channel: 'alpha', locked: [] as string[] },
 }
 
-const releases = scenario === 'empty' ? [] : [
-  { version: '0.1.0', projectId: 1234567, fileId: 7001001, serverFileId: 7001002, publishedAt: '2026-10-03T18:20:00Z', status: 'Approved', serverStatus: 'Approved', serverPackLinked: true, announce: true, announcedAt: '2026-10-03T19:02:00Z' },
-  { version: fx.version === '0.1.0' ? '0.1.1' : fx.version, projectId: 1234567, fileId: 7105511, serverFileId: 7105512, publishedAt: '2026-10-12T21:40:00Z', status: 'Under review', serverStatus: 'Under review', serverPackLinked: null, announce: true, announcedAt: null },
+const modrinthRelease = (version: string) => ({ status: 'Listed', url: `https://modrinth.com/project/ravens-high-fantasy/version/${version}` })
+// The newest release missed Modrinth in the dirty scenario, so Releases offers to upload it.
+const releases: ReleaseStatus[] = scenario === 'empty' ? [] : [
+  { version: '0.1.0', publishedAt: '2026-10-03T18:20:00Z', announce: true, announcedAt: '2026-10-03T19:02:00Z', displayName: `${pack.name} 0.1.0`, releaseType: 'beta', modrinth: modrinthRelease('0.1.0'), modrinthMissing: null,
+    curseforge: { projectId: 1234567, fileId: 7001001, status: 'Approved', serverStatus: 'Approved', serverPackLinked: true } },
+  { version: fx.version === '0.1.0' ? '0.1.1' : fx.version, publishedAt: '2026-10-12T21:40:00Z', announce: true, announcedAt: null,
+    displayName: `${pack.name} 0.1.1`, releaseType: 'beta', modrinth: scenario === 'dirty' ? null : modrinthRelease('0.1.1'), modrinthMissing: scenario === 'dirty' ? `${pack.name.replace(/[^\w -]/g, '').trim().replace(/ /g, '-')}-0.1.1.mrpack` : null,
+    curseforge: { projectId: 1234567, fileId: 7105511, status: 'Under review', serverStatus: 'Under review', serverPackLinked: null } },
 ]
+
+// Files a platform doesn't host, which a dual pack has to ship there or keep off it.
+type MockSkew = { link: { projectId: string; title: string; url: string; evidence: 'sameFiles' | 'sameSource' | 'sameAuthor' }; shared: { fileId: number; name: string; newer: boolean } | null; modrinthNewest: string | null; modrinthNewer: boolean; newestOnCurseforge: boolean; sameNameDiffers: boolean }
+type MockCandidate = { name: string | null; url: string | null; authors: string[]; license: string | null; openLicense: boolean; allowlisted: boolean; known: boolean; skew: MockSkew | null; versionsKnown: boolean; locked: boolean }
+const candidate = (fields: Partial<MockCandidate>): MockCandidate => ({ name: null, url: null, authors: [], license: null, openLicense: false, allowlisted: false, known: true, skew: null, versionsKnown: true, locked: false, ...fields })
+const onModrinthAs = (title: string, evidence: MockSkew['link']['evidence'], rest: Omit<MockSkew, 'link'>): MockSkew => ({ link: { projectId: title.slice(0, 8), title, url: `https://modrinth.com/project/${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, evidence }, ...rest })
+const candidates: Record<Platform, Record<string, MockCandidate>> = {
+  modrinth: scenario === 'dirty' ? {
+    'mods/alltheleaks-1.1.13+1.21.1-neoforge.jar': candidate({ name: 'AllTheLeaks', url: 'https://www.curseforge.com/minecraft/mc-mods/alltheleaks', authors: ['Uncandango'], license: 'MIT License', openLicense: true }),
+    'mods/framework-neoforge-1.21.1-0.13.11.jar': candidate({ name: 'Framework', url: 'https://www.curseforge.com/minecraft/mc-mods/framework', authors: ['MrCrayfish'], license: 'All Rights Reserved',
+      skew: onModrinthAs('Framework', 'sameFiles', { shared: { fileId: 7200001, name: 'framework-neoforge-1.21.1-0.13.12.jar', newer: true }, modrinthNewest: '0.13.12', modrinthNewer: true, newestOnCurseforge: true, sameNameDiffers: false }) }),
+    'mods/ftb-library-neoforge-2101.1.39.jar': candidate({ name: 'FTB Library (NeoForge)', url: 'https://www.curseforge.com/minecraft/mc-mods/ftb-library-forge', authors: ['FTB'], license: 'All Rights Reserved' }),
+    'mods/overgrowns-origins-1.4.2.jar': candidate({ name: "Overgrown's Origins", url: 'https://www.curseforge.com/minecraft/mc-mods/overgrowns-origins', authors: ['Overgrown'], license: 'All Rights Reserved', locked: true,
+      skew: onModrinthAs("Overgrown's Origins", 'sameSource', { shared: null, modrinthNewest: '2.0.1', modrinthNewer: true, newestOnCurseforge: false, sameNameDiffers: false }) }),
+    'resourcepacks/FreshAnimations-PT-BR.zip': candidate({}),
+  } : {},
+  curseforge: scenario === 'dirty' ? {
+    'mods/sodium-extra-neoforge-0.6.6+mc1.21.1.jar': candidate({ name: 'Sodium Extra', url: 'https://modrinth.com/project/sodium-extra', authors: ['FlashyReese'], license: 'GNU Lesser General Public License v3.0 only', openLicense: true, allowlisted: true }),
+    'mods/ravens-patches-1.0.jar': candidate({}),
+  } : {},
+}
+const choicesOf = (platform: Platform) => (platform === 'curseforge' ? config.curseforge : config.modrinth)
+const permittedAuthors = (platform: Platform): string[] => (platform === 'modrinth' ? config.modrinth.allowed_authors : [])
+const fileView = (platform: Platform, path: string, author: string | null = null) => {
+  const known = candidates[platform][path]
+  return { path, name: known?.name ?? null, license: known?.license ?? null, openLicense: known?.openLicense ?? false, allowlisted: known?.allowlisted ?? false, author }
+}
+const overrideChoices = (platform: Platform) => ({
+  shipped: choicesOf(platform).allowed_override_jars.map((path) => fileView(platform, path)),
+  byAuthor: permittedAuthors(platform).map((author) => ({
+    author,
+    files: Object.keys(candidates[platform])
+      .filter((path) => candidates[platform][path].authors.includes(author) && !choicesOf(platform).allowed_override_jars.includes(path) && !choicesOf(platform).exclude.includes(path))
+      .map((path) => fileView(platform, path, author)),
+  })),
+  keptOff: choicesOf(platform).exclude.map((path) => fileView(platform, path)),
+})
+const notOn = (platform: Platform) =>
+  Object.keys(candidates[platform]).filter(
+    (path) =>
+      !choicesOf(platform).allowed_override_jars.includes(path) &&
+      !choicesOf(platform).exclude.includes(path) &&
+      !candidates[platform][path].authors.some((author) => permittedAuthors(platform).includes(author)),
+  )
 
 const modChange = (name: string, from: string | null, to: string | null) => ({ name, url: `https://www.curseforge.com/minecraft/mc-mods/${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, from, to, inModList: true })
 const modDiff = {
@@ -129,10 +180,10 @@ const serverSides =
   scenario === 'empty'
     ? []
     : [
-        { path: 'mods/sodium-neoforge-0.6.15.jar', projectId: 394468, name: 'Sodium', url: 'https://www.curseforge.com/minecraft/mc-mods/sodium', side: 'client', reason: 'Modrinth lists it as client-only', override: 'auto' },
-        { path: 'mods/iris-neoforge-1.8.1.jar', projectId: 455508, name: 'Iris Shaders', url: 'https://www.curseforge.com/minecraft/mc-mods/irisshaders', side: 'client', reason: 'Modrinth lists it as client-only', override: 'auto' },
-        { path: 'mods/shouldersurfing-neoforge-4.5.0.jar', projectId: 243190, name: 'Shoulder Surfing Reloaded', url: null, side: 'both', reason: 'CurseForge lists it for both sides', override: 'client' },
-        { path: 'mods/Apotheosis-1.21.1-8.1.2.jar', projectId: 313970, name: 'Apotheosis', url: null, side: 'both', reason: 'CurseForge lists it for both sides', override: 'auto' },
+        { path: 'mods/sodium-neoforge-0.6.15.jar', key: 'cf:394468', name: 'Sodium', url: 'https://www.curseforge.com/minecraft/mc-mods/sodium', side: 'client', reason: 'Modrinth lists it as client-only', override: 'auto' },
+        { path: 'mods/iris-neoforge-1.8.1.jar', key: 'cf:455508', name: 'Iris Shaders', url: 'https://www.curseforge.com/minecraft/mc-mods/irisshaders', side: 'client', reason: 'Modrinth lists it as client-only', override: 'auto' },
+        { path: 'mods/shouldersurfing-neoforge-4.5.0.jar', key: 'cf:243190', name: 'Shoulder Surfing Reloaded', url: null, side: 'both', reason: 'CurseForge lists it for both sides', override: 'client' },
+        { path: 'mods/Apotheosis-1.21.1-8.1.2.jar', key: 'cf:313970', name: 'Apotheosis', url: null, side: 'both', reason: 'CurseForge lists it for both sides', override: 'auto' },
       ]
 
 // A logo drawn inline, so the view never waits on CurseForge's image CDN.
@@ -169,7 +220,7 @@ let installedMods: MockMod[] =
         ...(scenario === 'dirty'
           ? [{ path: 'mods/iris-neoforge-1.8.0.jar', projectId: 455508, fileId: 8600500, name: 'Iris Shaders', url: cfUrl('irisshaders'), logo: logo('I', '#6a3f8a'), releaseType: 'release', requires: [394468], newer: [] }]
           : []),
-        { path: 'mods/irons_spellbooks-1.21.1-3.4.0.jar', projectId: 855414, fileId: 8600000, name: "Iron's Spells 'n Spellbooks", url: cfUrl('irons-spells-n-spellbooks'), logo: logo('I', '#8a3f3f'), releaseType: 'release', requires: [313970], newer: [newer(8990000, 'irons_spellbooks-1.21.1-3.5.0-beta.2.jar', 'beta')] },
+        { path: 'mods/irons_spellbooks-1.21.1-3.4.0.jar', projectId: 855414, fileId: 8600000, name: "Iron's Spells 'n Spellbooks", url: cfUrl('irons-spells-n-spellbooks'), logo: logo('I', '#8a3f3f'), releaseType: 'release', requires: [313970], newer: [newer(8990000, 'irons_spellbooks-1.21.1-3.5.0-beta.2.jar', 'beta'), newer(8950001, 'irons_spellbooks-1.21.1-3.4.2.jar')] },
         { path: 'mods/jei-1.21.1-neoforge-19.21.0.247.jar', projectId: 238222, fileId: 8650000, name: 'Just Enough Items (JEI)', url: cfUrl('jei'), logo: logo('J', '#4a6a2a'), releaseType: 'release', requires: [], newer: [] },
         { path: 'mods/shouldersurfing-neoforge-4.5.0.jar', projectId: 243190, fileId: 8500000, name: 'Shoulder Surfing Reloaded', url: null, logo: logo('S', '#2a5a6a'), releaseType: 'release', requires: [], newer: [] },
         { path: 'mods/betterclouds-neoforge-1.3.2.jar.disabled', projectId: 438180, fileId: 8400000, name: 'Better Clouds', url: cfUrl('better-clouds'), logo: logo('B', '#5a7a9a'), releaseType: 'release', requires: [], newer: [newer(8800500, 'betterclouds-neoforge-1.3.4.jar')] },
@@ -260,21 +311,36 @@ const catalog: MockProject[] = [
 const colors = ['#7a4b2a', '#5b6b8a', '#3f6e4e', '#6a3f8a', '#8a3f3f', '#4a6a2a', '#2a5a6a', '#9a6a2a', '#2a4a7a']
 const projectLogo = (p: MockProject) => logo(p.name[0], colors[p.projectId % colors.length])
 
-function searchMods(request: { text: string; kind: string; categoryId: number | null; sort: string; index: number }) {
+// The mock keeps CurseForge's numeric IDs inside and speaks the app's cf: and mr: keys at its edge.
+const fileOf = (request: { file?: string; project?: string }) =>
+  request.file ? Number(request.file.replace(/^cf:/, '')) : Number(String(request.project).replace(/^(cf|mr):/, '')) * 10
+const toFile = (f: { fileId: number; fileName: string | null; releaseType: string; fileDate: string | null }, onModrinth: boolean | null = null) => ({
+  file: `cf:${f.fileId}`,
+  fileName: f.fileName,
+  releaseType: f.releaseType,
+  fileDate: f.fileDate,
+  onModrinth,
+})
+// In the dirty scenario, Modrinth hasn't caught up with the newest file of Iron's Spells, only the one before it.
+const behindOnModrinth = new Set(scenario === 'dirty' ? ['mods/irons_spellbooks-1.21.1-3.4.0.jar'] : [])
+
+function searchMods(request: { platform: Platform; text: string; kind: string; category: string | null; sort: string; index: number }) {
   const text = request.text.trim().toLowerCase()
   const sorted = catalog
     .filter((p) => p.fileName && p.kind === request.kind && (!text || p.name.toLowerCase().includes(text) || p.summary.toLowerCase().includes(text)))
     .sort((a, b) => (request.sort === 'updated' ? b.updated.localeCompare(a.updated) : b.downloads - a.downloads))
+  const modrinth = request.platform === 'modrinth'
   const results = sorted.slice(request.index, request.index + 8).map((p) => ({
-    projectId: p.projectId,
+    key: `${modrinth ? 'mr' : 'cf'}:${p.projectId}`,
     name: p.name,
     summary: p.summary,
     authors: p.authors,
     downloads: p.downloads,
     updated: p.updated,
     logo: projectLogo(p),
-    url: cfUrl(p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')),
-    file: { fileId: p.projectId * 10, fileName: p.fileName, releaseType: p.releaseType ?? 'release', fileDate: null },
+    url: modrinth ? `https://modrinth.com/project/${p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : cfUrl(p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')),
+    // Modrinth's search doesn't name a file, so packraven picks one when you install.
+    file: modrinth ? null : toFile({ fileId: p.projectId * 10, fileName: p.fileName, releaseType: p.releaseType ?? 'release', fileDate: null }),
   }))
   const nextIndex = request.index + 8 < sorted.length ? request.index + 8 : null
   return new Promise((resolve) => setTimeout(() => resolve({ results, nextIndex }), 250))
@@ -300,6 +366,7 @@ function installPlan(fileIds: number[]) {
 const names = (projects: MockProject[]) => projects.map((p) => p.name).join(', ').replace(/, ([^,]*)$/, ' and $1')
 
 function changeMods(requests: { fileId: number; replaces: string | null }[]): number {
+  // Installs and updates both name files by number inside the mock.
   const installs = installPlan(requests.filter((r) => !r.replaces).map((r) => r.fileId))
   const added = [...installs.wanted, ...installs.dependencies]
   const message = [
@@ -342,11 +409,11 @@ function updateMods(requests: { path: string; fileId: number }[], extraLines: st
 
 const preflight = {
   dirty: [
-    "mods/raven_tweaks-1.2.jar isn't on CurseForge. In Changes, add it to Git or move it to the trash.",
+    "mods/raven_tweaks-1.2.jar isn't on CurseForge or Modrinth. In Changes, add it to Git or move it to the trash.",
     "The mods folder has two versions of one mod: iris-neoforge-1.8.0.jar and iris-neoforge-1.8.1.jar. In Mods, remove the one you don't want.",
   ],
   ready: [],
-  empty: ['Set the CurseForge project ID in Pack settings.'],
+  empty: ['Set a CurseForge or Modrinth project ID in Pack settings.'],
   nopack: [],
 }[scenario]
 
@@ -788,7 +855,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     loader: fx.loader,
     lockCount: fx.lockCount,
     addons: scenario === 'empty' ? { mods: 0, resourcePacks: 0, shaderPacks: 0, dataPacks: 0, other: 0 } : { mods: fx.lockCount - 14, resourcePacks: 9, shaderPacks: 2, dataPacks: 3, other: 0 },
-    notOnCurseforge: scenario === 'dirty' ? ['mods/raven_tweaks-1.2.jar'] : [],
+    unhosted: scenario === 'dirty' ? ['mods/raven_tweaks-1.2.jar'] : [],
+    notOnCurseforge: notOn('curseforge').map((path) => ({ path, ...candidates.curseforge[path] })),
+    notOnModrinth: notOn('modrinth').map((path) => ({ path, ...candidates.modrinth[path] })),
+    modrinthError: null,
+    releasesMissingModrinth: releases.filter((r) => r.modrinthMissing).length,
     modListError: null,
     watchError: null,
     branch: 'master',
@@ -796,10 +867,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     behind: 0,
     incoming: null,
     changed: fx.changed,
+    lastVersion: scenario === 'empty' ? null : '0.1.0',
     lastTag: scenario === 'empty' ? null : 'v0.1.0',
     devJars: scenario === 'dirty' ? ['raven_core-dev.jar'] : [],
-    unpublishableJars: [],
     projectId: config.curseforge.project_id,
+    modrinthProjectId: config.modrinth.project_id,
     runningJobs: [],
     serverRunning,
     clientRunning,
@@ -881,7 +953,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   },
   get_webhook: () => 'https://discord.com/api/webhooks/0000/example',
   git_version: () => '2.56.0.windows.2',
-  credentials_status: () => ({ builtInApiKey: true, upload: { source: { kind: 'env', name: 'CURSEFORGE_TOKEN' }, present: true }, github: { source: { kind: 'stored' }, present: true }, keychain: 'Windows Credential Manager' }),
+  credentials_status: () => ({ builtInApiKey: true, upload: { source: { kind: 'env', name: 'CURSEFORGE_TOKEN' }, present: true }, modrinth: { source: { kind: 'stored' }, present: scenario !== 'empty' }, github: { source: { kind: 'stored' }, present: true }, keychain: 'Windows Credential Manager' }),
   env_var_names: () => ['APPDATA', 'CF_DOWNLOAD_TOKEN', 'CURSEFORGE_TOKEN', 'PATH'],
   defender_status: () => ({ active: true, exclusionsReadable: false, missing: [], prompt: false }),
   git_overview: () => ({ status: gitStatus(), commits: fx.commits }),
@@ -1010,18 +1082,53 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
           : tagTaken
             ? 'You already released 0.1.0 (tag v0.1.0 exists). Change the version to publish a new release.'
             : null
+    const blockedOn = (platform: Platform, name: string) => {
+      const blocked = notOn(platform)
+      if (!blocked.length) return []
+      return blocked.length === 1 ? [`${blocked[0]} isn't on ${name}. Include it in the ${name} pack or omit it, below.`] : [`${blocked.length} files aren't on ${name}. Include them in the ${name} pack or omit them, below.`]
+    }
+    const modrinth = [...blockedOn('curseforge', 'CurseForge'), ...blockedOn('modrinth', 'Modrinth')]
     return {
-      problems: blocker ? [blocker, ...preflight] : preflight,
+      problems: [...(blocker ? [blocker] : []), ...preflight, ...modrinth],
       tagTaken,
       warnings: scenario === 'dirty' ? ['betterclouds-neoforge-1.3.2.jar is disabled, so packraven leaves it out of the export.'] : [],
       client: { displayName: `${pack.name} {version}`, fileName: `${stem}.zip` },
       server: { displayName: 'Server Pack {version}', fileName: `${stem}-server.zip` },
+      modrinthFile: `${stem}.mrpack`,
+      modrinthShipped: overrideChoices('modrinth').shipped.concat(overrideChoices('modrinth').byAuthor.flatMap((group) => group.files)),
+      modrinthLeftOut: overrideChoices('modrinth').keptOff,
+      curseforgeShipped: overrideChoices('curseforge').shipped,
+      curseforgeLeftOut: overrideChoices('curseforge').keptOff,
     }
   },
+  build_modrinth_export: () =>
+    mockJob('modrinth-export', ['Modrinth pack: 391 Modrinth files, 4 override files'], `C:/Users/you/AppData/Roaming/dev.muon.packraven/builds/${bcc.version ?? 'dev'}/pack.mrpack`, () => {}),
+  upload_release_to_modrinth: (a) =>
+    mockJob('publish', ['Uploading the pack to Modrinth', 'Uploaded Modrinth version'], `Uploaded ${a.version} to Modrinth`, () => {
+      const release = releases.find((r) => r.version === a.version)!
+      release.modrinth = modrinthRelease(String(a.version))
+      release.modrinthMissing = null
+    }),
+  set_override_choice: (a) => {
+    const paths = a.paths as string[]
+    const lists = choicesOf(a.platform as Platform)
+    const keep = (list: string[]) => list.filter((p) => !paths.includes(p))
+    lists.allowed_override_jars = [...keep(lists.allowed_override_jars), ...(a.choice === 'ship' ? paths : [])].sort()
+    lists.exclude = [...keep(lists.exclude), ...(a.choice === 'leaveOut' ? paths : [])].sort()
+  },
+  look_up_override_candidates: () => {},
+  override_choices: (a) => overrideChoices(a.platform as Platform),
+  set_modrinth_author: (a) => {
+    const author = String(a.author)
+    const others = config.modrinth.allowed_authors.filter((x) => x !== author)
+    config.modrinth.allowed_authors = a.allowed ? [...others, author].sort() : others
+  },
+  modrinth_project_title: (a) => (String(a.id) === 'ravens-high-fantasy' ? "Raven's High Fantasy" : null),
+  published_to: (a) => (releases.some((r) => r.version === a.version) ? { curseforge: true, modrinth: !!releases.find((r) => r.version === a.version)!.modrinth } : null),
   discover_instances: () => [pack, { ...pack, dir: 'C:/Instances/Shared Pack', name: 'Shared Pack', addonCount: 0, hasGit: false, hasLock: false, remote: null, added: false }],
   server_sides: () => serverSides,
   installed_mods: () => ({
-    mods: installedMods.map(({ path, projectId, fileId, name, url, logo }) => ({ path, projectId, fileId, name, url, logo, authors: authorsOf[projectId] ?? [] })),
+    mods: installedMods.map(({ path, projectId, fileId, name, url, logo }) => ({ path, key: `cf:${projectId}`, keys: [`cf:${projectId}`, `mr:${projectId}`], file: `cf:${fileId}`, name, url, logo, authors: authorsOf[projectId] ?? [] })),
     locked: config.updates.locked,
   }),
   set_mods_enabled: (a) =>
@@ -1034,13 +1141,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     new Promise((resolve) =>
       setTimeout(
         () =>
-          resolve(
-            `<h3>Changes in file ${a.fileId}</h3><ul><li>Fixed a crash with <strong>Iris</strong> when a shader pack reloads while the player is in a dimension with custom fog</li><li>Updated translations</li></ul>` +
-              (Number(a.fileId) % 2
+          resolve({
+            markdown: false,
+            body:
+            `<h3>Changes in file ${a.file}</h3><ul><li>Fixed a crash with <strong>Iris</strong> when a shader pack reloads while the player is in a dimension with custom fog</li><li>Updated translations</li></ul>` +
+              (Number(String(a.file).replace(/^cf:/, '')) % 2
                 ? `<h3>Compatibility</h3><ul>${['Sodium 0.6 and newer', 'Embeddium', 'Create 6', 'Distant Horizons LOD rendering', 'ModernFix dynamic resources', 'FerriteCore'].map((m) => `<li>Works with ${m}</li>`).join('')}</ul><h3>Technical</h3><p>Moved chunk mesh uploads off the render thread and batched them per region, which cuts frame-time spikes on large render distances. Config files from 1.x migrate on first launch; back up <code>config/</code> if you edit them by hand.</p><ul>${Array.from({ length: 8 }, (_, i) => `<li>Internal cleanup ${i + 1}: removed a deprecated API path that other mods no longer call</li>`).join('')}</ul>`
                 : '') +
               `<p>Full notes on <a href="https://github.com/example/changelog">GitHub</a>.</p>`,
-          ),
+          }),
         200,
       ),
     ),
@@ -1048,26 +1157,41 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     new Promise((resolve) =>
       setTimeout(
         () =>
-          resolve(
-            `<h1>About</h1><p class="center"><img src="${logo('A', '#7a4b2a')}" width="64" height="64" alt="Logo"></p><p>${installedMods.find((m) => m.projectId === a.projectId)?.name ?? 'This mod'} is a <strong>content mod</strong> with <span style="color: red; text-align: center">styled</span> text. See the <a href="https://github.com/example/wiki">wiki</a>.</p><ul><li>First feature</li><li>Second feature</li></ul><iframe src="https://www.youtube.com/embed/x"></iframe><script>alert(1)</script>`,
-          ),
+          resolve({
+            markdown: false,
+            body: `<h1>About</h1><p class="center"><img src="${logo('A', '#7a4b2a')}" width="64" height="64" alt="Logo"></p><p>${installedMods.find((m) => `cf:${m.projectId}` === a.key)?.name ?? 'This mod'} is a <strong>content mod</strong> with <span style="color: red; text-align: center">styled</span> text. See the <a href="https://github.com/example/wiki">wiki</a>.</p><ul><li>First feature</li><li>Second feature</li></ul><iframe src="https://www.youtube.com/embed/x"></iframe><script>alert(1)</script>`,
+          }),
         250,
       ),
     ),
   check_mod_updates: () =>
-    new Promise((resolve) => setTimeout(() => resolve(installedMods.map(({ path, projectId, logo, releaseType, requires, newer }) => ({ path, projectId, logo, releaseType, requires, newer }))), 400)),
+    new Promise((resolve) =>
+      setTimeout(
+        () =>
+          resolve(
+            installedMods.map(({ path, projectId, logo, releaseType, requires, newer }) => ({
+              path,
+              key: `cf:${projectId}`,
+              logo,
+              releaseType,
+              requires: requires.map((id) => `cf:${id}`),
+              newer: newer.map((f, i) => toFile(f, config.modrinth.project_id ? i > 0 || !behindOnModrinth.has(path) : null)),
+            })),
+          ),
+        400,
+      ),
+    ),
   mod_versions: (a) => {
     const mod = installedMods.find((m) => m.path === a.path)!
     const base = mod.path.slice(mod.path.indexOf('/') + 1).replace(/\.disabled$/, '')
-    return [...mod.newer, { fileId: mod.fileId, fileName: base, releaseType: mod.releaseType, fileDate: null }, { fileId: mod.fileId - 90000, fileName: base.replace(/(\d+)(\.\w+)$/, (_, n, ext) => `${Math.max(0, Number(n) - 1)}${ext}`), releaseType: 'release', fileDate: null }].map((f, i) => ({
-      ...f,
-      fileDate: new Date(Date.UTC(2026, 9, 12 - i * 21)).toISOString(),
+    return [...mod.newer, { fileId: mod.fileId, fileName: base, releaseType: mod.releaseType, fileDate: null as string | null }, { fileId: mod.fileId - 90000, fileName: base.replace(/(\d+)(\.\w+)$/, (_, n, ext) => `${Math.max(0, Number(n) - 1)}${ext}`), releaseType: 'release', fileDate: null }].map((f, i) => ({
+      ...toFile({ ...f, fileDate: new Date(Date.UTC(2026, 9, 12 - i * 21)).toISOString() }, config.modrinth.project_id && i === 0 ? !behindOnModrinth.has(mod.path) : null),
     }))
   },
   set_update_channel: (a) => (config.updates.channel = String(a.channel)),
   set_mod_locked: (a) => {
-    config.updates.locked = config.updates.locked.filter((id) => id !== a.projectId)
-    if (a.locked) config.updates.locked.push(Number(a.projectId))
+    config.updates.locked = config.updates.locked.filter((key) => key !== a.key)
+    if (a.locked) config.updates.locked.push(String(a.key))
   },
   set_version: (a) => {
     const problem = versionProblem(String(a.version))
@@ -1084,13 +1208,31 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
       placeConfig()
     })
   },
-  change_mods: (a) => changeMods(a.requests as { fileId: number; replaces: string | null }[]),
+  change_mods: (a) => {
+    const requests = (a.requests as { file?: string; project?: string; replaces: string | null }[]).map((r) => ({ fileId: fileOf(r), replaces: r.replaces }))
+    // Switching a mod Changes lists for Modrinth swaps it for the version both platforms have.
+    const switches = requests.filter((r) => r.replaces && candidates.modrinth[r.replaces]?.skew)
+    if (!switches.length) return changeMods(requests)
+    return queueModChange(
+      switches.map((r) => `Placed ${candidates.modrinth[r.replaces!].skew!.shared?.name}`),
+      `Updated ${switches.map((r) => candidates.modrinth[r.replaces!].name).join(', ')}.`,
+      () => switches.forEach((r) => delete candidates.modrinth[r.replaces!]),
+    )
+  },
   cancel_mod_change: (a) => cancelModChange(a.id as number),
   search_mods: (a) => searchMods(a.request as Parameters<typeof searchMods>[0]),
-  mod_categories: (a) => (a.kind === 'mods' ? ['Adventure and RPG', 'Magic', 'Storage', 'Technology', 'World Gen'] : ['16x', 'Animated']).map((name, id) => ({ id, name })),
+  mod_categories: (a) => (a.kind === 'mods' ? ['Adventure and RPG', 'Magic', 'Storage', 'Technology', 'World Gen'] : ['16x', 'Animated']).map((name, id) => ({ id: String(id), name })),
+  // Every other popular project in the catalog is on Modrinth too.
+  modrinth_counterparts: (a) =>
+    (a.keys as string[]).filter((key) => Number(key.replace(/^cf:/, '')) % 2 === 0).map((key) => ({ key, url: `https://modrinth.com/project/${key.replace(/^cf:/, '')}` })),
+  // Every other Modrinth project in the catalog is on CurseForge too.
+  curseforge_counterparts: (a) =>
+    (a.keys as string[]).filter((key) => Number(key.replace(/^mr:/, '')) % 2 === 0).map((key) => ({ key, url: cfUrl(key.replace(/^mr:/, '')) })),
   preview_mods: (a) => {
-    const { wanted, dependencies } = installPlan((a.requests as { fileId: number }[]).map((r) => r.fileId))
-    const projects = [...wanted, ...dependencies].map((p) => p.projectId)
+    const requests = a.requests as { file?: string; project?: string }[]
+    const prefix = requests[0]?.project?.startsWith('mr:') ? 'mr' : 'cf'
+    const { wanted, dependencies } = installPlan(requests.map(fileOf))
+    const projects = [...wanted.map((p) => `${prefix}:${p.projectId}`), ...dependencies.map((p) => `cf:${p.projectId}`)]
     return new Promise((resolve) => setTimeout(() => resolve({ dependencies: dependencies.map((p) => p.name), unavailable: [], projects }), 300))
   },
   remove_mods: (a) => (installedMods = installedMods.filter((m) => !(a.paths as string[]).includes(m.path))),

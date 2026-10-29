@@ -3,7 +3,7 @@
   import Notice from './components/Notice.svelte'
   import { onMount, tick } from 'svelte'
   import { listen } from '@tauri-apps/api/event'
-  import { api, errorText, type Overview, type PackList } from './lib/api'
+  import { api, errorText, type Overview, type PackList, type Platform } from './lib/api'
   import { minecraft, refreshAccount } from './lib/minecraft.svelte'
   import { job, jobs, onJobEnd, serverPack, startListening, testState } from './lib/jobs.svelte'
   import Changes from './views/Changes.svelte'
@@ -15,7 +15,7 @@
   import SettingsView from './views/Settings.svelte'
   import AddPack from './views/AddPack.svelte'
   import Git from './views/Git.svelte'
-  import { nav } from './lib/nav.svelte'
+  import { nav, revealAnchor } from './lib/nav.svelte'
   import Releases from './views/Releases.svelte'
   import PackSettings from './views/PackSettings.svelte'
   const loadFiles = () => import('./views/Files.svelte')
@@ -29,7 +29,7 @@
   import RavenMark from './components/RavenMark.svelte'
   import ThemeToggle from './components/ThemeToggle.svelte'
   import VersionEditor from './components/VersionEditor.svelte'
-  import { modCountsSummary, notOnCurseforgeSummary } from './lib/modsync'
+  import { hostsOf, modCountsSummary, notOnHostsSummary } from './lib/modsync'
   import { commandKey, isMac, shortcut } from './lib/platform'
   import Pane from './components/Pane.svelte'
   import Splitter from './components/Splitter.svelte'
@@ -148,7 +148,7 @@
     // When CurseForge approves a jar you uploaded, nothing changes on disk, so while one is waiting we
     // check again on the timer. In the background we ask CurseForge about it at most once a minute.
     const timer = setInterval(() => {
-      if (overview?.notOnCurseforge.length) resync()
+      if (overview?.unhosted.length) resync()
       poll()
     }, FALLBACK_POLL_MS)
     const unlisten = listen<{ kind: string }>('test-event', ({ payload }) => {
@@ -239,13 +239,25 @@
       : [],
   )
 
+  let publishesTo = $derived<Platform[]>([...(overview && overview.projectId > 0 ? ['curseforge' as const] : []), ...(overview?.modrinthProjectId ? ['modrinth' as const] : [])])
+
   let modListStatus = $derived(
     overview?.modListError
       ? "Couldn't update the mod list"
-      : overview?.notOnCurseforge.length
-        ? notOnCurseforgeSummary(overview.notOnCurseforge)
+      : overview?.unhosted.length
+        ? notOnHostsSummary(overview.unhosted, hostsOf(overview))
         : overview?.watchError
           ? "Can't watch the pack folder"
+          : undefined,
+  )
+  // Publish is where you decide what each platform's pack carries, so it flags the files waiting on you.
+  let hostingStatus = $derived(
+    overview?.modrinthError
+      ? "Couldn't check Modrinth"
+      : overview?.notOnCurseforge.length
+        ? notOnHostsSummary(overview.notOnCurseforge, 'CurseForge')
+        : overview?.notOnModrinth.length
+          ? notOnHostsSummary(overview.notOnModrinth, 'Modrinth')
           : undefined,
   )
   let incomingSummary = $derived(overview?.incoming ? modCountsSummary(overview.incoming) : null)
@@ -317,10 +329,16 @@
           id: 'publish',
           title: 'Publish',
           key: '7',
-          status: { running: 'Uploading', failed: 'Publish failed', done: 'Published', idle: undefined }[publishPhase],
-          tone: ({ running: 'busy', failed: 'bad', done: 'ok', idle: 'idle' } as const)[publishPhase],
+          status: { running: 'Uploading', failed: 'Publish failed', done: 'Published', idle: hostingStatus }[publishPhase],
+          tone: publishPhase === 'idle' && hostingStatus ? 'warn' : ({ running: 'busy', failed: 'bad', done: 'ok', idle: 'idle' } as const)[publishPhase],
         },
-        { id: 'releases', title: 'Releases', key: '8' },
+        {
+          id: 'releases',
+          title: 'Releases',
+          key: '8',
+          status: overview?.releasesMissingModrinth ? `${overview.releasesMissingModrinth} not on Modrinth yet` : undefined,
+          tone: overview?.releasesMissingModrinth ? 'warn' : undefined,
+        },
       ],
     },
     { items: [{ id: 'pack', title: 'Pack settings', key: '9' }] },
@@ -335,6 +353,8 @@
     if (!nav.view) return
     showFrom(nav.view, layout.focused)
     nav.view = null
+    if (nav.anchor) revealAnchor(nav.anchor)
+    nav.anchor = null
   })
 
   let navItems = $derived(groups.flatMap((group) => group.items))
@@ -470,7 +490,7 @@
       <div class="identity">
         <PackSwitcher list={packs} name={overview?.name ?? (packs?.active ? 'Pack unavailable' : 'No pack')} onswitch={switchPack} onadd={() => show('add')} />
         {#if overview}
-          <VersionEditor version={overview.version} lastTag={overview.lastTag} onchange={refresh} />
+          <VersionEditor version={overview.version} lastTag={overview.lastTag} lastVersion={overview.lastVersion} onchange={refresh} />
           <div class="game">Minecraft {overview.minecraft} with {loaderName(overview.loader)}</div>
         {/if}
       </div>
@@ -666,7 +686,7 @@
     {:else if pane === 'changes'}
       <Changes {overview} onchange={refresh} />
     {:else if pane === 'mods'}
-      <Mods pack={packs?.active ?? null} game={overview ? `${overview.minecraft} ${loaderName(overview.loader).split(' ')[0]}` : 'this pack'} clientRunning={!!overview?.clientRunning} ontest={() => showFrom('test', index)} />
+      <Mods pack={packs?.active ?? null} {publishesTo} game={overview ? `${overview.minecraft} ${loaderName(overview.loader).split(' ')[0]}` : 'this pack'} clientRunning={!!overview?.clientRunning} ontest={() => showFrom('test', index)} />
     {:else if pane === 'server'}
       <Server {overview} />
     {:else if pane === 'test'}

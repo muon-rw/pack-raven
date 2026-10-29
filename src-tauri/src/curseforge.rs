@@ -38,6 +38,8 @@ pub struct CfMod {
     pub categories: Vec<CfCategory>,
     #[serde(default)]
     pub date_modified: String,
+    #[serde(default)]
+    pub license_type: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -88,6 +90,8 @@ pub struct CfLogo {
 #[serde(rename_all = "camelCase")]
 pub struct CfLinks {
     pub website_url: Option<String>,
+    #[serde(default)]
+    pub source_url: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -182,6 +186,17 @@ async fn core_get(path: &str) -> Result<Value> {
     let key = core_key().context(NO_CORE_KEY)?;
     let response = CLIENT.get(format!("{CORE_API}{path}")).header("x-api-key", key).send().await?;
     Ok(response.error_for_status()?.json::<Value>().await?["data"].take())
+}
+
+/// Finds a project by its slug, which is unique only within one class, like mods or resource packs.
+pub async fn mods_with_slug(slug: &str) -> Result<Vec<CfMod>> {
+    let data = core_get(&format!("/mods/search?gameId={MINECRAFT_GAME_ID}&slug={}", slug_characters(slug))).await?;
+    Ok(serde_json::from_value(data)?)
+}
+
+// Slugs are lowercase letters, digits and hyphens, so anything else can't match one.
+fn slug_characters(slug: &str) -> String {
+    slug.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect()
 }
 
 pub async fn mods(ids: &[u64]) -> Result<HashMap<u64, CfMod>> {

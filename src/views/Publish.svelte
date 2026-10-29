@@ -3,13 +3,15 @@
   import { onMount } from 'svelte'
   import { ask } from '@tauri-apps/plugin-dialog'
   import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
-  import { api, errorText, type Overview, type PackConfig, type UploadNames } from '../lib/api'
+  import { api, errorText, type OverrideFileView, type Overview, type PackConfig, type UploadNames } from '../lib/api'
   import { job, onJobEnd } from '../lib/jobs.svelte'
   import RenderedChangelog from '../components/RenderedChangelog.svelte'
   import JobLog from '../components/JobLog.svelte'
   import LinkedText from '../components/LinkedText.svelte'
   import Twisty from '../components/Twisty.svelte'
+  import OverrideDecisions from '../components/OverrideDecisions.svelte'
   import { nav } from '../lib/nav.svelte'
+  import { asReleaseType, releaseTag } from '../lib/format'
 
   let {
     overview,
@@ -20,6 +22,41 @@
   }: { overview: Overview | null; onchange: () => void; onchanges: () => void; onsettings: () => void; onreleases: () => void } = $props()
 
   let push = $state(true)
+  // Which collapsed groups of files you opened in What we'll ship.
+  let groupsOpen = $state<Record<string, boolean>>({})
+
+  // We keep the authors, licenses and other versions of only the files that need a decision, so we
+  // look them up as they appear.
+  let lookedUp = ''
+  let lookingUp = $state(false)
+  $effect(() => {
+    const unknown = [...(overview?.notOnCurseforge ?? []), ...(overview?.notOnModrinth ?? [])].filter((file) => !file.known || !file.versionsKnown).map((file) => file.path)
+    const key = unknown.join('\n')
+    if (!unknown.length || key === lookedUp) return
+    lookedUp = key
+    lookingUp = true
+    api
+      .lookUpOverrideCandidates()
+      .then(onchange, () => {})
+      .finally(() => (lookingUp = false))
+  })
+
+  let retrying = $state(false)
+
+  async function retryModrinth() {
+    retrying = true
+    try {
+      await api.resyncModList(true)
+      onchange()
+    } finally {
+      retrying = false
+    }
+  }
+
+  function settingsAt(anchor: string) {
+    nav.anchor = anchor
+    onsettings()
+  }
   let problems: string[] = $state([])
   let exportWarnings: string[] = $state([])
   let checking = $state(true)
@@ -43,8 +80,27 @@
   let defaultNames = $state<{ client: UploadNames; server: UploadNames } | null>(null)
   let identity = $state<string | null>(null)
 
+  let toCurseforge = $derived(!!overview?.projectId)
+  let toModrinth = $derived(!!overview?.modrinthProjectId)
+  let platforms = $derived([toCurseforge && 'CurseForge', toModrinth && 'Modrinth'].filter(Boolean).join(' and ') || 'CurseForge')
+  // Modrinth gets one mrpack, so the client and server pack names only apply on CurseForge.
+  let shownPacks = $derived(toCurseforge || !toModrinth ? packs : [])
+  let modrinthFile = $state('')
+  let modrinthShipped = $state<OverrideFileView[]>([])
+  let modrinthLeftOut = $state<OverrideFileView[]>([])
+  let curseforgeShipped = $state<OverrideFileView[]>([])
+  let curseforgeLeftOut = $state<OverrideFileView[]>([])
+  let shippedByAuthor = $derived(
+    [...new Set(modrinthShipped.flatMap((file) => (file.author ? [file.author] : [])))].map((author) => ({ author, files: modrinthShipped.filter((file) => file.author === author) })),
+  )
+  let shippedOnYourWord = $derived(modrinthShipped.filter((file) => !file.author))
+  // Which platforms the last publish reached, read back from what packraven recorded, so the notice
+  // never names a platform packraven hasn't confirmed.
+  let landed = $state<{ curseforge: boolean; modrinth: boolean } | 'pending' | 'unknown'>('pending')
+  let landedOn = $derived(typeof landed === 'object' ? [landed.curseforge && 'CurseForge', landed.modrinth && 'Modrinth'].filter(Boolean).join(' and ') : '')
+
   let lastTag = $derived(overview?.lastTag ?? null)
-  let lastVersion = $derived(lastTag?.replace(/^v/, '') ?? null)
+  let lastVersion = $derived(overview?.lastVersion ?? null)
 
   onMount(() => {
     loadChangelog()
@@ -65,6 +121,7 @@
     names = noOverrides()
     renaming = { client: false, server: false }
     loadChangelog()
+    if (published) api.publishedTo(published.version).then((to) => (landed = to ?? 'unknown'), () => (landed = 'unknown'))
   })
 
   async function previewInDiscohook() {
@@ -94,7 +151,9 @@
 
   $effect(() => {
     const wanted = trimmed
+    void overview?.unhosted.length
     void overview?.notOnCurseforge.length
+    void overview?.notOnModrinth.length
     void job('publish').finishedRuns
     let current = true
     checking = true
@@ -106,6 +165,11 @@
           exportWarnings = result.warnings
           tagTaken = result.tagTaken
           defaultNames = { client: result.client, server: result.server }
+          modrinthFile = result.modrinthFile
+          modrinthShipped = result.modrinthShipped
+          modrinthLeftOut = result.modrinthLeftOut
+          curseforgeShipped = result.curseforgeShipped
+          curseforgeLeftOut = result.curseforgeLeftOut
         },
         (e) => current && (problems = [`Couldn't run the pre-publish checks: ${errorText(e)}`]),
       ).finally(() => current && (checking = false))
@@ -115,6 +179,15 @@
       clearTimeout(timer)
     }
   })
+
+  const nameOf = (file: OverrideFileView) => file.name ?? file.path
+
+  function describe(file: OverrideFileView): string {
+    const name = file.name ?? file.path
+    if (file.author) return `${name} (${file.author}'s permission)`
+    if (file.allowlisted) return `${name} (on CurseForge's list)`
+    return file.license ? `${name} (${file.license})` : name
+  }
 
   function trimmedNames(side: Side): UploadNames {
     return { displayName: names[side].displayName.trim(), fileName: names[side].fileName.trim() }
@@ -169,7 +242,7 @@
   let emptyNotes = $derived(changelog !== null && !changelog.trim())
   let warnings = $derived(
     [
-      emptyNotes ? 'No release notes and no mod changes, so the CurseForge changelog will be empty.' : null,
+      emptyNotes ? `No release notes and no mod changes, so the changelog on ${platforms} will be empty.` : null,
       ...staleVersionWarnings,
       ...exportWarnings,
     ].filter((w): w is string => !!w),
@@ -181,12 +254,22 @@
   async function publish() {
     const client = resolvedNames('client')
     const server = resolvedNames('server')
+    const asType = asReleaseType(config?.curseforge.release_type ?? 'release')
     const consequences = [
-      `Upload "${client.displayName}" (${client.fileName}) and its server pack "${server.displayName}" (${server.fileName}) to CurseForge as ${releaseType ? `a ${releaseType.toLowerCase()}` : 'a release'}${config?.curseforge.manual_release ? ', held until you release it' : ''}.`,
-      `Commit ${uncommitted.length ? `your ${uncommitted.length} uncommitted ${uncommitted.length === 1 ? 'file' : 'files'} and ` : ''}the release as "${commitMessage.trim() || defaultMessage}", tag it v${trimmed}${push ? ', then push' : ''}.`,
+      toCurseforge
+        ? `Upload "${client.displayName}" (${client.fileName}) and its server pack "${server.displayName}" (${server.fileName}) to CurseForge as ${asType}${config?.curseforge.manual_release ? ', held until you release it' : ''}.`
+        : null,
+      toCurseforge && curseforgeShipped.length
+        ? `Include ${curseforgeShipped.length === 1 ? 'a jar' : `${curseforgeShipped.length} jars`} CurseForge doesn't host inside the client pack. CurseForge rejects the pack unless ${curseforgeShipped.length === 1 ? "it's" : "they're"} on its list of allowed mods or it gave you permission: ${curseforgeShipped.map(describe).join(', ')}.`
+        : null,
+      toModrinth ? `Upload "${client.displayName}" (${withVersion(modrinthFile)}) to Modrinth as ${asType}, listed right away.` : null,
+      toModrinth && modrinthShipped.length
+        ? `Include ${modrinthShipped.length === 1 ? 'a file' : `${modrinthShipped.length} files`} Modrinth doesn't host inside the Modrinth pack, on your word that you may share ${modrinthShipped.length === 1 ? 'it' : 'them'}: ${modrinthShipped.map(describe).join(', ')}.`
+        : null,
+      `Commit ${uncommitted.length ? `your ${uncommitted.length} uncommitted ${uncommitted.length === 1 ? 'file' : 'files'} and ` : ''}the release as "${commitMessage.trim() || defaultMessage}", tag it ${releaseTag(trimmed)}${push ? ', then push' : ''}.`,
       'Archive the release notes and clear changelog.md for the next release.',
-      announces ? `Post to Discord once CurseForge approves it${rolePing ? ', pinging the role' : ''}.` : null,
-      emptyNotes ? 'The changelog on CurseForge will be empty.' : null,
+      announces ? `Post to Discord once ${toCurseforge ? 'CurseForge approves it' : "it's on Modrinth"}${rolePing ? ', pinging the role' : ''}.` : null,
+      emptyNotes ? `The changelog on ${platforms} will be empty.` : null,
     ].filter(Boolean)
     const confirmed = await ask(`${consequences.join('\n')}\n\nThis can't be undone.`, {
       title: `Publish ${trimmed}`,
@@ -197,6 +280,7 @@
     if (!confirmed) return
     try {
       error = null
+      landed = 'pending'
       published = { version: trimmed, pushed: push }
       await api.publish({ version: trimmed, message: commitMessage.trim(), push, client: trimmedNames('client'), server: trimmedNames('server') })
       onchange()
@@ -222,9 +306,12 @@
   let publishing = $derived(publishJob.phase === 'running')
   let serverJob = $derived(job('server-pack'))
   let clientJob = $derived(job('client-export'))
-  let logLines = $derived(publishJob.lines.concat(serverJob.lines, clientJob.lines).sort((a, b) => a.id - b.id))
-  let showLog = $derived(publishing || serverJob.phase === 'running' || clientJob.phase === 'running' || logLines.length > 0)
+  let modrinthJob = $derived(job('modrinth-export'))
+  let builds = $derived([serverJob, clientJob, modrinthJob])
+  let logLines = $derived(publishJob.lines.concat(...builds.map((b) => b.lines)).sort((a, b) => a.id - b.id))
+  let showLog = $derived(publishing || builds.some((b) => b.phase === 'running') || logLines.length > 0)
   let projectUrl = $derived(overview?.projectId ? `https://www.curseforge.com/projects/${overview.projectId}` : null)
+  let modrinthUrl = $derived(overview?.modrinthProjectId ? `https://modrinth.com/project/${encodeURIComponent(overview.modrinthProjectId)}` : null)
   let releaseType = $derived(
     config ? ({ release: 'Release', beta: 'Beta', alpha: 'Alpha' } as Record<string, string>)[config.curseforge.release_type] ?? config.curseforge.release_type : null,
   )
@@ -235,7 +322,7 @@
   <header class="head">
     <div>
       <h2>Publish</h2>
-      <p class="muted">Review what ships, then publish at the bottom. Publishing can't be undone.</p>
+      <p class="muted">Review what you'll ship, then publish at the bottom. Publishing can't be undone.</p>
     </div>
     <div class="builds">
       <span class="muted small">Build without publishing</span>
@@ -246,28 +333,51 @@
         <button class:busy={clientJob.phase === 'running'} disabled={clientJob.phase === 'running'} onclick={() => build(api.buildClientExport, 'client pack build')}>
           {clientJob.phase === 'running' ? 'Building' : 'Client pack'}
         </button>
+        {#if toModrinth}
+          <button class:busy={modrinthJob.phase === 'running'} disabled={modrinthJob.phase === 'running'} onclick={() => build(api.buildModrinthExport, 'Modrinth pack build')}>
+            {modrinthJob.phase === 'running' ? 'Building' : 'Modrinth pack'}
+          </button>
+        {/if}
       </span>
-      {#if (serverJob.phase === 'done' && serverJob.message) || (clientJob.phase === 'done' && clientJob.message)}
+      {#if builds.some((b) => b.phase === 'done' && b.message)}
         <span class="reveal">
           {#if serverJob.phase === 'done' && serverJob.message}<button class="link" onclick={() => reveal(serverJob.message!)}>Show server pack</button>{/if}
           {#if clientJob.phase === 'done' && clientJob.message}<button class="link" onclick={() => reveal(clientJob.message!)}>Show client pack</button>{/if}
+          {#if modrinthJob.phase === 'done' && modrinthJob.message}<button class="link" onclick={() => reveal(modrinthJob.message!)}>Show Modrinth pack</button>{/if}
         </span>
       {/if}
     </div>
   </header>
 
   {#if publishJob.phase === 'done' && published}
-    <Notice tone="ok">
-      <p>
-        <strong>{overview?.name} {published.version} is on CurseForge.</strong> packraven tagged the release commit v{published.version}{published.pushed ? ' and pushed it' : " but hasn't pushed it yet"}.
-      </p>
-      <p class="muted">
-        packraven archived its notes to <span class="file">changelogs/{published.version}.md</span> and cleared changelog.md for the next release. {publishJob.message}
-        <button class="link" onclick={onreleases}>Follow its review in Releases</button>.
-      </p>
-    </Notice>
+    {@const tagged = `packraven tagged the release commit ${releaseTag(published.version)}${published.pushed ? ' and pushed it' : " but hasn't pushed it yet"}`}
+    {#if landed === 'pending'}
+      <p class="muted" role="status">Confirming where {published.version} landed.</p>
+    {:else if landed === 'unknown'}
+      <Notice tone="warn">
+        <p><strong>{overview?.name} {published.version} is published, but packraven couldn't read back where it landed.</strong> {tagged}.</p>
+        <p><button onclick={onreleases}>Check it in Releases</button></p>
+      </Notice>
+    {:else if toModrinth && landed.curseforge && !landed.modrinth}
+      <Notice tone="warn">
+        <p>
+          <strong>{overview?.name} {published.version} is on CurseForge, but the Modrinth upload failed.</strong> {tagged}, and kept the Modrinth pack it
+          built.
+        </p>
+        <p class="muted"><LinkedText text={publishJob.message ?? ''} /></p>
+        <p><button onclick={onreleases}>Upload it from Releases</button></p>
+      </Notice>
+    {:else}
+      <Notice tone="ok">
+        <p><strong>{overview?.name} {published.version} is on {landedOn}.</strong> {tagged}.</p>
+        <p class="muted">
+          packraven archived its notes to <span class="file">changelogs/{published.version}.md</span> and cleared changelog.md for the next release. {publishJob.message}
+          <button class="link" onclick={onreleases}>Follow its review in Releases</button>.
+        </p>
+      </Notice>
+    {/if}
   {/if}
-  {#each [publishJob, serverJob, clientJob] as failed, index (index)}
+  {#each [publishJob, ...builds] as failed, index (index)}
     {#if failed.phase === 'failed'}<Notice tone="error"><p><LinkedText text={failed.message ?? ''} /></p></Notice>{/if}
   {/each}
   {#if error}<Notice tone="error"><p><LinkedText text={error} /></p></Notice>{/if}
@@ -313,12 +423,30 @@
         </li>
       {/if}
     </ul>
+    {#if overview?.modrinthError}
+      <Notice tone="warn">
+        <p>
+          Couldn't check which files Modrinth hosts, so you can't publish to Modrinth until packraven can. <LinkedText text={overview.modrinthError} />
+        </p>
+        <p><button class:busy={retrying} disabled={retrying} onclick={retryModrinth}>{retrying ? 'Checking' : 'Check again'}</button></p>
+      </Notice>
+    {/if}
+    {#if overview}
+      {@const dual = overview.projectId > 0 && !!overview.modrinthProjectId}
+      <OverrideDecisions platform="curseforge" candidates={overview.notOnCurseforge} {dual} checking={lookingUp} {onchange} onsettings={() => settingsAt('curseforge-choices-title')} />
+      <OverrideDecisions platform="modrinth" candidates={overview.notOnModrinth} {dual} checking={lookingUp} {onchange} onsettings={() => settingsAt('modrinth-choices-title')} />
+    {/if}
+    {#if overview?.devJars.length}
+      <Notice tone="warn">
+        <p>Local dev builds are in the mods folder and won't be part of the release: <span class="file">{overview.devJars.join(', ')}</span></p>
+      </Notice>
+    {/if}
   </section>
 
   <section class="step" aria-labelledby="ships-title">
-    <h3 id="ships-title">What ships</h3>
+    <h3 id="ships-title">What we'll ship</h3>
     <dl class="ships">
-      {#each packs as { side, title } (side)}
+      {#each shownPacks as { side, title } (side)}
         {@const resolved = resolvedNames(side)}
         {@const typed = trimmedNames(side)}
         {@const fileError = fileNameErrors[side]}
@@ -376,6 +504,57 @@
           </dd>
         </div>
       {/each}
+      {#if toCurseforge && (curseforgeShipped.length || curseforgeLeftOut.length)}
+        <div>
+          <dt>Jars CurseForge doesn't host</dt>
+          <dd class="pack-names">
+            {#if curseforgeShipped.length}
+              {@render fileGroup('curseforge-included', 'The client pack includes', curseforgeShipped, describe, "CurseForge rejects any that aren't on its list of allowed mods, unless it gave you permission.")}
+            {/if}
+            {#if curseforgeLeftOut.length}
+              {@render fileGroup('curseforge-omitted', `Omitted from the CurseForge pack${toModrinth ? ', while the Modrinth pack includes them' : ''}`, curseforgeLeftOut, nameOf)}
+            {/if}
+            <button class="link small" onclick={onsettings}>Change in Pack settings</button>
+          </dd>
+        </div>
+      {/if}
+      {#if toModrinth}
+        <div>
+          <dt>Modrinth pack</dt>
+          <dd class="pack-names">
+            <span class="resolved">
+              <span>{resolvedNames('client').displayName}</span>
+              <span class="file muted">{withVersion(modrinthFile)}</span>
+            </span>
+            <span class="muted small">
+              One shared file for clients and servers.
+            </span>
+            {#snippet modrinthIncludes()}
+              {#each shippedByAuthor as group (group.author)}
+                {@render fileGroup(`modrinth-author-${group.author}`, `On ${group.author}'s permission`, group.files, nameOf)}
+              {/each}
+              {#if shippedOnYourWord.length}
+                {@render fileGroup('modrinth-word', 'On your word that you may share', shippedOnYourWord, describe)}
+              {/if}
+            {/snippet}
+            <!-- Several reasons fold under one line; a single reason is its own group. -->
+            {#if shippedByAuthor.length + (shippedOnYourWord.length ? 1 : 0) > 1}
+              <details class="file-group" bind:open={groupsOpen['modrinth-included']}>
+                <summary class="muted small">
+                  <Twisty open={!!groupsOpen['modrinth-included']} />Includes files Modrinth doesn't host ({modrinthShipped.length} files)
+                </summary>
+                <div class="group-body">{@render modrinthIncludes()}</div>
+              </details>
+            {:else if modrinthShipped.length}
+              {@render modrinthIncludes()}
+            {/if}
+            {#if modrinthLeftOut.length}
+              {@render fileGroup('modrinth-omitted', 'Omits, while the CurseForge pack includes them', modrinthLeftOut, nameOf)}
+            {/if}
+            {#if modrinthShipped.length || modrinthLeftOut.length}<button class="link small" onclick={onsettings}>Change in Pack settings</button>{/if}
+          </dd>
+        </div>
+      {/if}
       <div>
         <dt>Release type</dt>
         <dd>
@@ -384,14 +563,16 @@
         </dd>
       </div>
       <div>
-        <dt>Project</dt>
-        <dd>
-          {#if projectUrl}<a href={projectUrl} onclick={(e) => { e.preventDefault(); openUrl(projectUrl!) }}>{overview?.projectId}</a>{:else}Not set{/if}
+        <dt>{toCurseforge && toModrinth ? 'Projects' : 'Project'}</dt>
+        <dd class="projects">
+          {#if projectUrl}<span>CurseForge <a href={projectUrl} onclick={(e) => { e.preventDefault(); openUrl(projectUrl!) }}>{overview?.projectId}</a></span>{/if}
+          {#if modrinthUrl}<span>Modrinth <a href={modrinthUrl} onclick={(e) => { e.preventDefault(); openUrl(modrinthUrl!) }}>{overview?.modrinthProjectId}</a></span>{/if}
+          {#if !projectUrl && !modrinthUrl}Not set{/if}
         </dd>
       </div>
       <div>
         <dt>Git</dt>
-        <dd>{#if trimmed}Commit and tag <span class="file">v{trimmed}</span>{push ? ', then push' : ''}{:else}<span class="muted">Set a version first</span>{/if}</dd>
+        <dd>{#if trimmed}Commit and tag <span class="file">{releaseTag(trimmed)}</span>{push ? ', then push' : ''}{:else}<span class="muted">Set a version first</span>{/if}</dd>
       </div>
       <div>
         <dt>Notes</dt>
@@ -426,7 +607,7 @@
 
   <section class="step" aria-labelledby="changelog-title">
     <div class="row">
-      <h3 id="changelog-title">Changelog on CurseForge</h3>
+      <h3 id="changelog-title">Changelog on {platforms}</h3>
       <span class="row-start">
         <button class="ghost" onclick={onchanges}>Edit notes in Changes</button>
         <button class="ghost" onclick={loadChangelog}>Refresh</button>
@@ -438,7 +619,7 @@
       <p class="muted">Building the preview.</p>
     {:else if !changelog.trim()}
       <div class="empty-changelog">
-        <p>No release notes and no mod changes yet, so the CurseForge changelog would be empty.</p>
+        <p>No release notes and no mod changes yet, so the changelog would be empty.</p>
         <p><button onclick={onchanges}>Write notes in Changes</button></p>
       </div>
     {:else}
@@ -452,7 +633,7 @@
       {#if !hasWebhook}
         No webhook set, so packraven won't announce this release.
       {:else if announces}
-        packraven posts to Discord once CurseForge approves {trimmed || 'the release'}{rolePing ? ', and pings the role' : ''}.
+        packraven posts to Discord once {toCurseforge ? `CurseForge approves ${trimmed || 'the release'}` : `${trimmed || 'the release'} is on Modrinth`}{rolePing ? ', and pings the role' : ''}.
       {:else}
         Automatic announcements are off. You can announce it from Releases.
       {/if}
@@ -479,7 +660,60 @@
   </div>
 </div>
 
+<!-- A group of more than one file collapses to a line with its count, so a long list doesn't push the
+     rest of What we'll ship out of view. -->
+{#snippet fileGroup(id: string, label: string, files: OverrideFileView[], describeFile: (file: OverrideFileView) => string, note: string | null = null)}
+  {#if files.length === 1}
+    <span class="muted small">{label}{note ? ` (${note.replace(/\.$/, '')})` : ''}: <span class="file">{describeFile(files[0])}</span></span>
+  {:else}
+    <details class="file-group" bind:open={groupsOpen[id]}>
+      <summary class="muted small"><Twisty open={!!groupsOpen[id]} />{label} ({files.length} files)</summary>
+      <div class="group-body">
+        {#if note}<span class="muted small">{note}</span>{/if}
+        <ul class="small">
+          {#each files as file (file.path)}<li>{describeFile(file)}</li>{/each}
+        </ul>
+      </div>
+    </details>
+  {/if}
+{/snippet}
+
 <style>
+  .file-group {
+    display: grid;
+    justify-items: end;
+  }
+
+  .file-group summary {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .file-group summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .file-group summary:hover {
+    color: var(--text);
+  }
+
+  .group-body {
+    display: grid;
+    justify-items: end;
+    gap: 4px;
+    margin-top: 4px;
+  }
+
+  .group-body ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    text-align: right;
+  }
+
   .publish {
     display: grid;
     gap: 28px;
@@ -602,6 +836,12 @@
   .ships dd {
     margin: 0;
     text-align: right;
+  }
+
+  .ships .projects {
+    display: grid;
+    justify-items: end;
+    gap: 2px;
   }
 
   /* A fixed basis keeps both rows' columns aligned once they wrap below their labels. */

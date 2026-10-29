@@ -164,9 +164,9 @@
       if (found[loader.id]?.state === 'found') continue
       found[loader.id] = { state: 'searching' }
       api
-        .searchMods({ text: loader.name, kind: 'mods', categoryId: null, sort: 'relevance', index: 0 })
+        .searchMods({ platform: 'curseforge', text: loader.name, kind: 'mods', category: null, sort: 'relevance', index: 0 })
         .then((page) => {
-          const result = page.results.find((r) => loader.projectIds.includes(r.projectId))
+          const result = page.results.find((r) => r.file && loader.projectIds.some((id) => r.key === `cf:${id}`))
           found[loader.id] = result ? { state: 'found', result } : { state: 'missing' }
         })
         .catch((e) => (found[loader.id] = { state: 'failed', message: errorText(e) }))
@@ -190,7 +190,8 @@
   async function add(loader: PackLoader, confirmed = false) {
     const lookup = found[loader.id]
     if (lookup?.state !== 'found' || adding) return
-    const requests = [{ fileId: lookup.result.file.fileId, replaces: null }]
+    if (!lookup.result.file) return
+    const requests = [{ file: lookup.result.file.file, replaces: null }]
     adding = loader.id
     error = null
     focusPending = false

@@ -8,7 +8,7 @@
   import { tick } from 'svelte'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { api, errorText } from '../lib/api'
-  import { sanitizeRemoteHtml } from '../lib/markdown'
+  import { remoteTextHtml } from '../lib/markdown'
 
   let { request, onconfirm, oncancel }: { request: PendingUpdate[] | null; onconfirm: (chosen: PendingUpdate[]) => void; oncancel: () => void } = $props()
 
@@ -18,7 +18,7 @@
   let confirm = $state<HTMLButtonElement>()
   let chosen = $state(new Set<string>())
   let open = $state<string | null>(null)
-  let changelogs: Record<number, string | { error: string }> = $state({})
+  let changelogs: Record<string, string | { error: string }> = $state({})
 
   $effect(() => {
     if (!request) return
@@ -44,11 +44,12 @@
 
   async function showChangelog(update: PendingUpdate) {
     open = open === update.mod.path ? null : update.mod.path
-    if (open === null || changelogs[update.file.fileId] !== undefined) return
+    const key = update.mod.key
+    if (open === null || !key || changelogs[update.file.file] !== undefined) return
     try {
-      changelogs[update.file.fileId] = sanitizeRemoteHtml(await api.modChangelog(update.mod.projectId, update.file.fileId)) || '<p>The author left this changelog empty.</p>'
+      changelogs[update.file.file] = remoteTextHtml(await api.modChangelog(key, update.file.file)) || '<p>The author left this changelog empty.</p>'
     } catch (error) {
-      changelogs[update.file.fileId] = { error: `Couldn't load the changelog from CurseForge: ${errorText(error)}` }
+      changelogs[update.file.file] = { error: `Couldn't load the changelog from ${key.startsWith('mr:') ? 'Modrinth' : 'CurseForge'}: ${errorText(error)}` }
     }
   }
 
@@ -85,7 +86,7 @@
       <ul class="updates" aria-label="Updates">
         {#each request as update (update.mod.path)}
           {@const disabled = update.mod.path.endsWith('.disabled')}
-          {@const changelog = changelogs[update.file.fileId]}
+          {@const changelog = changelogs[update.file.file]}
           <li>
             <label class="check">
               <input type="checkbox" checked={chosen.has(update.mod.path)} onchange={(e) => toggle(update.mod.path, e.currentTarget.checked)} />
