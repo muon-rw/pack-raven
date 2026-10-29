@@ -93,7 +93,8 @@
   let shippedByAuthor = $derived(
     [...new Set(modrinthShipped.flatMap((file) => (file.author ? [file.author] : [])))].map((author) => ({ author, files: modrinthShipped.filter((file) => file.author === author) })),
   )
-  let shippedOnYourWord = $derived(modrinthShipped.filter((file) => !file.author))
+  let shippedOpenLicense = $derived(modrinthShipped.filter((file) => !file.author && file.openLicense))
+  let shippedOnYourWord = $derived(modrinthShipped.filter((file) => !file.author && !file.openLicense))
   // Which platforms the last publish reached, read back from what packraven recorded, so the notice
   // never names a platform packraven hasn't confirmed.
   let landed = $state<{ curseforge: boolean; modrinth: boolean } | 'pending' | 'unknown'>('pending')
@@ -533,12 +534,15 @@
               {#each shippedByAuthor as group (group.author)}
                 {@render fileGroup(`modrinth-author-${group.author}`, `On ${group.author}'s permission`, group.files, nameOf)}
               {/each}
+              {#if shippedOpenLicense.length}
+                {@render fileGroup('modrinth-open-license', 'Under an open license', shippedOpenLicense, describe)}
+              {/if}
               {#if shippedOnYourWord.length}
                 {@render fileGroup('modrinth-word', 'On your word that you may share', shippedOnYourWord, describe)}
               {/if}
             {/snippet}
             <!-- Several reasons fold under one line; a single reason is its own group. -->
-            {#if shippedByAuthor.length + (shippedOnYourWord.length ? 1 : 0) > 1}
+            {#if shippedByAuthor.length + (shippedOpenLicense.length ? 1 : 0) + (shippedOnYourWord.length ? 1 : 0) > 1}
               <details class="file-group" bind:open={groupsOpen['modrinth-included']}>
                 <summary class="muted small">
                   <Twisty open={!!groupsOpen['modrinth-included']} />Includes files Modrinth doesn't host ({modrinthShipped.length} files)

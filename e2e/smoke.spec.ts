@@ -740,11 +740,14 @@ test('one override choice can cover every version of a file', async ({ page }) =
 
   await result.getByRole('button', { name: 'Pack settings' }).click()
   const permissions = page.getByRole('region', { name: 'Modrinth permissions' })
-  const included = permissions.getByRole('list', { name: 'Included on your word' })
-  await expect(included).toContainText('Matches Prominent-GLOBAL-MC1.21.1-4.1.5.jar now.')
-  await expect(included).toContainText('Matches FreshAnimations-PT-BR.zip now.')
-  await included.getByRole('listitem').filter({ hasText: 'AllTheLeaks' }).getByRole('button', { name: /^Include every version/ }).click()
-  await expect(included).toContainText('AllTheLeaks, every version')
+  const openLicense = permissions.getByRole('list', { name: 'Included under an open license' })
+  await openLicense.getByRole('listitem').filter({ hasText: 'AllTheLeaks' }).getByRole('button', { name: /^Include every version/ }).click()
+  await expect(openLicense).toContainText('AllTheLeaks, every version')
+
+  await permissions.locator('summary', { hasText: 'Included on your word (2 files)' }).click()
+  const onYourWord = permissions.getByRole('list', { name: 'Included on your word' })
+  await expect(onYourWord).toContainText('Matches Prominent-GLOBAL-MC1.21.1-4.1.5.jar now.')
+  await expect(onYourWord).toContainText('Matches FreshAnimations-PT-BR.zip now.')
   await expect(permissions.getByRole('list', { name: 'Left out of the Modrinth pack' })).toContainText('FTB Library (NeoForge), every version')
 })
 

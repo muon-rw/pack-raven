@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Twisty from './Twisty.svelte'
   import { api, errorText, type OverrideChoice, type OverrideChoices, type OverrideFileView, type Platform } from '../lib/api'
 
   let {
@@ -15,6 +16,8 @@
     onchange: () => void
   } = $props()
 
+  type Action = { label: string; path?: string; choice: OverrideChoice | null; quiet?: boolean }
+
   const NAME = { curseforge: 'CurseForge', modrinth: 'Modrinth' } as const
   let name = $derived(NAME[platform])
   const id = (part: string) => `${platform}-${part}`
@@ -24,6 +27,22 @@
   let changing = $state<string | null>(null)
   let error = $state<string | null>(null)
   let newAuthor = $state('')
+  let groupsOpen = $state<Record<string, boolean>>({})
+
+  let openLicense = $derived(platform === 'modrinth' ? (choices?.shipped.filter((file) => file.openLicense) ?? []) : [])
+  let onYourWord = $derived(platform === 'modrinth' ? (choices?.shipped.filter((file) => !file.openLicense) ?? []) : (choices?.shipped ?? []))
+
+  const shippedActions = (file: OverrideFileView): Action[] => [
+    ...(file.anyVersion ? [{ label: 'Include every version', path: file.anyVersion, choice: 'ship' as const }] : []),
+    { label: 'Leave out instead', choice: 'leaveOut' },
+    { label: 'Decide again', choice: null, quiet: true },
+  ]
+
+  const keptOffActions = (file: OverrideFileView): Action[] => [
+    ...(file.anyVersion ? [{ label: 'Leave out every version', path: file.anyVersion, choice: 'leaveOut' as const }] : []),
+    { label: 'Include instead', choice: 'ship' },
+    { label: 'Decide again', choice: null, quiet: true },
+  ]
 
   async function load() {
     choices = await api.overrideChoices(platform).catch(() => null)
@@ -76,7 +95,7 @@
       What the {name} pack does with {platform === 'curseforge' ? 'jars' : 'files'} {name} doesn't host. Unlike the settings above, packraven saves these as soon
       as you change them. Decide again to put a file back in Publish, where it blocks publishing to {name} until you choose.
     </p>
-    {#snippet fileRow(file: OverrideFileView, actions: { label: string; path?: string; choice: OverrideChoice | null; quiet?: boolean }[])}
+    {#snippet fileRow(file: OverrideFileView, actions: Action[])}
       {@const label = file.name ?? file.path}
       {@const everyVersion = file.path.includes('*')}
       {@const a11yLabel = everyVersion && file.name ? `${label}, every version` : label}
@@ -108,15 +127,33 @@
         </span>
       </li>
     {/snippet}
+    {#snippet choiceGroup(key: string, titleId: string, title: string, files: OverrideFileView[], actionsFor: (file: OverrideFileView) => Action[])}
+      {#if files.length === 1}
+        <div class="field">
+          <h4 id={titleId}>{title}</h4>
+          <ul class="choices" aria-labelledby={titleId}>
+            {@render fileRow(files[0], actionsFor(files[0]))}
+          </ul>
+        </div>
+      {:else if files.length > 1}
+        <details class="field choice-group" bind:open={groupsOpen[key]}>
+          <summary><Twisty open={!!groupsOpen[key]} /><span class="group-title" id={titleId}>{title}</span> <span class="muted count">({files.length} files)</span></summary>
+          <ul class="choices" aria-labelledby={titleId}>
+            {#each files as file (file.path)}{@render fileRow(file, actionsFor(file))}{/each}
+          </ul>
+        </details>
+      {/if}
+    {/snippet}
     {#each choices.byAuthor as group, index (group.author)}
-      <div class="field">
-        <h4 id={id(`author-${index}`)}>On {group.author}'s permission</h4>
+      {@const titleId = id(`author-${index}`)}
+      {@const key = `author-${group.author}`}
+      {#snippet authorBody()}
         <p class="hint">
           The {name} pack includes everything by {group.author}, including mods of theirs you add later.
           {#if !group.files.length}None of their files are in the pack yet.{/if}
         </p>
         {#if group.files.length}
-          <ul class="choices" aria-labelledby={id(`author-${index}`)}>
+          <ul class="choices" aria-labelledby={titleId}>
             {#each group.files as file (file.path)}{@render fileRow(file, [{ label: 'Leave out instead', choice: 'leaveOut' }])}{/each}
           </ul>
         {/if}
@@ -125,25 +162,23 @@
             Forget {group.author}'s permission
           </button>
         </div>
-      </div>
+      {/snippet}
+      {#if group.files.length > 1}
+        <details class="field choice-group" bind:open={groupsOpen[key]}>
+          <summary><Twisty open={!!groupsOpen[key]} /><span class="group-title" id={titleId}>On {group.author}'s permission</span> <span class="muted count">({group.files.length} files)</span></summary>
+          {@render authorBody()}
+        </details>
+      {:else}
+        <div class="field">
+          <h4 id={titleId}>On {group.author}'s permission</h4>
+          {@render authorBody()}
+        </div>
+      {/if}
     {/each}
-    {#if choices.shipped.length}
-      <div class="field">
-        <!-- CurseForge checks these jars against its list itself, so only Modrinth's rest on your word. -->
-        <h4 id={id('shipped-title')}>{platform === 'modrinth' ? 'Included on your word' : 'Included in the CurseForge pack'}</h4>
-        <ul class="choices" aria-labelledby={id('shipped-title')}>
-          {#each choices.shipped as file (file.path)}{@render fileRow(file, [...(file.anyVersion ? [{ label: 'Include every version', path: file.anyVersion, choice: 'ship' as const }] : []), { label: 'Leave out instead', choice: 'leaveOut' }, { label: 'Decide again', choice: null, quiet: true }])}{/each}
-        </ul>
-      </div>
-    {/if}
-    {#if choices.keptOff.length}
-      <div class="field">
-        <h4 id={id('kept-off-title')}>Left out of the {name} pack</h4>
-        <ul class="choices" aria-labelledby={id('kept-off-title')}>
-          {#each choices.keptOff as file (file.path)}{@render fileRow(file, [...(file.anyVersion ? [{ label: 'Leave out every version', path: file.anyVersion, choice: 'leaveOut' as const }] : []), { label: 'Include instead', choice: 'ship' }, { label: 'Decide again', choice: null, quiet: true }])}{/each}
-        </ul>
-      </div>
-    {/if}
+    {@render choiceGroup('open-license', id('open-license-title'), 'Included under an open license', openLicense, shippedActions)}
+    <!-- CurseForge checks these jars against its list itself, so only Modrinth's rest on your word. -->
+    {@render choiceGroup('shipped', id('shipped-title'), platform === 'modrinth' ? 'Included on your word' : 'Included in the CurseForge pack', onYourWord, shippedActions)}
+    {@render choiceGroup('kept-off', id('kept-off-title'), `Left out of the ${name} pack`, choices.keptOff, keptOffActions)}
     {#if platform === 'modrinth'}
       <form class="field" onsubmit={(e) => { e.preventDefault(); addAuthor() }}>
         <label for={id('new-author')}>Add an author who let you share their work</label>
@@ -166,8 +201,28 @@
     gap: 14px;
   }
 
-  h4 {
+  h4,
+  .group-title {
     font-size: var(--step-0);
+    font-weight: 700;
+  }
+
+  .choice-group summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    width: fit-content;
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .choice-group summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .choice-group .count {
+    margin-left: 2px;
+    font-size: var(--step--1);
   }
 
   .field {
