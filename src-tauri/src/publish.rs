@@ -157,8 +157,21 @@ pub fn preflight_warnings(pack: &Pack) -> Vec<String> {
     warnings
 }
 
+/// Returns the git tag for a release. A version like v4.1.5 is its own tag, and the rest get a v.
+pub fn release_tag(version: &str) -> String {
+    // We find the last release by tags matching v*, so every tag has to start with a lowercase v.
+    let already_tagged = version.strip_prefix('v').is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+    if already_tagged { version.to_string() } else { format!("v{version}") }
+}
+
+/// Returns the version a release tag belongs to. Releases we published record their version, and
+/// for older tags we drop the v we would have added.
+pub fn version_of_tag(tag: &str, releases: &[Release]) -> String {
+    releases.iter().find(|r| release_tag(&r.version) == tag).map_or_else(|| tag.strip_prefix('v').unwrap_or(tag).to_string(), |r| r.version.clone())
+}
+
 pub fn tag_exists(pack: &Pack, version: &str) -> bool {
-    git::run(&pack.dir, &["rev-parse", "-q", "--verify", &format!("refs/tags/v{version}")]).is_ok()
+    git::run(&pack.dir, &["rev-parse", "-q", "--verify", &format!("refs/tags/{}", release_tag(version))]).is_ok()
 }
 
 pub fn preflight(pack: &Pack, cache: &MetadataCache, version: &str, unknown: &[String], modrinth_error: Option<&str>, identity: &Identity) -> Vec<String> {
@@ -185,7 +198,7 @@ pub fn preflight(pack: &Pack, cache: &MetadataCache, version: &str, unknown: &[S
     } else if let Some(problem) = version_problem(version) {
         problems.push(format!("{problem} Change the version to publish."));
     } else if tag_exists(pack, version) {
-        problems.push(format!("You already released {version} (tag v{version} exists). Change the version to publish a new release."));
+        problems.push(format!("You already released {version} (tag {} exists). Change the version to publish a new release.", release_tag(version)));
     }
     let hosts = config.hosts();
     match unknown {
@@ -207,8 +220,8 @@ pub fn preflight(pack: &Pack, cache: &MetadataCache, version: &str, unknown: &[S
         let name = platform.name();
         match export::not_on(pack, cache, platform).as_deref() {
             Ok([]) => {}
-            Ok([path]) => problems.push(format!("{path} isn't on {name}. Ship it on {name} or keep it off, below.")),
-            Ok(paths) => problems.push(format!("{} files aren't on {name}. Ship them on {name} or keep them off it, below.", paths.len())),
+            Ok([path]) => problems.push(format!("{path} isn't on {name}. Include it in the {name} pack or omit it, below.")),
+            Ok(paths) => problems.push(format!("{} files aren't on {name}. Include them in the {name} pack or omit them, below.", paths.len())),
             Err(error) => problems.push(format!("Couldn't check which files the {name} pack would carry: {error:#}")),
         }
     }
@@ -326,17 +339,17 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
     // packraven built the packs from disk, so we commit everything, and the tag records what shipped.
     git::run(&pack.dir, &["add", "-A"])?;
     let message = Some(options.message.trim()).filter(|m| !m.is_empty()).map_or_else(|| format!("Release {version}"), String::from);
-    let tag = format!("v{version}");
+    let tag = release_tag(&version);
     for command in [&["commit", "--allow-empty", "-m", &message][..], &["tag", "-a", &tag, "-m", &message]] {
         let mut args = identity.config_args();
         args.extend(command.iter().map(|a| a.to_string()));
         git::run(&pack.dir, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
     }
-    log.info(format!("Committed \"{message}\" and tagged v{version}"));
+    log.info(format!("Committed \"{message}\" and tagged {tag}"));
     if options.push {
         crate::gitops::push(&pack.dir, &log)
             .await
-            .with_context(|| format!("packraven published {version} and tagged v{version}, but couldn't push. Once you've fixed this, push from Git"))?;
+            .with_context(|| format!("packraven published {version} and tagged {}, but couldn't push. Once you've fixed this, push from Git", release_tag(&version)))?;
         log.info("Pushed the release commit and tag");
     }
     // The release happened, so the job succeeds, and Publish finds the missing Modrinth upload from releases.json.
@@ -448,7 +461,16 @@ pub async fn upload_release_to_modrinth(pack: Pack, pack_data: PathBuf, version:
 
 #[cfg(test)]
 mod tests {
-    use super::{load_releases, upload_names, UploadNames};
+    use super::{load_releases, release_tag, upload_names, version_of_tag, UploadNames};
+
+    #[test]
+    fn tags_a_version_once_with_a_v() {
+        assert_eq!(release_tag("1.0.0"), "v1.0.0");
+        assert_eq!(release_tag("v4.1.5hf"), "v4.1.5hf");
+        assert_eq!(release_tag("vanilla-2"), "vvanilla-2");
+        assert_eq!(release_tag("V2"), "vV2", "a tag has to start with a lowercase v for us to find it");
+        assert_eq!(version_of_tag("v1.0.0", &[]), "1.0.0");
+    }
 
     fn names(display_name: &str, file_name: &str) -> UploadNames {
         UploadNames { display_name: display_name.into(), file_name: file_name.into() }

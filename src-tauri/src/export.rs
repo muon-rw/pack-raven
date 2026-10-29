@@ -43,7 +43,9 @@ pub fn override_files(pack: &Pack, extra_exclude: &[String]) -> Result<Vec<Strin
 }
 
 // We check these on every overview refresh, so we ask git for tracked jars instead of checking
-// every override file. CurseForge rejects packs with jars it doesn't host in overrides.
+// every override file. CurseForge rejects packs with jars it doesn't host in overrides. It doesn't
+// check resource packs, shaders or data packs yet, so those go into the client pack without asking;
+// if CurseForge starts enforcing them too, they belong in this list.
 fn curseforge_override_jars(pack: &Pack) -> Result<Vec<String>> {
     let excluded = globs(&pack.config.export.exclude)?;
     let jars = git::run(&pack.dir, &["ls-files", "-z", "--", "*.jar"])?;
@@ -217,7 +219,7 @@ pub fn client_export(pack: &Pack, cache: &MetadataCache, version: &str, out_dir:
     }
     let blocked = not_on(pack, cache, Platform::Curseforge)?;
     if !blocked.is_empty() {
-        bail!("CurseForge rejects packs with jars it doesn't host in overrides: {}. In Publish, ship them on CurseForge or keep them off it.", blocked.join(", "));
+        bail!("CurseForge rejects packs with jars it doesn't host in overrides: {}. In Publish, include them in the CurseForge pack or omit them.", blocked.join(", "));
     }
     let kept_off = literal_paths(&pack.config.curseforge.exclude);
     let left_out = globs(&kept_off)?;
@@ -249,7 +251,7 @@ pub fn modrinth_export(pack: &Pack, sides: &[ModSide], cache: &MetadataCache, ve
     }
     let blocked = not_on(pack, cache, Platform::Modrinth)?;
     if !blocked.is_empty() {
-        bail!("Modrinth won't publish a pack with files it doesn't host unless you have permission to share them: {}. In Publish, ship them on Modrinth or keep them off it.", blocked.join(", "));
+        bail!("Modrinth won't publish a pack with files it doesn't host unless you have permission to share them: {}. In Publish, include them in the Modrinth pack or omit them.", blocked.join(", "));
     }
     let left_out = globs(&literal_paths(&pack.config.modrinth.exclude))?;
     let side_of: HashMap<&str, Side> = sides.iter().map(|m| (m.path.as_str(), m.side)).collect();

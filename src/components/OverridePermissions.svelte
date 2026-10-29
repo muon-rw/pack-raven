@@ -100,12 +100,12 @@
       <div class="field">
         <h4 id={id(`author-${index}`)}>On {group.author}'s permission</h4>
         <p class="hint">
-          The {name} pack ships everything by {group.author}, including mods of theirs you add later.
+          The {name} pack includes everything by {group.author}, including mods of theirs you add later.
           {#if !group.files.length}None of their files are in the pack yet.{/if}
         </p>
         {#if group.files.length}
           <ul class="choices" aria-labelledby={id(`author-${index}`)}>
-            {#each group.files as file (file.path)}{@render fileRow(file, [{ label: 'Keep off instead', choice: 'leaveOut' }])}{/each}
+            {#each group.files as file (file.path)}{@render fileRow(file, [{ label: 'Omit instead', choice: 'leaveOut' }])}{/each}
           </ul>
         {/if}
         <div>
@@ -117,17 +117,18 @@
     {/each}
     {#if choices.shipped.length}
       <div class="field">
-        <h4 id={id('shipped-title')}>Shipped on your word</h4>
+        <!-- CurseForge checks these jars against its list itself, so only Modrinth's rest on your word. -->
+        <h4 id={id('shipped-title')}>{platform === 'modrinth' ? 'Included on your word' : 'Included in the CurseForge pack'}</h4>
         <ul class="choices" aria-labelledby={id('shipped-title')}>
-          {#each choices.shipped as file (file.path)}{@render fileRow(file, [{ label: 'Keep off instead', choice: 'leaveOut' }, { label: 'Decide again', choice: null, quiet: true }])}{/each}
+          {#each choices.shipped as file (file.path)}{@render fileRow(file, [{ label: 'Omit instead', choice: 'leaveOut' }, { label: 'Decide again', choice: null, quiet: true }])}{/each}
         </ul>
       </div>
     {/if}
     {#if choices.keptOff.length}
       <div class="field">
-        <h4 id={id('kept-off-title')}>Kept off {name}</h4>
+        <h4 id={id('kept-off-title')}>Omitted from the {name} pack</h4>
         <ul class="choices" aria-labelledby={id('kept-off-title')}>
-          {#each choices.keptOff as file (file.path)}{@render fileRow(file, [{ label: 'Ship instead', choice: 'ship' }, { label: 'Decide again', choice: null, quiet: true }])}{/each}
+          {#each choices.keptOff as file (file.path)}{@render fileRow(file, [{ label: 'Include instead', choice: 'ship' }, { label: 'Decide again', choice: null, quiet: true }])}{/each}
         </ul>
       </div>
     {/if}

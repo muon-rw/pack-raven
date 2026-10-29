@@ -21,17 +21,19 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     ...browser,
-    baseURL: 'http://localhost:5173',
+    baseURL: 'http://localhost:5199',
     viewport: { width: 1280, height: 820 },
   },
   projects: [
     { name: 'smoke', testMatch: 'smoke.spec.ts' },
     { name: 'shots', testMatch: 'shots.spec.ts' },
   ],
-  // We reuse a dev server you already have running, including the one `npm run tauri dev` starts.
+  // Tests get their own port, so the dev server you keep on 5173 (or `npm run tauri dev`) stays yours.
+  // A test server already on 5199 is reused.
   webServer: {
-    command: 'npm run dev -- --port 5173 --strictPort',
-    url: 'http://localhost:5173',
+    command: 'npm run dev -- --port 5199 --strictPort',
+    env: { PACKRAVEN_VITE_CACHE: 'node_modules/.vite-tests' },
+    url: 'http://localhost:5199',
     reuseExistingServer: true,
   },
 })

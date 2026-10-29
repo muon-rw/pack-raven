@@ -101,9 +101,11 @@ export interface UploadNames {
 
 export interface InstalledMod {
   path: string
+  // The project, as cf:<id> or mr:<id>, and the file, as cf:<file id> or mr:<version id>.
   key: string | null
-  projectId: number
-  fileId: number
+  // The project on every platform packraven knows it from.
+  keys: string[]
+  file: string | null
   name: string
   url: string | null
   authors: string[]
@@ -111,40 +113,42 @@ export interface InstalledMod {
 }
 
 export interface ModFile {
-  fileId: number
+  // cf:<file id> or mr:<version id>
+  file: string
   fileName: string
   releaseType: ReleaseType
   fileDate: string | null
+  // In a pack on Modrinth, whether Modrinth has this CurseForge file too. Null when packraven can't tell.
+  onModrinth: boolean | null
 }
 
 export interface ModCheck {
   path: string
   key: string
-  projectId: number
   logo: string | null
   releaseType: ReleaseType | null
-  requires: number[]
+  // The keys of the projects this file requires.
+  requires: string[]
   newer: ModFile[]
 }
 
-export interface ModRequest {
-  fileId: number
-  replaces: string | null
-}
+// Names a file to place, or a project whose newest fitting file packraven picks.
+export type ModRequest = { file: string; replaces: string | null } | { project: string; kind: AddonKind; replaces: null }
 
 export type AddonKind = 'mods' | 'resourcepacks' | 'shaderpacks' | 'datapacks'
 export type SearchSort = 'relevance' | 'popularity' | 'downloads' | 'newest' | 'updated'
 
 export interface SearchRequest {
+  platform: Platform
   text: string
   kind: AddonKind
-  categoryId: number | null
+  category: string | null
   sort: SearchSort
   index: number
 }
 
 export interface SearchResult {
-  projectId: number
+  key: string
   name: string
   summary: string
   authors: string[]
@@ -152,14 +156,21 @@ export interface SearchResult {
   updated: string
   logo: string | null
   url: string | null
-  file: ModFile
+  // The file packraven would install, when the search says. Modrinth's search doesn't, so packraven picks one when you install.
+  file: ModFile | null
 }
 
 export interface ModPreview {
   dependencies: string[]
   unavailable: string[]
-  // Every project the install would add, its dependencies included.
-  projects: number[]
+  // The keys of every project the install would add, its dependencies included.
+  projects: string[]
+}
+
+// CurseForge writes descriptions and changelogs in HTML, and Modrinth in Markdown.
+export interface RemoteText {
+  body: string
+  markdown: boolean
 }
 
 export interface Overview {
@@ -185,6 +196,8 @@ export interface Overview {
   incoming: ModCounts | null
   changed: string[]
   lastTag: string | null
+  // The version the last release tag belongs to, which isn't always the tag without its v.
+  lastVersion: string | null
   devJars: string[]
   projectId: number
   modrinthProjectId: string
@@ -650,10 +663,12 @@ export const api = {
   setSideOverride: (key: string, mode: Override) => invoke<void>('set_side_override', { key, mode }),
   installedMods: () => invoke<{ mods: InstalledMod[]; locked: string[] }>('installed_mods'),
   checkModUpdates: () => invoke<ModCheck[]>('check_mod_updates'),
-  modVersions: (path: string, projectId: number) => invoke<ModFile[]>('mod_versions', { path, projectId }),
+  modVersions: (path: string, key: string) => invoke<ModFile[]>('mod_versions', { path, key }),
   setUpdateChannel: (channel: ReleaseType) => invoke<void>('set_update_channel', { channel }),
   searchMods: (request: SearchRequest) => invoke<{ results: SearchResult[]; nextIndex: number | null }>('search_mods', { request }),
-  modCategories: (kind: AddonKind) => invoke<{ id: number; name: string }[]>('mod_categories', { kind }),
+  modCategories: (platform: Platform, kind: AddonKind) => invoke<{ id: string; name: string }[]>('mod_categories', { platform, kind }),
+  modrinthCounterparts: (keys: string[]) => invoke<{ key: string; url: string }[]>('modrinth_counterparts', { keys }),
+  curseforgeCounterparts: (keys: string[]) => invoke<{ key: string; url: string }[]>('curseforge_counterparts', { keys }),
   previewMods: (requests: ModRequest[]) => invoke<ModPreview>('preview_mods', { requests }),
   changeMods: (requests: ModRequest[]) => invoke<number>('change_mods', { requests }),
   cancelModChange: (id: number) => invoke<boolean>('cancel_mod_change', { id }),
@@ -662,8 +677,8 @@ export const api = {
   setUpVersionChecker: (version: string) => invoke<void>('set_up_version_checker', { version }),
   setModLocked: (key: string, locked: boolean) => invoke<void>('set_mod_locked', { key, locked }),
   setModsEnabled: (paths: string[], enabled: boolean) => invoke<string[]>('set_mods_enabled', { paths, enabled }),
-  modChangelog: (projectId: number, fileId: number) => invoke<string>('mod_changelog', { projectId, fileId }),
-  modDescription: (projectId: number) => invoke<string>('mod_description', { projectId }),
+  modChangelog: (key: string, file: string) => invoke<RemoteText>('mod_changelog', { key, file }),
+  modDescription: (key: string) => invoke<RemoteText>('mod_description', { key }),
   removeMods: (paths: string[]) => invoke<void>('remove_mods', { paths }),
   publishPreflight: (version: string) =>
     invoke<{ problems: string[]; warnings: string[]; tagTaken: boolean; client: UploadNames; server: UploadNames; modrinthFile: string; curseforgeShipped: OverrideFileView[]; curseforgeLeftOut: OverrideFileView[]; modrinthShipped: OverrideFileView[]; modrinthLeftOut: OverrideFileView[] }>('publish_preflight', { version }),

@@ -31,6 +31,24 @@ pub struct Version {
     pub name: String,
     #[serde(default)]
     pub date_published: String,
+    #[serde(default)]
+    pub version_type: String,
+    #[serde(default)]
+    pub changelog: Option<String>,
+    #[serde(default)]
+    pub dependencies: Vec<Dependency>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct Dependency {
+    pub project_id: Option<String>,
+    pub dependency_type: String,
+}
+
+impl Dependency {
+    pub fn is_required(&self) -> bool {
+        self.dependency_type == "required"
+    }
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -39,6 +57,8 @@ pub struct VersionFile {
     pub url: String,
     pub filename: String,
     pub size: u64,
+    #[serde(default)]
+    pub primary: bool,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -57,6 +77,11 @@ impl Version {
             size: file.size,
             url: file.url.clone(),
         }
+    }
+
+    // Versions can carry extra files, like sources jars, and mark the one to install as primary.
+    pub fn primary_file(&self) -> Option<&VersionFile> {
+        self.files.iter().find(|f| f.primary).or(self.files.first())
     }
 
     pub fn file_with_sha1(&self, sha1: &str) -> Option<&VersionFile> {
@@ -81,6 +106,10 @@ pub struct Project {
     pub source_url: Option<String>,
     #[serde(default)]
     pub license: Option<ProjectLicense>,
+    #[serde(default)]
+    pub project_type: String,
+    #[serde(default)]
+    pub body: String,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -127,6 +156,36 @@ impl Project {
 #[derive(Deserialize)]
 pub struct SearchHit {
     pub project_id: String,
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub downloads: u64,
+    #[serde(default)]
+    pub date_modified: String,
+    #[serde(default)]
+    pub icon_url: Option<String>,
+}
+
+pub struct SearchQuery<'a> {
+    pub text: &'a str,
+    /// Each inner list is one facet whose values Modrinth ORs; it ANDs the lists.
+    pub facets: Vec<Vec<String>>,
+    pub index: &'a str,
+    pub offset: u32,
+    pub limit: u32,
+}
+
+#[derive(Deserialize)]
+pub struct Category {
+    pub name: String,
+    pub project_type: String,
+    pub header: String,
 }
 
 fn is_not_found(error: &reqwest::Error) -> bool {
@@ -252,6 +311,48 @@ pub async fn search(text: &str, minecraft: &str, limit: u32) -> Result<Vec<Searc
     }
     let query = [("query", text.to_string()), ("facets", json!([[format!("versions:{minecraft}")]]).to_string()), ("limit", limit.to_string())];
     Ok(get::<Page>("/search", &query).await?.map(|p| p.hits).unwrap_or_default())
+}
+
+/// Returns a page of matching projects and how many match in all.
+pub async fn search_page(query: &SearchQuery<'_>) -> Result<(Vec<SearchHit>, u32)> {
+    #[derive(Deserialize)]
+    struct Page {
+        hits: Vec<SearchHit>,
+        total_hits: u32,
+    }
+    let mut params = vec![("facets", json!(query.facets).to_string()), ("index", query.index.to_string()), ("offset", query.offset.to_string()), ("limit", query.limit.to_string())];
+    if !query.text.trim().is_empty() {
+        params.push(("query", query.text.trim().to_string()));
+    }
+    let page: Page = get("/search", &params).await?.context("Modrinth's search isn't there")?;
+    Ok((page.hits, page.total_hits))
+}
+
+pub async fn categories() -> Result<Vec<Category>> {
+    Ok(get("/tag/category", &[]).await?.unwrap_or_default())
+}
+
+pub async fn versions(ids: &[String]) -> Result<HashMap<String, Version>> {
+    let mut found = HashMap::new();
+    for chunk in ids.chunks(200) {
+        let list: Vec<Version> = get("/versions", &[("ids", serde_json::to_string(chunk)?)]).await?.unwrap_or_default();
+        found.extend(list.into_iter().map(|v| (v.id.clone(), v)));
+    }
+    Ok(found)
+}
+
+/// Returns the newest version of each file's project that fits, by the file's sha1.
+pub async fn latest_by_sha1(hashes: &[String], loaders: &[&str], minecraft: &str, version_type: &str) -> Result<HashMap<String, Version>> {
+    let mut found = HashMap::new();
+    for chunk in hashes.chunks(500) {
+        let mut body = json!({ "hashes": chunk, "algorithm": "sha1", "game_versions": [minecraft], "version_types": [version_type] });
+        if !loaders.is_empty() {
+            body["loaders"] = json!(loaders);
+        }
+        let versions: HashMap<String, Version> = CLIENT.post(format!("{API}/version_files/update")).json(&body).send().await?.error_for_status()?.json().await?;
+        found.extend(versions.into_iter().map(|(sha1, version)| (sha1.to_ascii_lowercase(), version)));
+    }
+    Ok(found)
 }
 
 pub fn token() -> Option<String> {

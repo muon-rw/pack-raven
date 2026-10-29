@@ -11,7 +11,7 @@
   import Twisty from '../components/Twisty.svelte'
   import OverrideDecisions from '../components/OverrideDecisions.svelte'
   import { nav } from '../lib/nav.svelte'
-  import { asReleaseType } from '../lib/format'
+  import { asReleaseType, releaseTag } from '../lib/format'
 
   let {
     overview,
@@ -22,6 +22,8 @@
   }: { overview: Overview | null; onchange: () => void; onchanges: () => void; onsettings: () => void; onreleases: () => void } = $props()
 
   let push = $state(true)
+  // Which collapsed groups of files you opened in What we'll ship.
+  let groupsOpen = $state<Record<string, boolean>>({})
 
   // We keep the authors, licenses and other versions of only the files that need a decision, so we
   // look them up as they appear.
@@ -98,7 +100,7 @@
   let landedOn = $derived(typeof landed === 'object' ? [landed.curseforge && 'CurseForge', landed.modrinth && 'Modrinth'].filter(Boolean).join(' and ') : '')
 
   let lastTag = $derived(overview?.lastTag ?? null)
-  let lastVersion = $derived(lastTag?.replace(/^v/, '') ?? null)
+  let lastVersion = $derived(overview?.lastVersion ?? null)
 
   onMount(() => {
     loadChangelog()
@@ -178,6 +180,8 @@
     }
   })
 
+  const nameOf = (file: OverrideFileView) => file.name ?? file.path
+
   function describe(file: OverrideFileView): string {
     const name = file.name ?? file.path
     if (file.author) return `${name} (${file.author}'s permission)`
@@ -256,13 +260,13 @@
         ? `Upload "${client.displayName}" (${client.fileName}) and its server pack "${server.displayName}" (${server.fileName}) to CurseForge as ${asType}${config?.curseforge.manual_release ? ', held until you release it' : ''}.`
         : null,
       toCurseforge && curseforgeShipped.length
-        ? `Ship ${curseforgeShipped.length === 1 ? 'a jar' : `${curseforgeShipped.length} jars`} CurseForge doesn't host inside the client pack, on your word that CurseForge allows ${curseforgeShipped.length === 1 ? 'it' : 'them'}: ${curseforgeShipped.map(describe).join(', ')}.`
+        ? `Include ${curseforgeShipped.length === 1 ? 'a jar' : `${curseforgeShipped.length} jars`} CurseForge doesn't host inside the client pack. CurseForge rejects the pack unless ${curseforgeShipped.length === 1 ? "it's" : "they're"} on its list of allowed mods or it gave you permission: ${curseforgeShipped.map(describe).join(', ')}.`
         : null,
       toModrinth ? `Upload "${client.displayName}" (${withVersion(modrinthFile)}) to Modrinth as ${asType}, listed right away.` : null,
       toModrinth && modrinthShipped.length
-        ? `Ship ${modrinthShipped.length === 1 ? 'a file' : `${modrinthShipped.length} files`} Modrinth doesn't host inside the Modrinth pack, on your word that you may share ${modrinthShipped.length === 1 ? 'it' : 'them'}: ${modrinthShipped.map(describe).join(', ')}.`
+        ? `Include ${modrinthShipped.length === 1 ? 'a file' : `${modrinthShipped.length} files`} Modrinth doesn't host inside the Modrinth pack, on your word that you may share ${modrinthShipped.length === 1 ? 'it' : 'them'}: ${modrinthShipped.map(describe).join(', ')}.`
         : null,
-      `Commit ${uncommitted.length ? `your ${uncommitted.length} uncommitted ${uncommitted.length === 1 ? 'file' : 'files'} and ` : ''}the release as "${commitMessage.trim() || defaultMessage}", tag it v${trimmed}${push ? ', then push' : ''}.`,
+      `Commit ${uncommitted.length ? `your ${uncommitted.length} uncommitted ${uncommitted.length === 1 ? 'file' : 'files'} and ` : ''}the release as "${commitMessage.trim() || defaultMessage}", tag it ${releaseTag(trimmed)}${push ? ', then push' : ''}.`,
       'Archive the release notes and clear changelog.md for the next release.',
       announces ? `Post to Discord once ${toCurseforge ? 'CurseForge approves it' : "it's on Modrinth"}${rolePing ? ', pinging the role' : ''}.` : null,
       emptyNotes ? `The changelog on ${platforms} will be empty.` : null,
@@ -318,7 +322,7 @@
   <header class="head">
     <div>
       <h2>Publish</h2>
-      <p class="muted">Review what ships, then publish at the bottom. Publishing can't be undone.</p>
+      <p class="muted">Review what you'll ship, then publish at the bottom. Publishing can't be undone.</p>
     </div>
     <div class="builds">
       <span class="muted small">Build without publishing</span>
@@ -346,7 +350,7 @@
   </header>
 
   {#if publishJob.phase === 'done' && published}
-    {@const tagged = `packraven tagged the release commit v${published.version}${published.pushed ? ' and pushed it' : " but hasn't pushed it yet"}`}
+    {@const tagged = `packraven tagged the release commit ${releaseTag(published.version)}${published.pushed ? ' and pushed it' : " but hasn't pushed it yet"}`}
     {#if landed === 'pending'}
       <p class="muted" role="status">Confirming where {published.version} landed.</p>
     {:else if landed === 'unknown'}
@@ -440,7 +444,7 @@
   </section>
 
   <section class="step" aria-labelledby="ships-title">
-    <h3 id="ships-title">What ships</h3>
+    <h3 id="ships-title">What we'll ship</h3>
     <dl class="ships">
       {#each shownPacks as { side, title } (side)}
         {@const resolved = resolvedNames(side)}
@@ -505,10 +509,10 @@
           <dt>Jars CurseForge doesn't host</dt>
           <dd class="pack-names">
             {#if curseforgeShipped.length}
-              <span class="muted small">The client pack ships them on your word that CurseForge allows them: <span class="file">{curseforgeShipped.map(describe).join(', ')}</span></span>
+              {@render fileGroup('curseforge-included', 'The client pack includes', curseforgeShipped, describe, "CurseForge rejects any that aren't on its list of allowed mods, unless it gave you permission.")}
             {/if}
             {#if curseforgeLeftOut.length}
-              <span class="muted small">Kept off CurseForge{toModrinth ? ', while the Modrinth pack ships them' : ''}: <span class="file">{curseforgeLeftOut.map((f) => f.name ?? f.path).join(', ')}</span></span>
+              {@render fileGroup('curseforge-omitted', `Omitted from the CurseForge pack${toModrinth ? ', while the Modrinth pack includes them' : ''}`, curseforgeLeftOut, nameOf)}
             {/if}
             <button class="link small" onclick={onsettings}>Change in Pack settings</button>
           </dd>
@@ -523,16 +527,29 @@
               <span class="file muted">{withVersion(modrinthFile)}</span>
             </span>
             <span class="muted small">
-              {toCurseforge ? 'Named like the client pack. ' : ''}One file for clients and servers. Launchers leave the client-only mods and files off servers.
+              One shared file for clients and servers.
             </span>
-            {#each shippedByAuthor as group (group.author)}
-              <span class="muted small">Ships on {group.author}'s permission: <span class="file">{group.files.map((f) => f.name ?? f.path).join(', ')}</span></span>
-            {/each}
-            {#if shippedOnYourWord.length}
-              <span class="muted small">Ships on your word that you may share: <span class="file">{shippedOnYourWord.map(describe).join(', ')}</span></span>
+            {#snippet modrinthIncludes()}
+              {#each shippedByAuthor as group (group.author)}
+                {@render fileGroup(`modrinth-author-${group.author}`, `On ${group.author}'s permission`, group.files, nameOf)}
+              {/each}
+              {#if shippedOnYourWord.length}
+                {@render fileGroup('modrinth-word', 'On your word that you may share', shippedOnYourWord, describe)}
+              {/if}
+            {/snippet}
+            <!-- Several reasons fold under one line; a single reason is its own group. -->
+            {#if shippedByAuthor.length + (shippedOnYourWord.length ? 1 : 0) > 1}
+              <details class="file-group" bind:open={groupsOpen['modrinth-included']}>
+                <summary class="muted small">
+                  <Twisty open={!!groupsOpen['modrinth-included']} />Includes files Modrinth doesn't host ({modrinthShipped.length} files)
+                </summary>
+                <div class="group-body">{@render modrinthIncludes()}</div>
+              </details>
+            {:else if modrinthShipped.length}
+              {@render modrinthIncludes()}
             {/if}
             {#if modrinthLeftOut.length}
-              <span class="muted small">Keeps off Modrinth, while the CurseForge pack ships them: <span class="file">{modrinthLeftOut.map((f) => f.name ?? f.path).join(', ')}</span></span>
+              {@render fileGroup('modrinth-omitted', 'Omits, while the CurseForge pack includes them', modrinthLeftOut, nameOf)}
             {/if}
             {#if modrinthShipped.length || modrinthLeftOut.length}<button class="link small" onclick={onsettings}>Change in Pack settings</button>{/if}
           </dd>
@@ -555,7 +572,7 @@
       </div>
       <div>
         <dt>Git</dt>
-        <dd>{#if trimmed}Commit and tag <span class="file">v{trimmed}</span>{push ? ', then push' : ''}{:else}<span class="muted">Set a version first</span>{/if}</dd>
+        <dd>{#if trimmed}Commit and tag <span class="file">{releaseTag(trimmed)}</span>{push ? ', then push' : ''}{:else}<span class="muted">Set a version first</span>{/if}</dd>
       </div>
       <div>
         <dt>Notes</dt>
@@ -643,7 +660,60 @@
   </div>
 </div>
 
+<!-- A group of more than one file collapses to a line with its count, so a long list doesn't push the
+     rest of What we'll ship out of view. -->
+{#snippet fileGroup(id: string, label: string, files: OverrideFileView[], describeFile: (file: OverrideFileView) => string, note: string | null = null)}
+  {#if files.length === 1}
+    <span class="muted small">{label}{note ? ` (${note.replace(/\.$/, '')})` : ''}: <span class="file">{describeFile(files[0])}</span></span>
+  {:else}
+    <details class="file-group" bind:open={groupsOpen[id]}>
+      <summary class="muted small"><Twisty open={!!groupsOpen[id]} />{label} ({files.length} files)</summary>
+      <div class="group-body">
+        {#if note}<span class="muted small">{note}</span>{/if}
+        <ul class="small">
+          {#each files as file (file.path)}<li>{describeFile(file)}</li>{/each}
+        </ul>
+      </div>
+    </details>
+  {/if}
+{/snippet}
+
 <style>
+  .file-group {
+    display: grid;
+    justify-items: end;
+  }
+
+  .file-group summary {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .file-group summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .file-group summary:hover {
+    color: var(--text);
+  }
+
+  .group-body {
+    display: grid;
+    justify-items: end;
+    gap: 4px;
+    margin-top: 4px;
+  }
+
+  .group-body ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    text-align: right;
+  }
+
   .publish {
     display: grid;
     gap: 28px;

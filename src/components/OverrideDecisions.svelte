@@ -2,6 +2,7 @@
   import { tick } from 'svelte'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import Notice from './Notice.svelte'
+  import Tip from './Tip.svelte'
   import { api, errorText, type OverrideCandidate, type OverrideChoice, type Platform, type Skew } from '../lib/api'
   import { notOnHostsSummary } from '../lib/modsync'
   import { changeFor, changeQueued, dropChange, startChange } from '../lib/modUpdates.svelte'
@@ -40,21 +41,37 @@
   let choosing = $state<string | null>(null)
   let settling = $state(false)
   let result = $state<{ ok: boolean; text: string; undo?: Undo } | null>(null)
-  // Where your place goes once the list catches up: the row that moved up after you ship, the same
-  // button after you keep one off, or the result after a choice about several files.
+  // Where your place goes once the list catches up: the row that moved up after you include one, the
+  // same button after you omit one, or the result after a choice about several files.
   let refocus = $state<{ paths: string[]; index: number; target: 'row' | 'leaveOut' | 'result' } | null>(null)
   let permittingAuthor = $state('')
 
   let shown = $derived(showAll ? candidates : candidates.slice(0, ROWS))
   let paths = $derived(candidates.map((file) => file.path))
   // Each way to decide several files at once rests on a reason you can check: a license, an author's
-  // word, or CurseForge's own list. Without one, shipping a file rests on your word alone.
+  // word, or CurseForge's own list. Without one, including a file rests on your word alone.
   const isVouched = (file: OverrideCandidate) => (platform === 'modrinth' ? file.openLicense : file.allowlisted)
   let vouched = $derived(candidates.filter(isVouched))
   let authors = $derived(platform === 'modrinth' ? [...new Set(candidates.flatMap((file) => file.authors))].sort((a, b) => a.localeCompare(b)) : [])
   let busy = $derived(!!choosing || settling)
   const filesBy = (author: string) => candidates.filter((file) => file.authors.includes(author)).map((file) => file.path)
   const id = (part: string) => `${platform}-${part}`
+
+  // Platforms name jars and zips differently in their rules, so the button says which it is.
+  const fileKind = (path: string) => (path.endsWith('.jar') ? 'jar' : path.endsWith('.zip') ? 'zip' : 'file')
+
+  function includeTip(path: string) {
+    const what = fileKind(path) === 'file' ? 'this file' : `this ${fileKind(path)}`
+    const rule =
+      platform === 'modrinth'
+        ? "Modrinth's moderators may ask you for proof that you may share it."
+        : "CurseForge automatically rejects the pack unless this mod is on its list of allowed mods, or CurseForge gave you permission to include it."
+    return `Bundle ${what} inside the ${copy.name} pack's overrides, so players get it even though ${copy.name} doesn't host it. ${rule}`
+  }
+
+  let omitTip = $derived(
+    `Leave this file out of the ${copy.name} pack. Make sure the pack still runs without it, or tell players to download it themselves, for example with an in-game notice.${dual ? ` The ${copy.other} pack still includes it.` : ''}`,
+  )
 
   async function showMore() {
     showAll = true
@@ -69,8 +86,8 @@
       const them = chosen.length === 1 ? 'it' : 'them'
       const text =
         choice === 'ship'
-          ? `The ${copy.name} pack ships ${label}.`
-          : `${label} ${chosen.length === 1 ? 'stays' : 'stay'} off ${copy.name}, so players who install the ${copy.name} pack won't get ${them}.${dual ? ` The ${copy.other} pack still has ${them}.` : ''}`
+          ? `The ${copy.name} pack includes ${label}.`
+          : `The ${copy.name} pack omits ${label}, so players who install it won't get ${them}.${dual ? ` The ${copy.other} pack still has ${them}.` : ''}`
       result = { ok: true, text, undo: { kind: 'files', paths: chosen } }
       refocus = { paths: chosen, index, target }
       onchange()
@@ -86,7 +103,7 @@
     try {
       if (undo.kind === 'files') await api.setOverrideChoice(platform, undo.paths, null)
       else await api.setModrinthAuthor(undo.author, false)
-      result = { ok: true, text: undo.kind === 'files' ? 'Undone. Decide again below.' : `Undone. packraven no longer ships everything by ${undo.author}.` }
+      result = { ok: true, text: undo.kind === 'files' ? 'Undone. Decide again below.' : `Undone. The Modrinth pack no longer includes everything by ${undo.author}.` }
       onchange()
     } catch (error) {
       result = { ok: false, text: `Couldn't undo that: ${errorText(error)}` }
@@ -99,7 +116,7 @@
     choosing = `author:${author}`
     try {
       await api.setModrinthAuthor(author, true)
-      result = { ok: true, text: `The Modrinth pack ships everything by ${author}, including mods of theirs you add later.`, undo: { kind: 'author', author } }
+      result = { ok: true, text: `The Modrinth pack includes everything by ${author}, including mods of theirs you add later.`, undo: { kind: 'author', author } }
       permittingAuthor = ''
       refocus = { paths: covered, index: 0, target: 'result' }
       onchange()
@@ -117,7 +134,7 @@
     const serial = startChange([file.path], [name], 'update')
     result = { ok: true, text: `Switching ${name} to ${version}. We'll drop its row once Modrinth's copy matches.` }
     try {
-      changeQueued(serial, await api.changeMods([{ fileId, replaces: file.path }]))
+      changeQueued(serial, await api.changeMods([{ file: `cf:${fileId}`, replaces: file.path }]))
     } catch (error) {
       dropChange(serial)
       result = { ok: false, text: `Couldn't switch ${name}: ${errorText(error)}` }
@@ -155,18 +172,18 @@
     <div class="mod-list-notice">
       <p>
         <strong>{notOnHostsSummary(paths, copy.name)}.</strong>
-        Ship the ones {platform === 'modrinth' ? 'you may share' : 'CurseForge allows'}, and keep the rest off. Players who install the {copy.name} pack won't get the
-        ones you keep off{#if dual}, though the {copy.other} pack keeps them{/if}.
+        Include the ones {platform === 'modrinth' ? 'you may share' : 'CurseForge allows'}, and omit the rest. Players who install the {copy.name} pack won't get the
+        ones you omit{#if dual}, though the {copy.other} pack keeps them{/if}.
       </p>
       <details class="how">
         <summary>{copy.how}</summary>
         <p>
           {#if platform === 'modrinth'}
-            Modrinth's moderators check that you may share each file you ship inside a pack, through its license, its project page or its author, and they may
-            ask you for proof. Shipping a file without an open license rests on your word.
+            Modrinth's moderators check that you may share each file you include inside a pack, through its license, its project page or its author, and they
+            may ask you for proof. Including a file without an open license rests on your word.
           {:else}
-            CurseForge only accepts a pack carrying jars it doesn't host when they're on its list of allowed mods, or you have its approval. Shipping one that
-            isn't on the list rests on your word.
+            CurseForge automatically rejects a pack carrying a mod jar it doesn't host, unless the mod is on its list of allowed mods or CurseForge gave you
+            permission to include it.
           {/if}
           <button class="link" onclick={() => openUrl(copy.guide)}>{copy.guideLabel}</button>
         </p>
@@ -180,7 +197,7 @@
               disabled={busy}
               onclick={() => choose(vouched.map((file) => file.path), 'ship', 0, names.length <= 3 ? names.join(', ') : `the ${names.length} files ${platform === 'modrinth' ? 'with open licenses' : "on CurseForge's list"}`, 'result')}
             >
-              Ship the {vouched.length} {platform === 'modrinth' ? 'with open licenses' : "on CurseForge's list"}
+              Include the {vouched.length} {platform === 'modrinth' ? 'with open licenses' : "on CurseForge's list"}
             </button>
           {/if}
           {#if authors.length}
@@ -195,12 +212,12 @@
                 {/each}
               </select>
               <button class:busy={choosing === `author:${permittingAuthor}`} disabled={busy || !permittingAuthor} onclick={() => shipByAuthor(permittingAuthor, covered)}>
-                {permittingAuthor ? `Ship ${permittingAuthor}'s ${covered.length === 1 ? 'file' : `${covered.length} files`} and future ones` : 'Ship their files and future ones'}
+                {permittingAuthor ? `Include ${permittingAuthor}'s ${covered.length === 1 ? 'file' : `${covered.length} files`} and future ones` : 'Include their files and future ones'}
               </button>
             </span>
           {/if}
           {#if candidates.length > 1}
-            <button class:busy={choosing === 'leaveOut:all'} disabled={busy} onclick={() => choose(paths, 'leaveOut', 0, `${paths.length} files`, 'result')}>Keep all {paths.length} off</button>
+            <button class:busy={choosing === 'leaveOut:all'} disabled={busy} onclick={() => choose(paths, 'leaveOut', 0, `${paths.length} files`, 'result')}>Omit all {paths.length}</button>
           {/if}
         </div>
       {/if}
@@ -246,12 +263,20 @@
                   {switching ? 'Switching' : target.label}<span class="visually-hidden">: {label} to {target.name}</span>
                 </button>
               {/if}
-              <button id={id(`ship-${index}`)} class:busy={choosing === `ship:${file.path}`} disabled={busy} onclick={() => choose([file.path], 'ship', index, label, 'row')}>
-                {isVouched(file) ? 'Ship' : 'Ship on my word'}<span class="visually-hidden">: {label} on {copy.name}</span>
-              </button>
-              <button id={id(`leaveOut-${index}`)} class:busy={choosing === `leaveOut:${file.path}`} disabled={busy} onclick={() => choose([file.path], 'leaveOut', index, label, 'leaveOut')}>
-                Keep off<span class="visually-hidden"> {label}, off {copy.name}</span>
-              </button>
+              <Tip tip={includeTip(file.path)}>
+                {#snippet children(why)}
+                  <button id={id(`ship-${index}`)} class:busy={choosing === `ship:${file.path}`} disabled={busy} aria-describedby={why} onclick={() => choose([file.path], 'ship', index, label, 'row')}>
+                    Include {fileKind(file.path)}<span class="visually-hidden">: {label} in the {copy.name} pack</span>
+                  </button>
+                {/snippet}
+              </Tip>
+              <Tip tip={omitTip}>
+                {#snippet children(why)}
+                  <button id={id(`leaveOut-${index}`)} class:busy={choosing === `leaveOut:${file.path}`} disabled={busy} aria-describedby={why} onclick={() => choose([file.path], 'leaveOut', index, label, 'leaveOut')}>
+                    Omit<span class="visually-hidden"> {label} from the {copy.name} pack</span>
+                  </button>
+                {/snippet}
+              </Tip>
             </span>
           </li>
         {/each}

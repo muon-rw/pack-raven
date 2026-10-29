@@ -36,7 +36,7 @@ test('installed mods can be sorted, filtered, expanded and changed', async ({ pa
   await freshAnimations.click()
   await expect(freshAnimations).toHaveAttribute('aria-checked', 'false')
   await page.getByRole('button', { name: /^Data packs/ }).click()
-  await expect(page.getByRole('region', { name: 'Installed mods' })).toContainText('no data packs from CurseForge yet')
+  await expect(page.getByRole('region', { name: 'Installed mods' })).toContainText('no data packs yet')
   await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Mods/ }).click()
 
   // Clicking a row away from its controls opens its versions and description.
@@ -112,8 +112,8 @@ test('selected mods can be disabled together and brought back', async ({ page })
 
 test('mods can be found on CurseForge and installed with their dependencies', async ({ page }) => {
   await openApp(page, 'mods', 'ready')
-  await page.getByRole('tab', { name: 'Browse' }).click()
-  await expect(page.getByRole('region', { name: 'Search results' }).getByText('Installed', { exact: true })).not.toHaveCount(0)
+  await page.getByRole('button', { name: 'Add from CurseForge' }).click()
+  await expect(page.getByRole('region', { name: 'Results from CurseForge' }).getByText('Installed', { exact: true })).not.toHaveCount(0)
 
   await page.getByRole('searchbox', { name: 'Search CurseForge' }).fill('steam')
   await expect(page.getByRole('button', { name: /^Install / })).toHaveCount(1)
@@ -124,7 +124,34 @@ test('mods can be found on CurseForge and installed with their dependencies', as
 
   await expect(page.getByRole('status').filter({ hasText: "Installed Create: Steam 'n' Rails. Added Create and Flywheel as required." })).toBeVisible()
   await expect(page.getByRole('button', { name: /^Install / })).toHaveCount(0)
-  await expect(page.getByRole('tab', { name: 'Installed' })).toContainText('13')
+  await expect(page.getByRole('button', { name: /^Back to installed/ })).toContainText('13')
+})
+
+test('mods can be added from Modrinth, and Escape goes back to the installed list', async ({ page }) => {
+  await openApp(page, 'mods', 'ready')
+  await page.getByRole('button', { name: 'Add from Modrinth' }).click()
+  await expect(page.getByRole('heading', { name: 'Add from Modrinth' })).toBeVisible()
+  await expect(page.getByRole('searchbox', { name: 'Search Modrinth' })).toBeFocused()
+  await page.getByRole('searchbox', { name: 'Search Modrinth' }).fill('steam')
+  await page.getByRole('button', { name: "Install Create: Steam 'n' Rails" }).click()
+  const prompt = page.getByRole('group', { name: "Install Create: Steam 'n' Rails" })
+  await expect(prompt).toContainText("We didn't find Create: Steam 'n' Rails on CurseForge")
+  await expect(prompt).toContainText('requires Create and Flywheel')
+  // Escape closes the prompt first, and stays in the search.
+  await page.keyboard.press('Escape')
+  await expect(prompt).toHaveCount(0)
+  await expect(page.getByRole('button', { name: "Install Create: Steam 'n' Rails" })).toBeFocused()
+  await expect(page.getByRole('heading', { name: 'Add from Modrinth' })).toBeVisible()
+
+  await page.getByRole('searchbox', { name: 'Search Modrinth' }).fill('')
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('heading', { name: 'Mods' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Add from Modrinth' })).toBeFocused()
+})
+
+test("an update Modrinth doesn't have yet waits, and says why", async ({ page }) => {
+  await openApp(page, 'mods', 'dirty')
+  await expect(page.getByText("isn't on Modrinth yet")).toBeVisible()
 })
 
 test('updates you click during a download join it', async ({ page }) => {
@@ -261,7 +288,7 @@ test('clicking a version shows its changelog', async ({ page }) => {
 
 test('clicking a Browse result shows its description in place', async ({ page }) => {
   await openApp(page, 'mods', 'ready')
-  await page.getByRole('tab', { name: 'Browse' }).click()
+  await page.getByRole('button', { name: 'Add from CurseForge' }).click()
   const name = page.getByRole('button', { name: 'Create', exact: true })
   await name.click()
   await expect(name).toHaveAttribute('aria-expanded', 'true')
@@ -441,7 +468,7 @@ test('server properties and startup save as you change them', async ({ page }) =
 
 test("installing a mod marks the dependencies it brings as installing", async ({ page }) => {
   await openApp(page, 'mods', 'ready')
-  await page.getByRole('tab', { name: 'Browse' }).click()
+  await page.getByRole('button', { name: 'Add from CurseForge' }).click()
   await page.getByRole('searchbox', { name: 'Search CurseForge' }).fill('create')
   await page.getByRole('button', { name: "Install Create: Steam 'n' Rails" }).click()
   await page.getByRole('button', { name: /^Install all/ }).click()

@@ -8,25 +8,42 @@
   import ClientLaunch from '../components/ClientLaunch.svelte'
   import DisableDialog, { type Dependent } from '../components/DisableDialog.svelte'
   import UpdateReview, { type PendingUpdate } from '../components/UpdateReview.svelte'
-  import { onMount, untrack } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { listen } from '@tauri-apps/api/event'
   import { ask } from '@tauri-apps/plugin-dialog'
-  import { api, errorText, type InstalledMod, type ModCheck, type ModFile, type ReleaseType, type ModRequest } from '../lib/api'
+  import { api, errorText, type InstalledMod, type ModCheck, type ModFile, type Platform, type ReleaseType, type ModRequest } from '../lib/api'
   import { job, onJobEnd, serverPack } from '../lib/jobs.svelte'
-  import { availableUpdate, browse, cancelChange, cancelMenuLabel, changeFor, changeQueued, downloadingCount, dropChange, isLocked, modUpdates, newestOnChannel, point, projectKey, queuedButton, startChange } from '../lib/modUpdates.svelte'
-  import { sanitizeRemoteHtml } from '../lib/markdown'
+  import { availableUpdate, browse, cancelChange, cancelMenuLabel, changeFor, changeQueued, downloadingCount, dropChange, isLocked, modUpdates, newestOnChannel, point, projectKey, queuedButton, startChange, waitingOnModrinth } from '../lib/modUpdates.svelte'
+  import { remoteTextHtml } from '../lib/markdown'
   import type { MenuItem } from '../lib/menu'
   import { commandKey, shortcut, trashName } from '../lib/platform'
   import { paneFocus } from '../lib/panes.svelte'
 
-  let { pack, game, clientRunning, ontest }: { pack: string | null; game: string; clientRunning: boolean; ontest: () => void } = $props()
+  let {
+    pack,
+    game,
+    platforms,
+    clientRunning,
+    ontest,
+  }: {
+    pack: string | null
+    game: string
+    // The platforms you can add mods from: the ones the pack publishes to.
+    platforms: Platform[]
+    clientRunning: boolean
+    ontest: () => void
+  } = $props()
+
+  const PLATFORM_NAMES: Record<Platform, string> = { curseforge: 'CurseForge', modrinth: 'Modrinth' }
+  const platformOf = (key: string | null): Platform => (key?.startsWith('mr:') ? 'modrinth' : 'curseforge')
+  const domId = (text: string) => text.replace(/[^\w-]/g, '_')
 
   type Kind = 'mods' | 'resourcepacks' | 'shaderpacks' | 'datapacks'
   type SortKey = 'enabled' | 'name' | 'author' | 'update' | 'locked'
   type Detail = 'versions' | 'description'
 
-  // We ask CurseForge again when you open the view after this long.
+  // We ask CurseForge and Modrinth again when you open the view after this long.
   const CHECK_MAX_AGE_MS = 15 * 60 * 1000
 
   let mods: InstalledMod[] = $state([])
@@ -42,7 +59,7 @@
   let detail: Detail = $state('versions')
   let versions: ModFile[] | null = $state(null)
   let versionsError: string | null = $state(null)
-  let descriptions: Record<number, string> = $state({})
+  let descriptions: Record<string, string> = $state({})
   let descriptionError: string | null = $state(null)
   let removing: string | null = $state(null)
   let toggling: string | null = $state(null)
@@ -51,8 +68,8 @@
   let reviewing: PendingUpdate[] | null = $state(null)
   let selected = $state(new Set<string>())
   let undo: { message: string; paths: string[] } | null = $state(null)
-  let changelogs: Record<number, string | { error: string }> = $state({})
-  let openChangelog: number | null = $state(null)
+  let changelogs: Record<string, string | { error: string }> = $state({})
+  let openChangelog: string | null = $state(null)
 
   let updating = $derived(job('mods').phase === 'running')
   let blocked = $derived(updating || clientRunning)
@@ -96,7 +113,7 @@
       modUpdates.checkedAt = Date.now()
       checkError = null
     } catch (error) {
-      checkError = `Couldn't check CurseForge for updates: ${errorText(error)}`
+      checkError = `Couldn't check for updates: ${errorText(error)}`
     } finally {
       checking = false
     }
@@ -183,17 +200,18 @@
   // the dialog can nest each under the mod it needs.
   function dependentsOf(...roots: InstalledMod[]): (Dependent & { mod: InstalledMod })[] {
     const found: (Dependent & { mod: InstalledMod })[] = []
-    const seen = new Set(roots.map((r) => r.projectId))
-    const walk = (projectId: number, depth: number) => {
+    const seen = new Set(roots.map((r) => r.key ?? r.path))
+    const walk = (key: string | null, depth: number) => {
+      if (!key) return
       for (const mod of mods) {
-        if (seen.has(mod.projectId) || mod.path.endsWith('.disabled')) continue
-        if (!modUpdates.checks?.get(mod.path)?.requires.includes(projectId)) continue
-        seen.add(mod.projectId)
+        if (seen.has(mod.key ?? mod.path) || mod.path.endsWith('.disabled')) continue
+        if (!modUpdates.checks?.get(mod.path)?.requires.includes(key)) continue
+        seen.add(mod.key ?? mod.path)
         found.push({ name: mod.name, path: mod.path, depth, mod })
-        walk(mod.projectId, depth + 1)
+        walk(mod.key, depth + 1)
       }
     }
-    for (const root of roots) walk(root.projectId, 1)
+    for (const root of roots) walk(root.key, 1)
     return found
   }
 
@@ -261,25 +279,32 @@
 
   function confirmUpdates(chosen: PendingUpdate[]) {
     reviewing = null
-    if (chosen.length) update(chosen.map((u) => ({ fileId: u.file.fileId, replaces: u.mod.path })))
+    if (chosen.length) update(chosen.map((u) => ({ file: u.file.file, replaces: u.mod.path })))
   }
 
-  async function showChangelog(projectId: number, fileId: number) {
-    openChangelog = fileId
-    if (changelogs[fileId] !== undefined) return
+  async function showChangelog(key: string, file: string) {
+    openChangelog = file
+    if (changelogs[file] !== undefined) return
     try {
-      changelogs[fileId] = sanitizeRemoteHtml(await api.modChangelog(projectId, fileId)) || '<p>The author left this changelog empty.</p>'
+      changelogs[file] = remoteTextHtml(await api.modChangelog(key, file)) || '<p>The author left this changelog empty.</p>'
     } catch (error) {
-      changelogs[fileId] = { error: `Couldn't load the changelog from CurseForge: ${errorText(error)}` }
+      changelogs[file] = { error: `Couldn't load the changelog from ${PLATFORM_NAMES[platformOf(key)]}: ${errorText(error)}` }
     }
   }
 
-  function pickByArrow(event: KeyboardEvent, projectId: number) {
+  // Both platforms list versions newest first, so a version above the installed one is newer.
+  // One older than every listed version isn't in the list at all.
+  function isNewer(file: ModFile, installed: string | null, files: ModFile[]) {
+    const at = files.findIndex((f) => f.file === installed)
+    return at < 0 || files.indexOf(file) < at
+  }
+
+  function pickByArrow(event: KeyboardEvent, key: string) {
     if (!versions?.length || !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
     event.preventDefault()
-    const at = Math.max(0, versions.findIndex((f) => f.fileId === openChangelog))
+    const at = Math.max(0, versions.findIndex((f) => f.file === openChangelog))
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? versions.length - 1 : Math.min(versions.length - 1, Math.max(0, at + (event.key === 'ArrowDown' ? 1 : -1)))
-    showChangelog(projectId, versions[next].fileId)
+    showChangelog(key, versions[next].file)
     const list = event.currentTarget as HTMLElement
     requestAnimationFrame(() => list.querySelectorAll<HTMLButtonElement>('.pick')[next]?.focus())
   }
@@ -292,7 +317,7 @@
   }
 
   // Installs come from Browse, which names the mod you chose and the dependencies it brings.
-  async function update(requests: ModRequest[], projects: number[] = [], installNames: string[] = []) {
+  async function update(requests: ModRequest[], projects: string[] = [], installNames: string[] = []) {
     actionError = null
     finishedHere = false
     const replaced = requests.flatMap((r) => (r.replaces ? [r.replaces] : []))
@@ -301,7 +326,7 @@
     try {
       changeQueued(serial, await api.changeMods(requests))
       // The review dialog closes once you confirm, which leaves focus nowhere.
-      if (browse.tab === 'installed' && document.activeElement === document.body) tableRegion?.focus()
+      if (!browse.platform && document.activeElement === document.body) tableRegion?.focus()
     } catch (error) {
       dropChange(serial)
       actionError = `Couldn't start the update: ${errorText(error)}`
@@ -353,21 +378,24 @@
       versionsError = null
       descriptionError = null
       openChangelog = null
-      api.modVersions(mod.path, mod.projectId).then(
-        (files) => {
-          if (expanded !== mod.path) return
-          versions = files
-          // The newest file is the one you'd update to, so its changelog is the likeliest question.
-          if (files.length) showChangelog(mod.projectId, files[0].fileId)
-        },
-        (error) => expanded === mod.path && (versionsError = `Couldn't list the versions on CurseForge: ${errorText(error)}`),
-      )
+      const key = mod.key
+      if (!key) versions = []
+      else
+        api.modVersions(mod.path, key).then(
+          (files) => {
+            if (expanded !== mod.path) return
+            versions = files
+            // The newest file is the one you'd update to, so its changelog is the likeliest question.
+            if (files.length) showChangelog(key, files[0].file)
+          },
+          (error) => expanded === mod.path && (versionsError = `Couldn't list the versions on ${PLATFORM_NAMES[platformOf(key)]}: ${errorText(error)}`),
+        )
     }
-    if (show === 'description' && descriptions[mod.projectId] === undefined) {
+    if (show === 'description' && mod.key && descriptions[mod.key] === undefined) {
       try {
-        descriptions[mod.projectId] = sanitizeRemoteHtml(await api.modDescription(mod.projectId)) || '<p>The author left this description empty.</p>'
+        descriptions[mod.key] = remoteTextHtml(await api.modDescription(mod.key)) || '<p>The author left this description empty.</p>'
       } catch (error) {
-        if (expanded === mod.path) descriptionError = `Couldn't load the description from CurseForge: ${errorText(error)}`
+        if (expanded === mod.path) descriptionError = `Couldn't load the description from ${PLATFORM_NAMES[platformOf(mod.key)]}: ${errorText(error)}`
       }
     }
   }
@@ -394,12 +422,12 @@
         ...(change
           ? [change.stage === 'queued' ? { label: cancelMenuLabel(change), run: () => cancelChange(mod.path, mod.name) } : { label: queuedButton(change, mod.name).label, disabled: true, run: () => {} }, 'separator' as const]
           : updates.has(mod.path)
-            ? [{ label: `Update to ${updates.get(mod.path)!.fileName}`, disabled: clientRunning, run: () => update([{ fileId: updates.get(mod.path)!.fileId, replaces: mod.path }]) }, 'separator' as const]
+            ? [{ label: `Update to ${updates.get(mod.path)!.fileName}`, disabled: clientRunning, run: () => update([{ file: updates.get(mod.path)!.file, replaces: mod.path }]) }, 'separator' as const]
             : []),
         { label: 'Show versions', run: () => expand(mod, 'versions') },
         { label: 'Show description', run: () => expand(mod, 'description') },
         'separator',
-        { label: 'Open on CurseForge', disabled: !mod.url, run: () => mod.url && openUrl(mod.url) },
+        { label: `Open on ${PLATFORM_NAMES[platformOf(mod.key)]}`, disabled: !mod.url, run: () => mod.url && openUrl(mod.url) },
         { label: 'Copy link', disabled: !mod.url, run: () => mod.url && navigator.clipboard.writeText(mod.url) },
         'separator',
         // While a change runs, the version you'd lock to is about to change.
@@ -456,8 +484,8 @@
   let updates = $derived(new Map(mods.map((m) => [m.path, availableUpdate(modUpdates.checks?.get(m.path))] as const).filter(([, file]) => file)) as Map<string, ModFile>)
   let updatable = $derived([...updates.keys()].filter((path) => !changeFor(path)).length)
   let duplicates = $derived.by(() => {
-    const byProject = new Map<number, InstalledMod[]>()
-    for (const mod of mods.filter((m) => isMod(m) && !m.path.endsWith('.disabled'))) byProject.set(mod.projectId, [...(byProject.get(mod.projectId) ?? []), mod])
+    const byProject = new Map<string, InstalledMod[]>()
+    for (const mod of mods.filter((m) => isMod(m) && !m.path.endsWith('.disabled') && m.key)) byProject.set(mod.key!, [...(byProject.get(mod.key!) ?? []), mod])
     return [...byProject.values()].filter((group) => group.length > 1)
   })
   let duplicatePaths = $derived(new Set(duplicates.flat().map((m) => m.path)))
@@ -528,7 +556,7 @@
   }
 
   let summary = $derived.by(() => {
-    if (checking) return 'Checking CurseForge for updates.'
+    if (checking) return 'Checking for updates.'
     if (!modUpdates.checks) return null
     if (updatable) return `${updatable} ${updatable === 1 ? 'has an update' : 'have updates'}.`
     return updates.size ? null : 'Everything is up to date.'
@@ -541,24 +569,55 @@
     return [finishedHere && job('mods').phase === 'done' ? job('mods').message : null, ...notes].filter(Boolean).join(' ')
   })
 
-  let installedIds = $derived(new Set(mods.map((m) => m.projectId)))
+  let installedKeys = $derived(new Set(mods.flatMap((m) => m.keys)))
 
   let searchField: HTMLInputElement | undefined = $state()
   let tableRegion: HTMLElement | undefined = $state()
-  let browser: ModBrowser | undefined = $state()
+  let browseField: HTMLInputElement | undefined = $state()
   // A run that finished before you opened the view already shows in the list, so we only
   // report the ones that end while you're here.
   let finishedHere = $state(false)
 
-  const tabs = ['installed', 'browse'] as const
+  // Adding starts from the type you were looking at, and coming back puts you where you were.
+  async function startAdding(platform: Platform) {
+    browse.kind = kindFilter
+    if (browse.platform !== platform) browse.category = null
+    browse.platform = platform
+    await tick()
+    browseField?.focus()
+  }
 
-  function onTabKey(event: KeyboardEvent) {
-    const index = tabs.indexOf(browse.tab)
-    const next = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: tabs.length - 1 }[event.key]
-    if (next === undefined) return
-    event.preventDefault()
-    browse.tab = tabs[(next + tabs.length) % tabs.length]
-    document.getElementById(`mods-tab-${browse.tab}`)?.focus()
+  async function stopAdding() {
+    const from = browse.platform
+    browse.platform = null
+    await tick()
+    document.getElementById(`mods-add-${from}`)?.focus()
+  }
+
+  let categories: { id: string; name: string }[] = $state([])
+  $effect(() => {
+    const platform = browse.platform
+    const kind = browse.kind
+    if (!platform) return
+    let current = true
+    api.modCategories(platform, kind).then(
+      (list) => current && (categories = list),
+      () => current && (categories = []),
+    )
+    return () => (current = false)
+  })
+
+  // A pack that doesn't publish to the platform you were adding from opens on its installed list.
+  let browsedPack: string | null | undefined
+  $effect(() => {
+    const changed = browsedPack !== undefined && pack !== browsedPack
+    if (changed || (browse.platform && !platforms.includes(browse.platform))) browse.platform = null
+    browsedPack = pack
+  })
+
+  function setBrowseKind(kind: Kind) {
+    browse.kind = kind
+    browse.category = null
   }
 
   const inFocusedPane = paneFocus()
@@ -567,15 +626,21 @@
     if (!inFocusedPane()) return
     if (event.key.toLowerCase() !== 'f' || event.shiftKey || !commandKey(event) || event.defaultPrevented) return
     event.preventDefault()
-    if (browse.tab === 'browse') browser?.focusSearch()
-    else {
-      searchField?.focus()
-      searchField?.select()
-    }
+    const field = browse.platform ? browseField : searchField
+    field?.focus()
+    field?.select()
+  }
+
+  function onEscape(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || !browse.platform || !inFocusedPane() || event.defaultPrevented) return
+    // Escape first clears a search you typed, like it does in the field.
+    if (document.activeElement === browseField && browse.text) return
+    event.preventDefault()
+    stopAdding()
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={(e) => { onKey(e); onEscape(e) }} />
 
 <!-- Browsers won't break a line between a hyphen and a digit, so long jar names would hold the
      table wider than the view without these break points. -->
@@ -593,19 +658,19 @@
 <div class="mods">
   <header class="head">
     <div class="title">
-      <h2>Mods</h2>
+      <h2>{browse.platform ? `Add from ${PLATFORM_NAMES[browse.platform]}` : 'Mods'}</h2>
       <p class="muted">
-        {#if browse.tab === 'browse'}
-          Search CurseForge for mods, resource packs, shaders and data packs that run on {game}.
+        {#if browse.platform}
+          Mods, resource packs, shaders and data packs on {PLATFORM_NAMES[browse.platform]} that run on {game}.
         {:else if loading && !mods.length}
           Reading the mod list.
         {:else if !mods.length}
-          This pack has no mods from CurseForge yet.
+          This pack has no mods yet.
         {:else}
-          {mods.length} {mods.length === 1 ? 'file' : 'files'} from CurseForge. {summary ?? ''}
+          {mods.length} {mods.length === 1 ? 'file' : 'files'}. {summary ?? ''}
         {/if}
       </p>
-      {#if browse.tab === 'installed' && mods.length}
+      {#if !browse.platform && mods.length}
         <!-- The update channel is a pack setting, not a view filter, so it sits with the update summary. -->
         <label class="channel muted">
           Updates use
@@ -620,7 +685,7 @@
     <div class="actions">
       <!-- You often relaunch the client between mod changes, so we offer it here as well as in Run. -->
       <ClientLaunch running={clientRunning} />
-      {#if browse.tab === 'installed'}
+      {#if !browse.platform}
         <div class="update-actions">
           <button onclick={checkAgain} disabled={checking || updating || !mods.length} class:busy={checking}>{checking ? 'Checking' : 'Check for updates'}</button>
           <Tip tip={updatable ? whyNoUpdate : null}>
@@ -635,14 +700,22 @@
     </div>
   </header>
 
-  <!-- The tab row has room to spare, so the Installed search lives there and the type tabs keep a row to themselves. -->
+  <!-- Adding and finding share one row in both modes, so the search field never moves. -->
   <div class="tab-row">
-    <div class="tabs" role="tablist" aria-label="Mods" tabindex="-1" onkeydown={onTabKey}>
-      {#each [['installed', 'Installed'], ['browse', 'Browse']] as const as [tab, label] (tab)}
-        <button role="tab" id="mods-tab-{tab}" aria-selected={browse.tab === tab} tabindex={browse.tab === tab ? 0 : -1} aria-controls="mods-panel" class:on={browse.tab === tab} onclick={() => (browse.tab = tab)}>
-          {label}{#if tab === 'installed' && mods.length}<span class="muted tab-count">{mods.length}</span>{/if}
+    <div class="add-from">
+      {#if browse.platform}
+        <button class="back" onclick={stopAdding} title="Back to the installed list (Esc)">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10 6H2M5 3 2 6l3 3" /></svg>
+          Back to installed{#if mods.length}<span class="muted tab-count">{mods.length}<span class="visually-hidden"> files</span></span>{/if}
         </button>
-      {/each}
+      {:else}
+        {#each platforms as platform (platform)}
+          <button id="mods-add-{platform}" onclick={() => startAdding(platform)}>
+            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2v8M2 6h8" /></svg>
+            Add from {PLATFORM_NAMES[platform]}
+          </button>
+        {/each}
+      {/if}
     </div>
     <!-- A run reports here, in this row's spare room, rather than in a notice above the list, so
          queueing more changes doesn't move the rows you're clicking. -->
@@ -650,7 +723,10 @@
       <span role="status" title={runStatus}>{runStatus}</span>
       {#if updating}<button class="link" aria-expanded={showLog} aria-controls="mods-log" onclick={() => (showLog = !showLog)}>{showLog ? 'Hide log' : 'Show log'}</button>{/if}
     </p>
-    {#if browse.tab === 'installed'}
+    {#if browse.platform}
+      {@const where = PLATFORM_NAMES[browse.platform]}
+      <input type="search" class="find" bind:this={browseField} bind:value={browse.text} placeholder="Search {where}" aria-label="Search {where}" title="Search {where} ({shortcut('Ctrl+F')})" />
+    {:else}
       <input type="search" class="find" bind:this={searchField} bind:value={search} placeholder="Find a mod or author" aria-label="Find a mod or author" title="Find a mod or author ({shortcut('Ctrl+F')})" />
     {/if}
   </div>
@@ -673,16 +749,17 @@
       <p><button onclick={ontest}>Show the client log</button></p>
     </Notice>
   {/if}
-  {#if duplicates.length}
+  <!-- While you add mods, notices about the installed files would push the results down. -->
+  {#if duplicates.length && !browse.platform}
     <Notice tone="warn">
       <p>
         {duplicates.length === 1 ? `The mods folder has two versions of ${duplicates[0][0].name}` : `The mods folder has two versions of ${list(duplicates.map((group) => group[0].name))}`},
         and CurseForge will deny a pack uploaded with {duplicates.length === 1 ? 'it' : 'them'}. Remove the one you don't want. packraven won't publish until you do.
       </p>
-      <p><button onclick={() => { browse.tab = 'installed'; kindFilter = 'mods'; search = duplicates[0][0].name }}>Show {duplicates.length === 1 ? 'them' : `${duplicates[0][0].name}`}</button></p>
+      <p><button onclick={() => { browse.platform = null; kindFilter = 'mods'; search = duplicates[0][0].name }}>Show {duplicates.length === 1 ? 'them' : `${duplicates[0][0].name}`}</button></p>
     </Notice>
   {/if}
-  {#if undo}
+  {#if undo && !browse.platform}
     <Notice tone="ok">
       <p>
         {undo.message}
@@ -707,9 +784,35 @@
     </details>
   {/if}
 
-  <div class="panel" id="mods-panel" role="tabpanel" aria-labelledby="mods-tab-{browse.tab}">
-    {#if browse.tab === 'browse'}
-      <ModBrowser bind:this={browser} {installedIds} {game} install={update} />
+  <div class="panel" id="mods-panel">
+    {#if browse.platform}
+      <div class="tools">
+        <div class="filters" role="group" aria-label="Type">
+          {#each Object.keys(kindLabels) as Kind[] as kind (kind)}
+            <button aria-pressed={browse.kind === kind} class:on={browse.kind === kind} onclick={() => setBrowseKind(kind)}>{kindLabels[kind]}</button>
+          {/each}
+        </div>
+        <div class="refine">
+          <label>
+            <span class="visually-hidden">Category</span>
+            <select bind:value={browse.category}>
+              <option value={null}>All categories</option>
+              {#each categories as category (category.id)}<option value={category.id}>{category.name}</option>{/each}
+            </select>
+          </label>
+          <label class="sort">
+            Sort by
+            <select bind:value={browse.sort}>
+              {#each [['relevance', 'Relevance'], ['popularity', 'Popularity'], ['downloads', 'Downloads'], ['newest', 'Newest'], ['updated', 'Recently updated']] as const as [sort, label] (sort)}
+                <option value={sort}>{label}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+      </div>
+      {#key browse.platform}
+        <ModBrowser platform={browse.platform} {installedKeys} {game} dual={platforms.length > 1} install={update} />
+      {/key}
     {:else}
       <div class="tools">
         <div class="filters" role="group" aria-label="Show">
@@ -775,7 +878,7 @@
               {/each}
             {:else}
               <!-- Disabling a file renames it, so we key rows by what stays put and keep focus on the switch. -->
-              {#each visible as mod (`${mod.projectId}:${mod.fileId}`)}
+              {#each visible as mod (`${mod.key ?? mod.path}:${mod.file}`)}
                 {@const status = checkFor(mod)}
                 {@const next = updates.get(mod.path)}
                 {@const lockedHere = isLocked(mod.key)}
@@ -810,7 +913,7 @@
                       {#if logo}<img src={logo} alt="" width="32" height="32" loading="lazy" />{:else}<span class="logo" aria-hidden="true"></span>{/if}
                       <div class="about">
                         <div class="title-line">
-                          <button class="expand" aria-expanded={expanded === mod.path} aria-controls="details-{mod.projectId}-{mod.fileId}" onclick={() => expand(mod)}>{mod.name}</button>
+                          <button class="expand" aria-expanded={expanded === mod.path} aria-controls="details-{domId(`${mod.key ?? mod.path}-${mod.file}`)}" onclick={() => expand(mod)}>{mod.name}</button>
                           {#if duplicatePaths.has(mod.path)}<span class="chip fail">Two versions</span>{/if}
                         </div>
                         <!-- The installed file and its update share a line, so a pack of hundreds stays scannable. -->
@@ -825,6 +928,12 @@
                               <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" /></svg>
                               <span class="file" aria-hidden="true">{changedPart(fileName(mod.path).replace(/\.disabled$/, ''), next.fileName)}</span>
                               {#if next.releaseType !== 'release'}<span class="chip pending">{typeLabels[next.releaseType]}</span>{/if}
+                            </span>
+                          {/if}
+                          {#if !lockedHere && waitingOnModrinth(status)}
+                            {@const waiting = waitingOnModrinth(status)!}
+                            <span class="held" title="{waiting.fileName} is on CurseForge, but Modrinth doesn't have it yet, so we hold the update until it does">
+                              {changedPart(fileName(mod.path).replace(/\.disabled$/, ''), waiting.fileName)} isn't on Modrinth yet<span class="visually-hidden">, so we hold the update until it is</span>
                             </span>
                           {/if}
                         </div>
@@ -859,7 +968,7 @@
                               if (change) return cancelChange(mod.path, mod.name)
                               if (whyNoUpdate || !next) return
                               pressed = mod.path
-                              update([{ fileId: next.fileId, replaces: mod.path }])
+                              update([{ file: next.file, replaces: mod.path }])
                             }}
                           >{#if shown?.cancels}<span class="swap"><span>{shown.label}</span><span aria-hidden="true">Cancel</span></span>{:else}{shown?.label ?? 'Update'}{/if}</button>
                         {/snippet}
@@ -894,7 +1003,7 @@
                   </td>
                 </tr>
                 {#if expanded === mod.path}
-                  <tr class="details" id="details-{mod.projectId}-{mod.fileId}">
+                  <tr class="details" id="details-{domId(`${mod.key ?? mod.path}-${mod.file}`)}">
                     <td colspan="7">
                       <div class="detail">
                         <div class="detail-head">
@@ -902,37 +1011,39 @@
                             <button class="mode" aria-pressed={detail === 'versions'} onclick={() => expand(mod, 'versions')}>Versions</button>
                             <button class="mode" aria-pressed={detail === 'description'} onclick={() => expand(mod, 'description')}>Description</button>
                           </div>
-                          {#if mod.url}<button class="link" onclick={() => openUrl(mod.url!)}>Open on CurseForge</button>{/if}
+                          {#if mod.url}<button class="link" onclick={() => openUrl(mod.url!)}>Open on {PLATFORM_NAMES[platformOf(mod.key)]}</button>{/if}
                         </div>
                         {#if detail === 'versions'}
                           {#if versionsError}
                             <p class="failed">{versionsError}</p>
                           {:else if !versions}
-                            <p class="muted">Listing files on CurseForge.</p>
+                            <p class="muted">Listing files on {PLATFORM_NAMES[platformOf(mod.key)]}.</p>
                           {:else if !versions.length}
-                            <p class="muted">CurseForge has no files of {mod.name} for {game}.</p>
+                            <p class="muted">{mod.key ? `${PLATFORM_NAMES[platformOf(mod.key)]} has no files of ${mod.name} for ${game}.` : 'packraven knows no other versions of this file.'}</p>
                           {:else}
-                            {@const reading = versions.find((f) => f.fileId === openChangelog) ?? versions[0]}
-                            {@const changelog = changelogs[reading.fileId]}
+                            {@const reading = versions.find((f) => f.file === openChangelog) ?? versions[0]}
+                            {@const changelog = changelogs[reading.file]}
+                            {@const key = mod.key!}
                             <div class="versions">
                               <!-- svelte-ignore a11y_no_noninteractive_element_interactions (arrow keys move the selection between the buttons inside) -->
-                              <ul class="files" aria-label="Versions of {mod.name}" onkeydown={(e) => pickByArrow(e, mod.projectId)}>
-                                {#each versions as file (file.fileId)}
+                              <ul class="files" aria-label="Versions of {mod.name}" onkeydown={(e) => pickByArrow(e, key)}>
+                                {#each versions as file (file.file)}
                                   {@const reads = file === reading}
                                   <li class:reading={reads}>
-                                    <button class="pick" tabindex={reads ? 0 : -1} aria-current={reads || undefined} aria-controls="changelog-{mod.projectId}" onclick={() => showChangelog(mod.projectId, file.fileId)}>
+                                    <button class="pick" tabindex={reads ? 0 : -1} aria-current={reads || undefined} aria-controls="changelog-{domId(key)}" onclick={() => showChangelog(key, file.file)}>
                                       <span class="visually-hidden">{file.fileName}</span>
                                       <span class="file" aria-hidden="true" title={file.fileName}>{versionLabel(file, versions)}</span>
                                       {#if file.releaseType !== 'release'}<span class="chip pending">{typeLabels[file.releaseType]}</span>{/if}
+                                      {#if file.onModrinth === false}<span class="chip pending" title="Modrinth doesn't have this file yet, so we don't offer it as an update">Not on Modrinth yet<span class="visually-hidden">, so we don't offer it as an update</span></span>{/if}
                                       <span class="muted date">{date(file.fileDate)}</span>
                                     </button>
-                                    {#if file.fileId === mod.fileId}
+                                    {#if file.file === mod.file}
                                       <span class="muted current">Installed</span>
                                     {:else}
                                       {@const why = whyNoUpdate ?? (changeFor(mod.path) ? 'Wait for this change to finish' : null)}
                                       <Tip tip={why}>
                                         {#snippet children(described)}
-                                          <button tabindex={reads ? 0 : -1} aria-disabled={!!why} aria-describedby={described} onclick={() => !why && update([{ fileId: file.fileId, replaces: mod.path }])} aria-label="{file.fileId > mod.fileId ? 'Update to' : 'Roll back to'} {file.fileName}">{file.fileId > mod.fileId ? 'Update' : 'Roll back'}</button>
+                                          <button tabindex={reads ? 0 : -1} aria-disabled={!!why} aria-describedby={described} onclick={() => !why && update([{ file: file.file, replaces: mod.path }])} aria-label="{isNewer(file, mod.file, versions ?? []) ? 'Update to' : 'Roll back to'} {file.fileName}">{isNewer(file, mod.file, versions ?? []) ? 'Update' : 'Roll back'}</button>
                                         {/snippet}
                                       </Tip>
                                     {/if}
@@ -940,11 +1051,11 @@
                                 {/each}
                               </ul>
                               <!-- svelte-ignore a11y_no_noninteractive_tabindex (a long changelog needs to scroll by keyboard even when it has no links) -->
-                              <section class="changelog" id="changelog-{mod.projectId}" aria-labelledby="changelog-title-{mod.projectId}" tabindex="0">
-                                <h3 id="changelog-title-{mod.projectId}">Changelog of {@render fileText(reading.fileName)}</h3>
+                              <section class="changelog" id="changelog-{domId(key)}" aria-labelledby="changelog-title-{domId(key)}" tabindex="0">
+                                <h3 id="changelog-title-{domId(key)}">Changelog of {@render fileText(reading.fileName)}</h3>
                                 <p class="visually-hidden" role="status">{changelog === undefined ? `Loading the changelog of ${reading.fileName}.` : typeof changelog === 'string' ? `Showing the changelog of ${reading.fileName}.` : changelog.error}</p>
                                 {#if changelog === undefined}
-                                  <p class="muted" aria-hidden="true">Loading the changelog from CurseForge.</p>
+                                  <p class="muted" aria-hidden="true">Loading the changelog from {PLATFORM_NAMES[platformOf(key)]}.</p>
                                 {:else if typeof changelog !== 'string'}
                                   <p class="failed" aria-hidden="true">{changelog.error}</p>
                                 {:else}
@@ -955,12 +1066,14 @@
                           {/if}
                         {:else if descriptionError}
                           <p class="failed">{descriptionError}</p>
-                        {:else if descriptions[mod.projectId] === undefined}
-                          <p class="muted">Loading the description from CurseForge.</p>
+                        {:else if !mod.key}
+                          <p class="muted">packraven doesn't know which project this file is from.</p>
+                        {:else if descriptions[mod.key] === undefined}
+                          <p class="muted">Loading the description from {PLATFORM_NAMES[platformOf(mod.key)]}.</p>
                         {:else}
                           <!-- svelte-ignore a11y_no_noninteractive_tabindex (a long description needs to scroll by keyboard even when it has no links) -->
                           <section class="description" aria-label="Description of {mod.name}" tabindex="0">
-                            <RemoteHtml html={descriptions[mod.projectId]} topHeading={3} />
+                            <RemoteHtml html={descriptions[mod.key]} topHeading={3} />
                           </section>
                         {/if}
                       </div>
@@ -978,8 +1091,10 @@
                       {/each}
                       <button class="link" onclick={() => (search = '')}>Clear the search</button>
                     {:else}
-                      This pack has no {kindLabels[kindFilter].toLowerCase()} from CurseForge yet.
-                      <button class="link" onclick={() => { browse.kind = kindFilter; browse.tab = 'browse' }}>Browse CurseForge</button>
+                      This pack has no {kindLabels[kindFilter].toLowerCase()} yet.
+                      {#each platforms as platform (platform)}
+                        <button class="link" onclick={() => startAdding(platform)}>Add from {PLATFORM_NAMES[platform]}</button>{' '}
+                      {/each}
                     {/if}
                   </td>
                 </tr>
@@ -1053,8 +1168,49 @@
     border-bottom: 1px solid var(--line);
   }
 
-  .tab-row .tabs {
-    border-bottom: 0;
+  .add-from {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .add-from button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .add-from svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* Category and sort wrap below the type chips together, so they never split across two rows. */
+  .refine {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: end;
+    gap: 16px;
+  }
+
+  /* Wide enough for category names like "Adventure and RPG", which a narrower menu cuts off. */
+  .refine select {
+    width: 20ch;
+    max-width: 100%;
+  }
+
+  .sort {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
   }
 
   /* The search field keeps room on the right for its clear button, so it needs more width than
@@ -1063,34 +1219,6 @@
     flex: 0 1 260px;
     min-width: min(100%, 15rem);
     margin-bottom: 6px;
-  }
-
-  .tabs {
-    display: flex;
-    gap: 4px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .tabs button {
-    margin-bottom: -1px;
-    padding: 8px 14px;
-    font-weight: 400;
-    color: var(--muted);
-    background: transparent;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    border-radius: 0;
-  }
-
-  .tabs button:hover:not(.on) {
-    color: var(--text);
-    background: transparent;
-  }
-
-  .tabs button.on {
-    color: var(--text);
-    font-weight: 700;
-    border-bottom-color: var(--forest);
   }
 
   .tab-count,

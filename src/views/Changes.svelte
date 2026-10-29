@@ -47,7 +47,7 @@
   }
 
   let savedVersion = $derived(overview?.version ?? null)
-  let lastVersion = $derived(overview?.lastTag?.replace(/^v/, '') ?? null)
+  let lastVersion = $derived(overview?.lastVersion ?? null)
   let installingBcc = $state(false)
   let bccError: string | null = $state(null)
   let bccBusy = $derived(installingBcc && job('mods').phase === 'running')
@@ -185,7 +185,7 @@
 
   let changeCount = $derived(diff ? diff.added.length + diff.updated.length + diff.removed.length : 0)
   let archivedNote = $derived(
-    overview?.lastTag ? `packraven archived the notes for ${overview.lastTag} to changelogs/${overview.lastTag.replace(/^v/, '')}.md when you published it.` : null,
+    overview?.lastTag ? `packraven archived the notes for ${overview.lastTag} to changelogs/${overview.lastVersion}.md when you published it.` : null,
   )
   let readiness = $derived(diff?.since ? `${changeCount || 'No'} mod ${changeCount === 1 ? 'change' : 'changes'} since ${diff.since}.` : '')
 </script>

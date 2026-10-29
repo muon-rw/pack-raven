@@ -137,6 +137,8 @@ pub struct Overview {
     incoming: Option<ModCounts>,
     changed: Vec<String>,
     last_tag: Option<String>,
+    /// The version the last release tag belongs to, which isn't always the tag without its v.
+    last_version: Option<String>,
     dev_jars: Vec<String>,
     project_id: u64,
     modrinth_project_id: String,
@@ -238,6 +240,7 @@ pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
     let mod_list = state.mod_list.lock().unwrap().clone();
     let mod_list = if crate::setup::same_dir(&mod_list.dir, &pack.dir) { mod_list } else { Default::default() };
     let (ahead, behind) = git::ahead_behind(&pack.dir).unwrap_or((0, 0));
+    let last_tag = git::last_release_tag(&pack.dir);
     Ok(Overview {
         name: pack.name(),
         version: pack.version(),
@@ -262,7 +265,8 @@ pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
         behind,
         incoming: if behind > 0 { incoming_mods(&pack.dir) } else { None },
         changed: git::changed_files(&pack.dir),
-        last_tag: git::last_release_tag(&pack.dir),
+        last_version: last_tag.as_deref().map(|tag| publish::version_of_tag(tag, &publish::load_releases(&state.pack_data().join("releases.json")))),
+        last_tag,
         dev_jars: export::local_dev_jars(&pack),
         project_id: pack.config.curseforge.project_id,
         modrinth_project_id: pack.config.modrinth.project_id.trim().to_string(),

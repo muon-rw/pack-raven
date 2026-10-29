@@ -4,7 +4,7 @@
   import { job } from '../lib/jobs.svelte'
   import { nav } from '../lib/nav.svelte'
 
-  let { version, lastTag, onchange }: { version: string | null; lastTag: string | null; onchange: () => unknown } = $props()
+  let { version, lastTag, lastVersion, onchange }: { version: string | null; lastTag: string | null; lastVersion: string | null; onchange: () => unknown } = $props()
 
   let editing = $state(false)
   let draft = $state('')
@@ -19,7 +19,7 @@
   // spinner so it's clear packraven hasn't confirmed it yet.
   let saving: string | null = $state(null)
   let shown = $derived(saving ?? version)
-  let unreleased = $derived(!!shown && shown !== lastTag?.replace(/^v/, ''))
+  let unreleased = $derived(!!shown && shown !== lastVersion)
   let released = $derived(lastTag ? `Last release ${lastTag}.` : 'No release yet.')
   let publishing = $derived(job('publish').phase === 'running')
 

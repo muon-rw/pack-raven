@@ -3,7 +3,7 @@
   import Notice from './components/Notice.svelte'
   import { onMount, tick } from 'svelte'
   import { listen } from '@tauri-apps/api/event'
-  import { api, errorText, type Overview, type PackList } from './lib/api'
+  import { api, errorText, type Overview, type PackList, type Platform } from './lib/api'
   import { minecraft, refreshAccount } from './lib/minecraft.svelte'
   import { job, jobs, onJobEnd, serverPack, startListening, testState } from './lib/jobs.svelte'
   import Changes from './views/Changes.svelte'
@@ -238,6 +238,9 @@
         ] as const).filter(([label, count]) => count > 0 || label !== 'Other')
       : [],
   )
+
+  // You add mods from the platforms the pack publishes to, and from CurseForge before you choose any.
+  let addPlatforms = $derived<Platform[]>(overview?.modrinthProjectId ? (overview.projectId > 0 ? ['curseforge', 'modrinth'] : ['modrinth']) : ['curseforge'])
 
   let modListStatus = $derived(
     overview?.modListError
@@ -488,7 +491,7 @@
       <div class="identity">
         <PackSwitcher list={packs} name={overview?.name ?? (packs?.active ? 'Pack unavailable' : 'No pack')} onswitch={switchPack} onadd={() => show('add')} />
         {#if overview}
-          <VersionEditor version={overview.version} lastTag={overview.lastTag} onchange={refresh} />
+          <VersionEditor version={overview.version} lastTag={overview.lastTag} lastVersion={overview.lastVersion} onchange={refresh} />
           <div class="game">Minecraft {overview.minecraft} with {loaderName(overview.loader)}</div>
         {/if}
       </div>
@@ -684,7 +687,7 @@
     {:else if pane === 'changes'}
       <Changes {overview} onchange={refresh} />
     {:else if pane === 'mods'}
-      <Mods pack={packs?.active ?? null} game={overview ? `${overview.minecraft} ${loaderName(overview.loader).split(' ')[0]}` : 'this pack'} clientRunning={!!overview?.clientRunning} ontest={() => showFrom('test', index)} />
+      <Mods pack={packs?.active ?? null} platforms={addPlatforms} game={overview ? `${overview.minecraft} ${loaderName(overview.loader).split(' ')[0]}` : 'this pack'} clientRunning={!!overview?.clientRunning} ontest={() => showFrom('test', index)} />
     {:else if pane === 'server'}
       <Server {overview} />
     {:else if pane === 'test'}

@@ -306,9 +306,10 @@ async fn update_mod_with_dependencies() {
     let checks = mod_updates::check(&pack).await.unwrap();
     println!("{checks:#?}");
     let newer = serde_json::to_value(&checks[0]).unwrap()["newer"].as_array().unwrap().clone();
-    let file_id = newer.iter().find(|f| f["releaseType"] == "release").expect("a newer release")["fileId"].as_u64().unwrap();
+    let file = newer.iter().find(|f| f["releaseType"] == "release").expect("a newer release")["file"].as_str().unwrap().to_string();
+    let file_id: u64 = file.trim_start_matches("cf:").parse().unwrap();
 
-    let plan = mod_updates::plan(&pack, &[ModRequest { file_id, replaces: Some(old_path.clone()) }]).await.unwrap();
+    let plan = mod_updates::plan(&pack, &[ModRequest { file: Some(file), project: None, kind: None, replaces: Some(old_path.clone()) }]).await.unwrap();
     println!("dependencies {:?}, unavailable {:?}", plan.dependencies, plan.unavailable);
     assert!(!plan.dependencies.is_empty(), "Apotheosis requires Placebo and Apothic Attributes");
     modsync::place(&dir, plan.placements, &log).await.unwrap();
@@ -337,19 +338,20 @@ async fn install_mod_from_search() {
     std::fs::write(dir.join(crate::pack::LOCKFILE), r#"{"minecraft": "1.21.1", "loader": "neoforge-21.1.209", "files": []}"#).unwrap();
     let pack = Pack::open(&dir).unwrap();
 
-    let search = |text: &str, kind: &str| serde_json::from_value::<SearchRequest>(serde_json::json!({ "text": text, "kind": kind, "categoryId": null, "sort": "popularity", "index": 0 })).unwrap();
+    let search = |text: &str, kind: &str| serde_json::from_value::<SearchRequest>(serde_json::json!({ "platform": "curseforge", "text": text, "kind": kind, "category": null, "sort": "popularity", "index": 0 })).unwrap();
     let page = serde_json::to_value(mod_updates::search(&pack, &search("apotheosis", "mods")).await.unwrap()).unwrap();
-    let apotheosis = page["results"].as_array().unwrap().iter().find(|r| r["projectId"] == 313970).expect("Apotheosis in the results");
-    let file_id = apotheosis["file"]["fileId"].as_u64().expect("a file for 1.21.1 NeoForge");
+    let apotheosis = page["results"].as_array().unwrap().iter().find(|r| r["key"] == "cf:313970").expect("Apotheosis in the results");
+    let file = apotheosis["file"]["file"].as_str().expect("a file for 1.21.1 NeoForge").to_string();
+    let request = || ModRequest { file: Some(file.clone()), project: None, kind: None, replaces: None };
 
-    let ranked = serde_json::to_value(mod_updates::search(&pack, &serde_json::from_value(serde_json::json!({ "text": "storage drawers", "kind": "mods", "categoryId": null, "sort": "relevance", "index": 0 })).unwrap()).await.unwrap()).unwrap();
+    let ranked = serde_json::to_value(mod_updates::search(&pack, &serde_json::from_value(serde_json::json!({ "platform": "curseforge", "text": "storage drawers", "kind": "mods", "category": null, "sort": "relevance", "index": 0 })).unwrap()).await.unwrap()).unwrap();
     assert_eq!(ranked["results"][0]["name"], "Storage Drawers");
     assert!(ranked["results"].as_array().unwrap().iter().all(|r| !r["file"].is_null()));
 
     let resource_packs = serde_json::to_value(mod_updates::search(&pack, &search("", "resourcepacks")).await.unwrap()).unwrap();
     assert!(!resource_packs["results"].as_array().unwrap().is_empty(), "resource packs have no loader, so they must still match");
 
-    let plan = mod_updates::plan(&pack, &[ModRequest { file_id, replaces: None }]).await.unwrap();
+    let plan = mod_updates::plan(&pack, &[request()]).await.unwrap();
     assert_eq!(plan.installs, ["Apotheosis"]);
     println!("dependencies {:?}", plan.dependencies);
     assert!(!plan.dependencies.is_empty());
@@ -357,8 +359,48 @@ async fn install_mod_from_search() {
 
     let pack = Pack::open(&dir).unwrap();
     assert_eq!(pack.lock.files.len(), plan.dependencies.len() + 1);
-    let again = mod_updates::plan(&pack, &[ModRequest { file_id, replaces: None }]).await;
+    let again = mod_updates::plan(&pack, &[request()]).await;
     assert!(again.is_err(), "installing a project the pack already has should fail");
+}
+
+// Read-only on Modrinth: searches it, installs a mod and what it requires into a scratch pack, then checks for updates.
+#[tokio::test]
+#[ignore]
+async fn install_mod_from_modrinth() {
+    use crate::mod_updates::{self, ModRequest, SearchRequest};
+    use crate::modsync;
+
+    let dir = scratch().join("modrinth-install");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    crate::git::run(&dir, &["init", "-q"]).unwrap();
+    std::fs::write(dir.join(crate::pack::LOCKFILE), r#"{"minecraft": "1.21.1", "loader": "neoforge-21.1.209", "files": []}"#).unwrap();
+    let pack = Pack::open(&dir).unwrap();
+
+    let search = |text: &str, kind: &str| serde_json::from_value::<SearchRequest>(serde_json::json!({ "platform": "modrinth", "text": text, "kind": kind, "category": null, "sort": "relevance", "index": 0 })).unwrap();
+    let page = serde_json::to_value(mod_updates::search(&pack, &search("sophisticated backpacks", "mods")).await.unwrap()).unwrap();
+    let hit = page["results"].as_array().unwrap().iter().find(|r| r["name"] == "Sophisticated Backpacks").expect("Sophisticated Backpacks in the results");
+    let key = hit["key"].as_str().unwrap().to_string();
+    for kind in ["resourcepacks", "shaderpacks", "datapacks"] {
+        let results = serde_json::to_value(mod_updates::search(&pack, &search("", kind)).await.unwrap()).unwrap();
+        assert!(!results["results"].as_array().unwrap().is_empty(), "Modrinth should have {kind} for 1.21.1");
+    }
+    assert!(!mod_updates::categories(crate::pack::Platform::Modrinth, mod_updates::AddonKind::Mods).await.unwrap().is_empty());
+
+    let plan = mod_updates::plan(&pack, &[ModRequest { file: None, project: Some(key.clone()), kind: None, replaces: None }]).await.unwrap();
+    println!("installs {:?}, dependencies {:?}, unavailable {:?}", plan.installs, plan.dependencies, plan.unavailable);
+    assert_eq!(plan.installs, ["Sophisticated Backpacks"]);
+    assert!(plan.dependencies.iter().any(|d| d.contains("Sophisticated Core")), "it requires Sophisticated Core");
+    modsync::place(&dir, plan.placements, &Log::console("mods")).await.unwrap();
+
+    let pack = Pack::open(&dir).unwrap();
+    assert!(pack.lock.files.iter().all(|e| e.modrinth.is_some() && dir.join(&e.path).exists()));
+    let checks = mod_updates::check(&pack).await.unwrap();
+    assert_eq!(checks.len(), pack.lock.files.len());
+    let versions = mod_updates::versions(&pack, &pack.lock.files[0].path, &format!("mr:{}", pack.lock.files[0].modrinth.as_ref().unwrap().project_id)).await.unwrap();
+    assert!(!versions.is_empty());
+    let description = mod_updates::description(&key).await.unwrap();
+    assert!(description.markdown && !description.body.is_empty());
 }
 
 // Set PACKRAVEN_TWIN_SAMPLE to try more of the files Modrinth doesn't host byte for byte.
@@ -416,4 +458,25 @@ async fn reports_modrinth_version_skew() {
             ),
         }
     }
+}
+
+// Read-only: prints which of the pack's updates Modrinth has too, for a pack on both platforms.
+#[tokio::test]
+#[ignore]
+async fn reports_updates_on_both_platforms() {
+    let (_, pack) = pack();
+    let checks = serde_json::to_value(crate::mod_updates::check(&pack).await.unwrap()).unwrap();
+    for check in checks.as_array().unwrap().iter().filter(|c| !c["newer"].as_array().unwrap().is_empty()) {
+        let newer: Vec<String> = check["newer"].as_array().unwrap().iter().map(|f| format!("{} ({}, on Modrinth: {})", f["fileName"], f["releaseType"], f["onModrinth"])).collect();
+        println!("{}: {}", check["path"], newer.join("; "));
+    }
+}
+
+// Read-only: Sodium and JEI are on both platforms, under the same slugs and authors.
+#[tokio::test]
+#[ignore]
+async fn finds_curseforge_copies_of_modrinth_projects() {
+    let found = crate::links::curseforge_counterparts(&["AANobbMI".into(), "u6dRKJwZ".into()]).await.unwrap();
+    println!("{found:?}");
+    assert_eq!(found.len(), 2);
 }

@@ -96,6 +96,12 @@ export function sanitizeRemoteHtml(html: string): string {
   return sanitize(html, { path: '', imageUrl: () => null, slugs: new Map(), curseforge: true })
 }
 
+// Modrinth sends descriptions and changelogs as Markdown, which can hold raw HTML too, so both go
+// through the same sanitizer.
+export function remoteTextHtml(text: { body: string; markdown: boolean }): string {
+  return sanitizeRemoteHtml(text.markdown ? renderMarkdown(text.body) : text.body)
+}
+
 // The preview runs inside packraven's own window, so we keep only plain formatting and rewrite
 // every link and image ourselves. DOMParser builds the tree without running any of it.
 function sanitize(html: string, context: Context) {

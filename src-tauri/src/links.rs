@@ -16,9 +16,12 @@ const SEARCH_RESULTS: u32 = 3;
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub enum Evidence {
-    SameFiles,
-    SameSource,
-    SameAuthor,
+    #[serde(rename = "sameFiles")]
+    FileNames,
+    #[serde(rename = "sameSource")]
+    Repository,
+    #[serde(rename = "sameAuthor")]
+    Author,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -138,14 +141,65 @@ async fn linked_project(target: &Target, loaders: &[&str], project: &CfMod, curs
 
 async fn evidence(project: &CfMod, found: &Project, versions: &[Version], curseforge_names: &HashSet<String>) -> Result<Option<Evidence>> {
     if versions.iter().flat_map(|v| &v.files).any(|f| curseforge_names.contains(&f.filename.to_lowercase())) {
-        return Ok(Some(Evidence::SameFiles));
+        return Ok(Some(Evidence::FileNames));
     }
     if project.links.source_url.as_deref().and_then(repository).is_some_and(|ours| found.source_url.as_deref().and_then(repository) == Some(ours)) {
-        return Ok(Some(Evidence::SameSource));
+        return Ok(Some(Evidence::Repository));
     }
     let names: HashSet<String> = project.authors.iter().map(|a| simplify(&a.name)).collect();
     let theirs = modrinth::authors(&[found]).await?.remove(&found.id).unwrap_or_default();
-    Ok(theirs.iter().any(|name| names.contains(&simplify(name))).then_some(Evidence::SameAuthor))
+    Ok(theirs.iter().any(|name| names.contains(&simplify(name))).then_some(Evidence::Author))
+}
+
+/// Returns the Modrinth page of each CurseForge project that Modrinth has too, by CurseForge project ID.
+/// Browsing shows these for a page of results at a time, so we only ask Modrinth by slug, in one batch,
+/// and only trust a project with the same source repository or author.
+pub async fn modrinth_counterparts(ids: &[u64]) -> Result<Vec<(u64, String)>> {
+    let projects = curseforge::mods(ids).await?;
+    let slugs: Vec<String> = projects.values().flat_map(|p| std::iter::once(p.slug.as_str()).chain(twins::slug_for_every_loader(&p.slug))).map(str::to_lowercase).collect();
+    let found = modrinth::projects(&slugs).await?;
+    let by_slug: std::collections::HashMap<String, &Project> = found.values().map(|p| (p.slug.to_lowercase(), p)).collect();
+    let candidates: Vec<(&CfMod, &Project)> = projects
+        .values()
+        .filter_map(|cf| {
+            let slug = cf.slug.to_lowercase();
+            let modrinth = by_slug.get(&slug).or_else(|| twins::slug_for_every_loader(&slug).and_then(|s| by_slug.get(s)))?;
+            Some((cf, *modrinth))
+        })
+        .collect();
+    let authors = modrinth::authors(&candidates.iter().map(|(_, m)| *m).collect::<Vec<_>>()).await?;
+    Ok(candidates
+        .into_iter()
+        .filter(|(cf, modrinth)| {
+            let same_source = cf.links.source_url.as_deref().and_then(repository).is_some_and(|ours| modrinth.source_url.as_deref().and_then(repository) == Some(ours));
+            let names: HashSet<String> = cf.authors.iter().map(|a| simplify(&a.name)).collect();
+            same_source || authors.get(&modrinth.id).into_iter().flatten().any(|name| names.contains(&simplify(name)))
+        })
+        .map(|(cf, modrinth)| (cf.id, modrinth.url()))
+        .collect())
+}
+
+/// Returns the CurseForge page of each Modrinth project CurseForge has too, by Modrinth project ID.
+/// CurseForge can only look up one slug at a time, so we ask about a page of results, not more.
+pub async fn curseforge_counterparts(ids: &[String]) -> Result<Vec<(String, String)>> {
+    let projects = modrinth::projects(ids).await?;
+    let list: Vec<&Project> = projects.values().collect();
+    let authors = modrinth::authors(&list).await?;
+    let mut found = Vec::new();
+    for project in list {
+        let theirs: HashSet<String> = authors.get(&project.id).into_iter().flatten().map(|name| simplify(name)).collect();
+        let ours = project.source_url.as_deref().and_then(repository);
+        for candidate in curseforge::mods_with_slug(&project.slug).await? {
+            let same_source = ours.is_some() && candidate.links.source_url.as_deref().and_then(repository) == ours;
+            if same_source || candidate.authors.iter().any(|a| theirs.contains(&simplify(&a.name))) {
+                if let Some(url) = candidate.links.website_url {
+                    found.push((project.id.clone(), url));
+                }
+                break;
+            }
+        }
+    }
+    Ok(found)
 }
 
 // Links to one repository take many forms, like github.com/Owner/Repo.git or .../repo/tree/main.

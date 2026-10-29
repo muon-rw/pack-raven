@@ -1,5 +1,5 @@
 import { untrack } from 'svelte'
-import { api, type AddonKind, type ModCheck, type ModFile, type ReleaseType, type SearchSort } from './api'
+import { api, type AddonKind, type ModCheck, type ModFile, type Platform, type ReleaseType, type SearchSort } from './api'
 import { job, onJobItem } from './jobs.svelte'
 
 const stability: Record<ReleaseType, number> = { release: 1, beta: 2, alpha: 3 }
@@ -21,8 +21,8 @@ export const modUpdates = $state({
   pointing: null as number | null,
 })
 
-export function projectKey(projectId: number): string {
-  return `project:${projectId}`
+export function projectKey(key: string): string {
+  return `project:${key}`
 }
 
 export interface QueuedChange {
@@ -136,8 +136,16 @@ $effect.root(() => {
   })
 })
 
+// In a pack on Modrinth, an update only counts once Modrinth has it too, so updating never takes a
+// mod off the Modrinth pack. CurseForge files Modrinth doesn't have yet still show in the versions list.
 export function newestOnChannel(check: ModCheck | undefined): ModFile | undefined {
-  return check?.newer.find((file) => stability[file.releaseType] <= stability[modUpdates.channel])
+  return check?.newer.find((file) => stability[file.releaseType] <= stability[modUpdates.channel] && file.onModrinth !== false)
+}
+
+// The newest file on the channel that Modrinth doesn't have yet, when it's newer than the update we offer.
+export function waitingOnModrinth(check: ModCheck | undefined): ModFile | undefined {
+  const first = check?.newer.find((file) => stability[file.releaseType] <= stability[modUpdates.channel])
+  return first?.onModrinth === false ? first : undefined
 }
 
 export function isLocked(key: string | null): boolean {
@@ -155,10 +163,11 @@ export function updateCount(pack: string | null): number {
   return count
 }
 
+// Null shows the installed list. A platform shows that platform's search, in place of the list.
 export const browse = $state({
-  tab: 'installed' as 'installed' | 'browse',
+  platform: null as Platform | null,
   text: '',
   kind: 'mods' as AddonKind,
-  categoryId: null as number | null,
+  category: null as string | null,
   sort: 'relevance' as SearchSort,
 })

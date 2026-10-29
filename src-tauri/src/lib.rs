@@ -203,6 +203,8 @@ pub fn run() {
             mod_commands::set_update_channel,
             mod_commands::search_mods,
             mod_commands::mod_categories,
+            mod_commands::modrinth_counterparts,
+            mod_commands::curseforge_counterparts,
             mod_commands::preview_mods,
             mod_commands::change_mods,
             mod_commands::cancel_mod_change,

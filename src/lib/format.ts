@@ -497,3 +497,8 @@ function matchLines(a: string[], b: string[]): [number, number][] {
   for (let k = 0; k < a.length - endA; k++) pairs.push([endA + k, endB + k])
   return pairs
 }
+
+// Mirrors publish::release_tag: a version like v4.1.5 is its own tag, and the rest get a v.
+export function releaseTag(version: string): string {
+  return /^v\d/.test(version) ? version : `v${version}`
+}

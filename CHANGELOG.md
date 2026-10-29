@@ -11,6 +11,8 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 - Option to override every open-licensed file at once, or everything by an author who gave you permission, including their mods you add later
 - When Modrinth has a mod but not your version of it, packraven will offer to switch to the newest version both platforms have
 - CurseForge overrides now have the same UI as modrinth overrides, instead of needing to edit packraven.toml directly
+- Add mods from Modrinth as well as CurseForge, with their dependencies. 
+- Update checks, versions, changelogs and descriptions for mods from Modrinth
 
 ### Changed
 - Updated the pack list format version. Everyone working on the pack needs this version or newer, and on older versions you'll be asked to update before opening a pack built with a newer packraven version.
@@ -18,6 +20,7 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 ### Fixed
 - Failing to find Fabric install even after you'd launched the instance from CurseForge
 - BCC detection on older and newer versions
+- Versions that started with a v, like v4.1.5, always got a second v in the release's git tag (vv4.1.5)
 
 ## [0.2.1] - 2026-10-28
 

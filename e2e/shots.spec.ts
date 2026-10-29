@@ -18,10 +18,21 @@ const zooms = [125]
 // Tabs the URL can't open, captured as <view>-<tab>.png after the view's own shot.
 const tabs: Partial<Record<View, string[]>> = { server: ['Properties', 'Startup'] }
 
+// Modes a button opens, captured as <view>-<button>.png, with Escape between them.
+const modes: Partial<Record<View, string[]>> = { mods: ['Add from CurseForge', 'Add from Modrinth'] }
+
 async function shootTabs(page: Page, view: View, path: (name: string) => string) {
   for (const tab of tabs[view] ?? []) {
     await page.getByRole('tab', { name: tab }).click()
     await page.screenshot({ path: path(`${view}-${tab.toLowerCase()}`), animations: 'disabled' })
+  }
+  for (const mode of modes[view] ?? []) {
+    const button = page.getByRole('button', { name: mode })
+    if (!(await button.count())) continue
+    await button.click()
+    await page.getByRole('region', { name: /^Results from/ }).getByRole('listitem').first().waitFor()
+    await page.screenshot({ path: path(`${view}-${mode.toLowerCase().replace(/ /g, '-')}`), animations: 'disabled' })
+    await page.keyboard.press('Escape')
   }
 }
 
