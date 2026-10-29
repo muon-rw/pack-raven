@@ -92,8 +92,8 @@
   <section aria-labelledby={id('choices-title')}>
     <h3 id={id('choices-title')} tabindex="-1">{name} permissions</h3>
     <p class="hint">
-      What the {name} pack does with {platform === 'curseforge' ? 'jars' : 'files'} {name} doesn't host. Unlike the settings above, packraven saves these as soon
-      as you change them. Decide again to put a file back in Publish, where it blocks publishing to {name} until you choose.
+      What we'll do with {platform === 'curseforge' ? 'jars' : 'files'} not found on {name} for {name} packs.
+      If you remove a setting here, it will reappear in Publish, and you'll be blocked from publishing until you choose again.
     </p>
     {#snippet fileRow(file: OverrideFileView, actions: Action[])}
       {@const label = file.name ?? file.path}
