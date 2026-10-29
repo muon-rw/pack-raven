@@ -318,7 +318,7 @@ async fn mark_modrinth_copies(pack: &Pack, target: &Target, checks: &mut [ModChe
         let names = modrinth_file_names(versions);
         mark_on_modrinth(&mut check.newer, &names);
         let modrinth_moved_on = versions.iter().any(|v| v.id != twin.version_id);
-        if modrinth_moved_on && !check.newer.iter().any(|f| f.on_modrinth == Some(true)) {
+        if !check.newer.is_empty() && modrinth_moved_on && !check.newer.iter().any(|f| f.on_modrinth == Some(true)) {
             let installed = entry.curseforge.as_ref().map_or(0, |f| f.file_id);
             wanting_older.push((index, installed, names));
         }

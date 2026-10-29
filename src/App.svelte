@@ -687,7 +687,10 @@
   {#if pane === 'add'}
     <AddPack first={!packs?.packs.length} onadded={() => { only('mods'); refresh() }} />
   {:else}
-  {#key packs?.active}
+  {#if pane === 'settings'}
+    <SettingsView onchange={refresh} />
+  {:else if packs?.active}
+  {#key packs.active}
     {#if loadError && !OPEN_WITHOUT_PACK.includes(pane)}
       {@render loadNotice(index)}
     {:else if pane === 'changes'}
@@ -716,6 +719,7 @@
       <SettingsView onchange={refresh} />
     {/if}
   {/key}
+  {/if}
   {/if}
 {/snippet}
 

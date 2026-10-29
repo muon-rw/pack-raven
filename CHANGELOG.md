@@ -2,6 +2,12 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Fixed
+- Switching modpacks while your selected modpack was checking for updates could result in a stale update list, until you manually clicked Check for Updates
+- Improved performance of mod update checks for packs that publish to both CurseForge and Modrinth
+- Returning to packraven with the Mods view already open now rechecks for updates when the last check is stale
+
 ## [0.3.1] - 2026-10-29
 ### Changed
 - Having a too-old packraven version for your pack no longer locks you out of Files and Git view

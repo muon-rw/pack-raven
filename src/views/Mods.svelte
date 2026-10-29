@@ -90,60 +90,77 @@
     modUpdates.pack = pack
     modUpdates.checks = null
     modUpdates.checkedAt = 0
+    modUpdates.checkSerial++
   })
 
   async function load() {
     try {
       const installed = await api.installedMods()
+      if (modUpdates.pack !== pack) return
       mods = installed.mods
       modUpdates.locked = new Set(installed.locked)
       loadError = null
     } catch (error) {
-      loadError = `Couldn't read the mod list: ${errorText(error)}`
+      if (modUpdates.pack === pack) loadError = `Couldn't read the mod list: ${errorText(error)}`
     } finally {
-      loading = false
+      if (modUpdates.pack === pack) loading = false
     }
   }
 
   async function check() {
+    const serial = ++modUpdates.checkSerial
     checking = true
     try {
       const checks = await api.checkModUpdates()
+      if (modUpdates.checkSerial !== serial || modUpdates.pack !== pack) return
       modUpdates.checks = new Map(checks.map((c) => [c.path, c]))
       modUpdates.checkedAt = Date.now()
       checkError = null
     } catch (error) {
-      checkError = `Couldn't check for updates: ${errorText(error)}`
+      if (modUpdates.checkSerial === serial && modUpdates.pack === pack) checkError = `Couldn't check for updates: ${errorText(error)}`
     } finally {
-      checking = false
+      if (modUpdates.checkSerial === serial) checking = false
     }
   }
 
   onMount(async () => {
     api
       .getPackConfig()
-      .then((config) => (modUpdates.channel = config.updates.channel))
+      .then((config) => {
+        if (modUpdates.pack === pack) modUpdates.channel = config.updates.channel
+      })
       .catch(() => {})
     await load()
     const unchecked = mods.some((m) => !modUpdates.checks?.has(m.path))
-    if (mods.length && (unchecked || Date.now() - modUpdates.checkedAt > CHECK_MAX_AGE_MS)) await check()
+    if (modUpdates.pack === pack && mods.length && (unchecked || Date.now() - modUpdates.checkedAt > CHECK_MAX_AGE_MS)) await check()
+
   })
 
   // The backend's file watcher updates mods.lock.json when something else changes the folder,
   // like the CurseForge app or a pull. Checks are keyed by path, so a list we didn't reload would
   // lose its update flags. A run reloads the list when it ends, so we leave its own changes to it.
+  function checkIfStale() {
+    if (checking || updating || document.hidden || modUpdates.pack !== pack || !mods.length) return
+    const unchecked = mods.some((m) => !modUpdates.checks?.has(m.path))
+    if (unchecked || Date.now() - modUpdates.checkedAt > CHECK_MAX_AGE_MS) check()
+  }
+
   onMount(() => {
+    window.addEventListener('focus', checkIfStale)
+    document.addEventListener('visibilitychange', checkIfStale)
     const unlisten = listen('mod-list-changed', () => {
       if (!updating) reload()
     })
     return () => {
       unlisten.then((stop) => stop())
+      window.removeEventListener('focus', checkIfStale)
+      document.removeEventListener('visibilitychange', checkIfStale)
     }
   })
 
   async function reload() {
     await load()
-    if (mods.some((m) => !modUpdates.checks?.has(m.path))) await check()
+    if (modUpdates.pack === pack && mods.some((m) => !modUpdates.checks?.has(m.path))) await check()
   }
 
   // You may have just uploaded a jar that CurseForge has since approved, so we ask about every jar it
@@ -151,6 +168,7 @@
   async function checkAgain() {
     checking = true
     await api.resyncModList(true).catch(() => {})
+    if (modUpdates.pack !== pack) return
     await load()
     await check()
   }
@@ -220,7 +238,7 @@
     if (!targets.length) return
     if (!enabled) {
       // We only know what depends on a file from a check, so we finish one before asking.
-      if (mods.some((m) => !modUpdates.checks?.has(m.path))) await check()
+      if (modUpdates.pack === pack && mods.some((m) => !modUpdates.checks?.has(m.path))) await check()
       const dependents = dependentsOf(...targets)
       if (dependents.length) {
         disabling = { targets, name: targets.length === 1 ? targets[0].name : `the ${targets.length} selected files`, dependents }
@@ -339,7 +357,7 @@
 
   async function remove(targets: InstalledMod[]) {
     // We only know what depends on a mod from a check, so we finish one before warning you.
-    if (mods.some((m) => !modUpdates.checks?.has(m.path))) await check()
+    if (modUpdates.pack === pack && mods.some((m) => !modUpdates.checks?.has(m.path))) await check()
     const what = targets.length === 1 ? targets[0].name : `${targets.length} files`
     const dependents = dependentsOf(...targets).map((d) => d.name)
     const lines = [targets.length === 1 ? `Move ${fileName(targets[0].path)} to the ${trashName}?` : `Move these ${targets.length} files to the ${trashName}? ${list(targets.map((m) => m.name))}.`]

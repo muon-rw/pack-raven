@@ -12,6 +12,8 @@ export const modUpdates = $state({
   locked: new Set<string>(),
   checks: null as Map<string, ModCheck> | null,
   checkedAt: 0,
+  // Incremented on each check and pack switch, so an earlier check that finishes late is ignored.
+  checkSerial: 0,
   // Changes you ask for while one runs join that run. We keep each until the run ends, since we
   // only reload the mod list then.
   changes: [] as QueuedChange[],

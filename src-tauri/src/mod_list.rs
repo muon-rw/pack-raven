@@ -31,6 +31,9 @@ pub fn record(app: &AppHandle, dir: &Path, result: Result<modsync::Refresh>) {
         Err(error) => (ModListState { dir: dir.to_path_buf(), error: Some(format!("{error:#}")), ..Default::default() }, false),
     };
     let app_state = app.state::<AppState>();
+    if !crate::setup::same_dir(dir, &app_state.settings().instance_dir) {
+        return;
+    }
     let state_changed = {
         let mut current = app_state.mod_list.lock().unwrap();
         let changed = *current != state;
