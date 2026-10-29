@@ -2,10 +2,11 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.1]
 ### Changed
 - Having a too-old packraven version for your pack no longer locks you out of Files and Git view
 - Added optional fuzzy file name matching for mod overrides, used to always include future versions of a mod in exports
+- All settings now auto-save, removed manual settings save buttons
 
 ## [0.3.0] - 2026-10-29
 ### Added
