@@ -16,6 +16,22 @@ pub const CHANGELOG_ARCHIVE: &str = "changelogs";
 pub const SERVER_ICON: &str = "server-icon.png";
 pub const BCC_PROJECT_ID: u64 = 551894;
 
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum Platform {
+    Curseforge,
+    Modrinth,
+}
+
+impl Platform {
+    pub fn name(self) -> &'static str {
+        match self {
+            Platform::Curseforge => "CurseForge",
+            Platform::Modrinth => "Modrinth",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct PackConfig {
@@ -75,6 +91,10 @@ pub struct CurseforgeConfig {
     pub project_id: u64,
     pub release_type: String,
     pub manual_release: bool,
+    /// Files CurseForge doesn't host that it allows in packs, so the CurseForge pack carries them.
+    pub allowed_override_jars: Vec<String>,
+    /// Files the CurseForge pack leaves out, which the Modrinth pack still ships.
+    pub exclude: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -99,6 +119,36 @@ impl PackConfig {
         !self.modrinth.project_id.trim().is_empty()
     }
 
+    pub fn targets(&self, platform: Platform) -> bool {
+        match platform {
+            Platform::Curseforge => self.targets_curseforge(),
+            Platform::Modrinth => self.targets_modrinth(),
+        }
+    }
+
+    /// Returns the files you ship on the platform though it doesn't host them, and the ones you keep off it.
+    pub fn override_choices(&self, platform: Platform) -> (&[String], &[String]) {
+        match platform {
+            Platform::Curseforge => (&self.curseforge.allowed_override_jars, &self.curseforge.exclude),
+            Platform::Modrinth => (&self.modrinth.allowed_override_jars, &self.modrinth.exclude),
+        }
+    }
+
+    pub fn override_choices_mut(&mut self, platform: Platform) -> (&mut Vec<String>, &mut Vec<String>) {
+        match platform {
+            Platform::Curseforge => (&mut self.curseforge.allowed_override_jars, &mut self.curseforge.exclude),
+            Platform::Modrinth => (&mut self.modrinth.allowed_override_jars, &mut self.modrinth.exclude),
+        }
+    }
+
+    // CurseForge only lets packs carry mods from its approved list, whoever lets you share them.
+    pub fn allowed_authors(&self, platform: Platform) -> &[String] {
+        match platform {
+            Platform::Curseforge => &[],
+            Platform::Modrinth => &self.modrinth.allowed_authors,
+        }
+    }
+
     /// Names the platforms we place mods from.
     pub fn hosts(&self) -> &'static str {
         if self.targets_modrinth() { "CurseForge or Modrinth" } else { "CurseForge" }
@@ -109,7 +159,9 @@ impl PackConfig {
 #[serde(default)]
 pub struct ExportConfig {
     pub exclude: Vec<String>,
-    pub allowed_override_jars: Vec<String>,
+    // Before Modrinth support, CurseForge's allowed jars were here. We move them to [curseforge] on read.
+    #[serde(skip_serializing)]
+    allowed_override_jars: Vec<String>,
     pub recommended_ram_mb: u32,
     pub properties: BTreeMap<String, BTreeMap<String, String>>,
 }
@@ -151,7 +203,7 @@ impl Default for PackConfig {
 
 impl Default for CurseforgeConfig {
     fn default() -> Self {
-        Self { project_id: 0, release_type: "release".into(), manual_release: false }
+        Self { project_id: 0, release_type: "release".into(), manual_release: false, allowed_override_jars: Vec::new(), exclude: Vec::new() }
     }
 }
 
@@ -481,7 +533,12 @@ impl ModLoader<'_> {
 
 pub fn read_config(dir: &Path) -> Result<PackConfig> {
     match std::fs::read_to_string(dir.join(CONFIG_FILE)) {
-        Ok(text) => toml::from_str(&text).context("parsing packraven.toml"),
+        Ok(text) => {
+            let mut config: PackConfig = toml::from_str(&text).context("parsing packraven.toml")?;
+            let moved = std::mem::take(&mut config.export.allowed_override_jars);
+            config.curseforge.allowed_override_jars.extend(moved);
+            Ok(config)
+        }
         Err(_) => Ok(PackConfig::default()),
     }
 }
@@ -811,6 +868,18 @@ mod tests {
             assert_eq!(pack.version().as_deref(), Some("1.1.0"));
             let _ = std::fs::remove_dir_all(dir.parent().unwrap());
         }
+    }
+
+    #[test]
+    fn moves_curseforge_override_jars_out_of_export() {
+        let dir = std::env::temp_dir().join(format!("packraven-config-migration-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(CONFIG_FILE), "[export]\nallowed_override_jars = [\"mods/own.jar\"]\n").unwrap();
+        let config = read_config(&dir).unwrap();
+        assert_eq!(config.curseforge.allowed_override_jars, ["mods/own.jar"]);
+        let written = toml::to_string(&config).unwrap();
+        assert_eq!(written.matches("allowed_override_jars = [\"mods/own.jar\"]").count(), 1, "{written}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

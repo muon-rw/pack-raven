@@ -1,4 +1,5 @@
 mod announcer;
+mod allowlist;
 mod archive;
 mod associations;
 mod changelog;
@@ -26,6 +27,7 @@ mod jobs;
 mod keychain;
 mod join;
 mod launch;
+mod links;
 mod minecraft_auth;
 mod minecraft_commands;
 mod logs;
@@ -214,10 +216,10 @@ pub fn run() {
             commands::build_client_export,
             commands::build_modrinth_export,
             commands::upload_release_to_modrinth,
-            commands::set_modrinth_choice,
+            commands::set_override_choice,
             commands::modrinth_project_title,
-            commands::look_up_modrinth_candidates,
-            commands::modrinth_choices,
+            commands::look_up_override_candidates,
+            commands::override_choices,
             commands::set_modrinth_author,
             commands::published_to,
             commands::build_server_pack,

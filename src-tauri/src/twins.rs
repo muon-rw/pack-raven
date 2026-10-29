@@ -10,8 +10,8 @@ use crate::pack::{LockEntry, Lockfile, ModLoader, ModrinthFile};
 const SEARCH_RESULTS: u32 = 3;
 
 pub struct Target {
-    minecraft: String,
-    mod_loaders: Vec<&'static str>,
+    pub minecraft: String,
+    pub mod_loaders: Vec<&'static str>,
 }
 
 impl Target {
@@ -75,11 +75,11 @@ async fn twin(root: &Path, cache_dir: &Path, target: &Target, entry: &LockEntry,
 
 // Some authors split a mod into one CurseForge project per loader, like terrablender-neoforge or
 // "TerraBlender (NeoForge)", where Modrinth has one project for every loader.
-fn slug_for_every_loader(slug: &str) -> Option<&str> {
+pub(crate) fn slug_for_every_loader(slug: &str) -> Option<&str> {
     ["-neoforge", "-forge", "-fabric", "-quilt"].iter().find_map(|suffix| slug.strip_suffix(suffix))
 }
 
-fn name_for_every_loader(name: &str) -> String {
+pub(crate) fn name_for_every_loader(name: &str) -> String {
     static LOADER_NOTE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"\s*[(\[][^)\]]*[)\]]\s*$").expect("valid regex"));
     let mut general = name.to_string();
     while LOADER_NOTE.is_match(&general) {

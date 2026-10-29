@@ -10,6 +10,8 @@ use crate::http::CLIENT;
 use crate::pack::ModrinthFile;
 
 const API: &str = "https://api.modrinth.com/v2";
+// Only v3 lists organizations.
+const API_V3: &str = "https://api.modrinth.com/v3";
 const NO_TOKEN: &str = "no Modrinth token is set; add one in App settings";
 // Modrinth's server only accepts mrpack downloads from these hosts. Its docs also list gitlab.com,
 // but labrinth's WHITELISTED_MODPACK_DOMAINS doesn't.
@@ -23,6 +25,12 @@ pub struct Version {
     pub status: Option<String>,
     #[serde(default)]
     pub files: Vec<VersionFile>,
+    #[serde(default)]
+    pub version_number: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub date_published: String,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -65,6 +73,49 @@ pub struct Project {
     pub icon_url: Option<String>,
     pub client_side: String,
     pub server_side: String,
+    #[serde(default)]
+    pub team: String,
+    #[serde(default)]
+    pub organization: Option<String>,
+    #[serde(default)]
+    pub source_url: Option<String>,
+    #[serde(default)]
+    pub license: Option<ProjectLicense>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct ProjectLicense {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+}
+
+impl ProjectLicense {
+    // Modrinth names only the licenses it knows, and gives the rest as SPDX IDs like LicenseRef-All-Rights-Reserved.
+    pub fn display(&self) -> String {
+        if !self.name.is_empty() {
+            return self.name.clone();
+        }
+        self.id.strip_prefix("LicenseRef-").map_or_else(|| self.id.clone(), |custom| custom.replace('-', " "))
+    }
+}
+
+#[derive(Deserialize)]
+struct TeamMember {
+    team_id: String,
+    user: TeamUser,
+}
+
+#[derive(Deserialize)]
+struct TeamUser {
+    username: String,
+}
+
+#[derive(Deserialize)]
+struct Organization {
+    id: String,
+    name: String,
+    team_id: String,
 }
 
 impl Project {
@@ -83,7 +134,20 @@ fn is_not_found(error: &reqwest::Error) -> bool {
 }
 
 async fn get<T: serde::de::DeserializeOwned>(path: &str, query: &[(&str, String)]) -> Result<Option<T>> {
-    match CLIENT.get(format!("{API}{path}")).query(query).send().await?.error_for_status() {
+    get_from(API, path, query).await
+}
+
+// Modrinth allows 300 requests a minute, and looking up every version of every unmatched mod can pass that.
+const LONGEST_RATE_LIMIT_WAIT: u64 = 60;
+
+async fn get_from<T: serde::de::DeserializeOwned>(api: &str, path: &str, query: &[(&str, String)]) -> Result<Option<T>> {
+    let mut response = CLIENT.get(format!("{api}{path}")).query(query).send().await?;
+    if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        let reset = response.headers().get("x-ratelimit-reset").and_then(|v| v.to_str().ok()?.parse::<u64>().ok());
+        tokio::time::sleep(std::time::Duration::from_secs(reset.unwrap_or(10).min(LONGEST_RATE_LIMIT_WAIT))).await;
+        response = CLIENT.get(format!("{api}{path}")).query(query).send().await?;
+    }
+    match response.error_for_status() {
         Ok(response) => Ok(Some(response.json().await?)),
         Err(error) if is_not_found(&error) => Ok(None),
         Err(error) => Err(error.into()),
@@ -125,6 +189,43 @@ pub async fn projects(ids: &[String]) -> Result<HashMap<String, Project>> {
         found.extend(list.into_iter().map(|p| (p.id.clone(), p)));
     }
     Ok(found)
+}
+
+/// Returns the members and organization behind each project, by project ID.
+pub async fn authors(projects: &[&Project]) -> Result<HashMap<String, Vec<String>>> {
+    let mut organization_ids: Vec<String> = projects.iter().filter_map(|p| p.organization.clone()).collect();
+    organization_ids.sort();
+    organization_ids.dedup();
+    let mut organizations: HashMap<String, Organization> = HashMap::new();
+    for chunk in organization_ids.chunks(100) {
+        let list: Vec<Organization> = get_from(API_V3, "/organizations", &[("ids", serde_json::to_string(chunk)?)]).await?.unwrap_or_default();
+        organizations.extend(list.into_iter().map(|o| (o.id.clone(), o)));
+    }
+    let mut team_ids: Vec<String> = projects.iter().map(|p| p.team.clone()).filter(|t| !t.is_empty()).chain(organizations.values().map(|o| o.team_id.clone())).collect();
+    team_ids.sort();
+    team_ids.dedup();
+    let mut members: HashMap<String, Vec<String>> = HashMap::new();
+    for chunk in team_ids.chunks(100) {
+        let teams: Vec<Vec<TeamMember>> = get("/teams", &[("ids", serde_json::to_string(chunk)?)]).await?.unwrap_or_default();
+        for member in teams.into_iter().flatten() {
+            members.entry(member.team_id).or_default().push(member.user.username);
+        }
+    }
+    Ok(projects
+        .iter()
+        .map(|project| {
+            let organization = project.organization.as_ref().and_then(|id| organizations.get(id));
+            let mut names: Vec<String> = organization.map(|o| o.name.clone()).into_iter().collect();
+            for team in std::iter::once(&project.team).chain(organization.map(|o| &o.team_id)) {
+                for name in members.get(team).into_iter().flatten() {
+                    if !names.contains(name) {
+                        names.push(name.clone());
+                    }
+                }
+            }
+            (project.id.clone(), names)
+        })
+        .collect())
 }
 
 /// Accepts a project's ID or its slug.

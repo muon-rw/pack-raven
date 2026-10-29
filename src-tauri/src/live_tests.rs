@@ -216,7 +216,7 @@ async fn server_pack_scripts_boot() {
 #[ignore]
 fn client_export_manifest() {
     let (_, pack) = pack();
-    let zip = export::client_export(&pack, "test", &scratch().join("build"), &Log::console("client-export")).unwrap();
+    let zip = export::client_export(&pack, &Default::default(), "test", &scratch().join("build"), &Log::console("client-export")).unwrap();
     println!("zip {} ({} KB)", zip.display(), std::fs::metadata(&zip).unwrap().len() / 1000);
 }
 
@@ -389,5 +389,31 @@ async fn finds_modrinth_copies_of_the_pack() {
         let tried_here = in_folder.iter().filter(|e| tried.contains(&e.path)).count();
         let twins = in_folder.iter().filter(|e| tried.contains(&e.path) && e.modrinth.is_some()).count();
         println!("{folder}: {} files, {exact} on Modrinth byte for byte, twins for {twins} of the {tried_here} others we tried", in_folder.len());
+    }
+}
+
+// Read-only: prints what Modrinth has of each mod whose CurseForge file it doesn't host.
+#[tokio::test]
+#[ignore]
+async fn reports_modrinth_version_skew() {
+    let (_, pack) = pack();
+    let mut cache = MetadataCache::load(&scratch().join("metadata-cache.json"));
+    let undecided = export::not_on(&pack, &cache, crate::pack::Platform::Modrinth).unwrap();
+    crate::publish::look_up_modrinth_skews(&pack, &mut cache).await.unwrap();
+    cache.save(&scratch().join("metadata-cache.json")).unwrap();
+    for entry in pack.lock.files.iter().filter(|e| undecided.contains(&e.path) && e.curseforge.is_some()) {
+        match cache.skew(&crate::publish::skew_key(&pack, entry)).flatten() {
+            None => println!("none   {}", entry.path),
+            Some(skew) => println!(
+                "linked {} -> {} ({:?}) shared={:?} modrinth_newest={:?} newer={} same_name_differs={}",
+                entry.path,
+                skew.link.title,
+                skew.link.evidence,
+                skew.shared.as_ref().map(|s| (&s.name, s.newer)),
+                skew.modrinth_newest,
+                skew.modrinth_newer,
+                skew.same_name_differs
+            ),
+        }
     }
 }

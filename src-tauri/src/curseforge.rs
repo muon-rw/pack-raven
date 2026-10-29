@@ -90,6 +90,8 @@ pub struct CfLogo {
 #[serde(rename_all = "camelCase")]
 pub struct CfLinks {
     pub website_url: Option<String>,
+    #[serde(default)]
+    pub source_url: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

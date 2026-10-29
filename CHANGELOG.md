@@ -5,10 +5,12 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 ## [Unreleased]
 ### Added
 - Can now build and publish Modrinth packs, alongside CurseForge or on their own. Set the Modrinth project in Pack settings and add a Modrinth token in App settings to get started
-- packraven tries very very hard to find Modrinth's equivalent copy of each mod and pack, if one exists.
+- packraven tries very very hard to find Modrinth's equivalent copy of each file or its project page, if one exists.
 - In a pack on Modrinth, mods only Modrinth hosts go into packraven's own mod list like CurseForge mods, instead of in git
 - Warning list for mods which are on CF but not Modrinth; you can override files you have permission to share inside the Modrinth pack, and leave the rest out of it.
-- Ship every openly licensed file at once, or everything by an author who gave you permission, including their mods you add later
+- Option to override every open-licensed file at once, or everything by an author who gave you permission, including their mods you add later
+- When Modrinth has a mod but not your version of it, packraven will offer to switch to the newest version both platforms have
+- CurseForge overrides now have the same UI as modrinth overrides, instead of needing to edit packraven.toml directly
 
 ### Changed
 - Updated the pack list format version. Everyone working on the pack needs this version or newer, and on older versions you'll be asked to update before opening a pack built with a newer packraven version.

@@ -3,12 +3,13 @@
   import { onMount } from 'svelte'
   import { ask } from '@tauri-apps/plugin-dialog'
   import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
-  import { api, errorText, type ModrinthFileView, type Overview, type PackConfig, type UploadNames } from '../lib/api'
+  import { api, errorText, type OverrideFileView, type Overview, type PackConfig, type UploadNames } from '../lib/api'
   import { job, onJobEnd } from '../lib/jobs.svelte'
   import RenderedChangelog from '../components/RenderedChangelog.svelte'
   import JobLog from '../components/JobLog.svelte'
   import LinkedText from '../components/LinkedText.svelte'
   import Twisty from '../components/Twisty.svelte'
+  import OverrideDecisions from '../components/OverrideDecisions.svelte'
   import { nav } from '../lib/nav.svelte'
   import { asReleaseType } from '../lib/format'
 
@@ -21,6 +22,39 @@
   }: { overview: Overview | null; onchange: () => void; onchanges: () => void; onsettings: () => void; onreleases: () => void } = $props()
 
   let push = $state(true)
+
+  // We keep the authors, licenses and other versions of only the files that need a decision, so we
+  // look them up as they appear.
+  let lookedUp = ''
+  let lookingUp = $state(false)
+  $effect(() => {
+    const unknown = [...(overview?.notOnCurseforge ?? []), ...(overview?.notOnModrinth ?? [])].filter((file) => !file.known || !file.versionsKnown).map((file) => file.path)
+    const key = unknown.join('\n')
+    if (!unknown.length || key === lookedUp) return
+    lookedUp = key
+    lookingUp = true
+    api
+      .lookUpOverrideCandidates()
+      .then(onchange, () => {})
+      .finally(() => (lookingUp = false))
+  })
+
+  let retrying = $state(false)
+
+  async function retryModrinth() {
+    retrying = true
+    try {
+      await api.resyncModList(true)
+      onchange()
+    } finally {
+      retrying = false
+    }
+  }
+
+  function settingsAt(anchor: string) {
+    nav.anchor = anchor
+    onsettings()
+  }
   let problems: string[] = $state([])
   let exportWarnings: string[] = $state([])
   let checking = $state(true)
@@ -50,8 +84,10 @@
   // Modrinth gets one mrpack, so the client and server pack names only apply on CurseForge.
   let shownPacks = $derived(toCurseforge || !toModrinth ? packs : [])
   let modrinthFile = $state('')
-  let modrinthShipped = $state<ModrinthFileView[]>([])
-  let modrinthLeftOut = $state<ModrinthFileView[]>([])
+  let modrinthShipped = $state<OverrideFileView[]>([])
+  let modrinthLeftOut = $state<OverrideFileView[]>([])
+  let curseforgeShipped = $state<OverrideFileView[]>([])
+  let curseforgeLeftOut = $state<OverrideFileView[]>([])
   let shippedByAuthor = $derived(
     [...new Set(modrinthShipped.flatMap((file) => (file.author ? [file.author] : [])))].map((author) => ({ author, files: modrinthShipped.filter((file) => file.author === author) })),
   )
@@ -113,7 +149,9 @@
 
   $effect(() => {
     const wanted = trimmed
+    void overview?.unhosted.length
     void overview?.notOnCurseforge.length
+    void overview?.notOnModrinth.length
     void job('publish').finishedRuns
     let current = true
     checking = true
@@ -128,6 +166,8 @@
           modrinthFile = result.modrinthFile
           modrinthShipped = result.modrinthShipped
           modrinthLeftOut = result.modrinthLeftOut
+          curseforgeShipped = result.curseforgeShipped
+          curseforgeLeftOut = result.curseforgeLeftOut
         },
         (e) => current && (problems = [`Couldn't run the pre-publish checks: ${errorText(e)}`]),
       ).finally(() => current && (checking = false))
@@ -138,9 +178,11 @@
     }
   })
 
-  function describe(file: ModrinthFileView): string {
+  function describe(file: OverrideFileView): string {
     const name = file.name ?? file.path
-    return file.author ? `${name} (${file.author}'s permission)` : file.license ? `${name} (${file.license})` : name
+    if (file.author) return `${name} (${file.author}'s permission)`
+    if (file.allowlisted) return `${name} (on CurseForge's list)`
+    return file.license ? `${name} (${file.license})` : name
   }
 
   function trimmedNames(side: Side): UploadNames {
@@ -212,6 +254,9 @@
     const consequences = [
       toCurseforge
         ? `Upload "${client.displayName}" (${client.fileName}) and its server pack "${server.displayName}" (${server.fileName}) to CurseForge as ${asType}${config?.curseforge.manual_release ? ', held until you release it' : ''}.`
+        : null,
+      toCurseforge && curseforgeShipped.length
+        ? `Ship ${curseforgeShipped.length === 1 ? 'a jar' : `${curseforgeShipped.length} jars`} CurseForge doesn't host inside the client pack, on your word that CurseForge allows ${curseforgeShipped.length === 1 ? 'it' : 'them'}: ${curseforgeShipped.map(describe).join(', ')}.`
         : null,
       toModrinth ? `Upload "${client.displayName}" (${withVersion(modrinthFile)}) to Modrinth as ${asType}, listed right away.` : null,
       toModrinth && modrinthShipped.length
@@ -374,6 +419,24 @@
         </li>
       {/if}
     </ul>
+    {#if overview?.modrinthError}
+      <Notice tone="warn">
+        <p>
+          Couldn't check which files Modrinth hosts, so you can't publish to Modrinth until packraven can. <LinkedText text={overview.modrinthError} />
+        </p>
+        <p><button class:busy={retrying} disabled={retrying} onclick={retryModrinth}>{retrying ? 'Checking' : 'Check again'}</button></p>
+      </Notice>
+    {/if}
+    {#if overview}
+      {@const dual = overview.projectId > 0 && !!overview.modrinthProjectId}
+      <OverrideDecisions platform="curseforge" candidates={overview.notOnCurseforge} {dual} checking={lookingUp} {onchange} onsettings={() => settingsAt('curseforge-choices-title')} />
+      <OverrideDecisions platform="modrinth" candidates={overview.notOnModrinth} {dual} checking={lookingUp} {onchange} onsettings={() => settingsAt('modrinth-choices-title')} />
+    {/if}
+    {#if overview?.devJars.length}
+      <Notice tone="warn">
+        <p>Local dev builds are in the mods folder and won't be part of the release: <span class="file">{overview.devJars.join(', ')}</span></p>
+      </Notice>
+    {/if}
   </section>
 
   <section class="step" aria-labelledby="ships-title">
@@ -437,6 +500,20 @@
           </dd>
         </div>
       {/each}
+      {#if toCurseforge && (curseforgeShipped.length || curseforgeLeftOut.length)}
+        <div>
+          <dt>Jars CurseForge doesn't host</dt>
+          <dd class="pack-names">
+            {#if curseforgeShipped.length}
+              <span class="muted small">The client pack ships them on your word that CurseForge allows them: <span class="file">{curseforgeShipped.map(describe).join(', ')}</span></span>
+            {/if}
+            {#if curseforgeLeftOut.length}
+              <span class="muted small">Kept off CurseForge{toModrinth ? ', while the Modrinth pack ships them' : ''}: <span class="file">{curseforgeLeftOut.map((f) => f.name ?? f.path).join(', ')}</span></span>
+            {/if}
+            <button class="link small" onclick={onsettings}>Change in Pack settings</button>
+          </dd>
+        </div>
+      {/if}
       {#if toModrinth}
         <div>
           <dt>Modrinth pack</dt>

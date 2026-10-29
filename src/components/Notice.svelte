@@ -1,12 +1,14 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
 
-  let { tone, children }: { tone: 'warn' | 'error' | 'ok'; children: Snippet } = $props()
+  // A notice full of controls announces its own results, so it opts out of being a live region,
+  // which would read out every row that moves.
+  let { tone, live = true, children }: { tone: 'warn' | 'error' | 'ok'; live?: boolean; children: Snippet } = $props()
 
   const labels = { warn: 'Warning', error: 'Error', ok: 'Done' }
 </script>
 
-<div class="notice {tone}" role={tone === 'error' ? 'alert' : 'status'}>
+<div class="notice {tone}" role={!live ? undefined : tone === 'error' ? 'alert' : 'status'}>
   <svg viewBox="0 0 16 16" aria-label={labels[tone]} role="img">
     {#if tone === 'ok'}
       <path d="M3 8.5l3 3 7-7" />

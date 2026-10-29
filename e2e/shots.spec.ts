@@ -3,6 +3,7 @@ import { openApp, packViews, scenarios, type Scenario, type View } from './app.t
 
 // Captures every view in every scenario at the window sizes we design for, in both themes.
 // Narrow the grid with comma-separated lists: SHOTS_VIEWS=publish,git SHOTS_SCENARIOS=dirty npm run shots
+// Views scroll inside their pane, so SHOTS_HEIGHT=2000 makes the window tall enough to see a long one whole.
 const pick = <T extends string>(env: string | undefined, all: readonly T[]) => (env ? all.filter((item) => env.split(',').includes(item)) : [...all])
 const sizes = [
   { width: 960, height: 640 },
@@ -33,7 +34,7 @@ for (const scenario of pick(process.env.SHOTS_SCENARIOS, scenarios)) {
     for (const { width, height } of sizes) {
       for (const theme of themes) {
         test(`${scenario}-${width}-${theme}-${view}`, async ({ page }) => {
-          await page.setViewportSize({ width, height })
+          await page.setViewportSize({ width, height: Number(process.env.SHOTS_HEIGHT) || height })
           await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
           await openApp(page, view, scenario)
           await page.screenshot({ path: `shots/${scenario}-${width}-${theme}-${view}.png`, animations: 'disabled' })

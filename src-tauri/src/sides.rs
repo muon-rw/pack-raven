@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::links::Skew;
 use crate::pack::{LockEntry, ModKey, Pack};
 use crate::{curseforge, modrinth};
 
@@ -12,6 +13,22 @@ use crate::{curseforge, modrinth};
 pub struct MetadataCache {
     sides: HashMap<String, SideMetadata>,
     names: HashMap<ModKey, ProjectName>,
+    #[serde(default)]
+    skews: HashMap<String, CheckedSkew>,
+}
+
+// Authors upload new versions all the time, so we look again after a day.
+const SKEW_RECHECK_SECS: u64 = 24 * 60 * 60;
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CheckedSkew {
+    checked_at: u64,
+    skew: Option<Skew>,
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -85,23 +102,41 @@ impl MetadataCache {
     }
 
     pub async fn ensure_names(&mut self, keys: &[ModKey]) -> Result<()> {
-        let missing: Vec<u64> = keys
+        let missing: Vec<&ModKey> = keys.iter().filter(|key| self.names.get(key).is_none_or(|n| n.authors.is_none() || n.license.is_none())).collect();
+        let from_curseforge: Vec<u64> = missing.iter().filter_map(|key| key.curseforge_id()).collect();
+        let from_modrinth: Vec<String> = missing
             .iter()
-            .filter(|key| self.names.get(key).is_none_or(|n| n.authors.is_none() || n.license.is_none()))
             .filter_map(|key| match key {
-                ModKey::Curseforge(id) => Some(*id),
-                ModKey::Modrinth(_) => None,
+                ModKey::Modrinth(id) => Some(id.clone()),
+                ModKey::Curseforge(_) => None,
             })
             .collect();
-        if missing.is_empty() {
-            return Ok(());
+        if !from_curseforge.is_empty() {
+            for (id, m) in curseforge::mods(&from_curseforge).await? {
+                let authors = Some(m.authors.into_iter().map(|a| a.name).collect());
+                let license = Some(m.license_type.unwrap_or_default());
+                self.names.insert(ModKey::Curseforge(id), ProjectName { name: m.name, url: m.links.website_url, authors, logo: m.logo.map(|l| l.thumbnail_url), license });
+            }
         }
-        for (id, m) in curseforge::mods(&missing).await? {
-            let authors = Some(m.authors.into_iter().map(|a| a.name).collect());
-            let license = Some(m.license_type.unwrap_or_default());
-            self.names.insert(ModKey::Curseforge(id), ProjectName { name: m.name, url: m.links.website_url, authors, logo: m.logo.map(|l| l.thumbnail_url), license });
+        if !from_modrinth.is_empty() {
+            let projects = modrinth::projects(&from_modrinth).await?;
+            let mut authors = modrinth::authors(&projects.values().collect::<Vec<_>>()).await?;
+            for (id, project) in projects {
+                let license = Some(project.license.as_ref().map(modrinth::ProjectLicense::display).unwrap_or_default());
+                let name = ProjectName { url: Some(project.url()), authors: Some(authors.remove(&id).unwrap_or_default()), logo: project.icon_url, license, name: project.title };
+                self.names.insert(ModKey::Modrinth(id), name);
+            }
         }
         Ok(())
+    }
+
+    /// Returns what Modrinth has of the mod behind a file it doesn't host, when we looked within the last day.
+    pub fn skew(&self, key: &str) -> Option<Option<&Skew>> {
+        self.skews.get(key).filter(|checked| unix_now().saturating_sub(checked.checked_at) < SKEW_RECHECK_SECS).map(|checked| checked.skew.as_ref())
+    }
+
+    pub fn remember_skew(&mut self, key: String, skew: Option<Skew>) {
+        self.skews.insert(key, CheckedSkew { checked_at: unix_now(), skew });
     }
 
     #[cfg(test)]

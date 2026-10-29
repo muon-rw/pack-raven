@@ -11,7 +11,8 @@ use crate::modrinth;
 use crate::git;
 use crate::jobs::Log;
 use crate::git::Identity;
-use crate::pack::{version_problem, ModKey, ModLoader, Pack, CHANGELOG_ARCHIVE};
+use crate::pack::{version_problem, LockEntry, ModLoader, Pack, Platform, CHANGELOG_ARCHIVE};
+use crate::{links, twins};
 use crate::sides::{self, MetadataCache};
 use crate::modsync;
 
@@ -197,36 +198,53 @@ pub fn preflight(pack: &Pack, cache: &MetadataCache, version: &str, unknown: &[S
     if !identity.is_usable(&pack.dir) {
         problems.push("Set your commit name and email in App settings.".into());
     }
-    match export::unallowed_override_jars(pack) {
-        _ if !config.targets_curseforge() => {}
-        Ok(jars) if !jars.is_empty() => problems.push(format!(
-            "These jars would be in overrides, which CurseForge rejects: {}. Remove them or allow them in packraven.toml.",
-            jars.join(", ")
-        )),
-        Err(error) => problems.push(format!("Couldn't check overrides: {error:#}")),
-        _ => {}
-    }
     if config.targets_modrinth() {
         if let Some(error) = modrinth_error {
             problems.push(format!("Couldn't check which files Modrinth hosts: {error}"));
         }
-        match export::not_on_modrinth(pack, cache).as_deref() {
+    }
+    for platform in [Platform::Curseforge, Platform::Modrinth].into_iter().filter(|p| config.targets(*p)) {
+        let name = platform.name();
+        match export::not_on(pack, cache, platform).as_deref() {
             Ok([]) => {}
-            Ok([path]) => problems.push(format!("{path} isn't on Modrinth. In Changes, ship it on Modrinth or keep it off.")),
-            Ok(paths) => problems.push(format!("{} files aren't on Modrinth. In Changes, ship them on Modrinth or keep them off it.", paths.len())),
-            Err(error) => problems.push(format!("Couldn't check which files the Modrinth pack would carry: {error:#}")),
+            Ok([path]) => problems.push(format!("{path} isn't on {name}. Ship it on {name} or keep it off, below.")),
+            Ok(paths) => problems.push(format!("{} files aren't on {name}. Ship them on {name} or keep them off it, below.", paths.len())),
+            Err(error) => problems.push(format!("Couldn't check which files the {name} pack would carry: {error:#}")),
         }
     }
     problems
 }
 
-/// Fetches the authors and licenses of the files Modrinth doesn't host, which we don't keep for every mod.
-pub async fn look_up_modrinth_candidates(pack: &Pack, cache: &mut MetadataCache) -> Result<()> {
-    if !pack.config.targets_modrinth() {
+/// Fetches the authors and licenses of the files a platform doesn't host, which we don't keep for every mod.
+pub async fn look_up_override_candidates(pack: &Pack, cache: &mut MetadataCache) -> Result<()> {
+    let mut keys = Vec::new();
+    for platform in [Platform::Curseforge, Platform::Modrinth].into_iter().filter(|p| pack.config.targets(*p)) {
+        keys.extend(export::not_on(pack, cache, platform)?.iter().filter_map(|path| pack.lock.files.iter().find(|e| e.path == *path)?.key()));
+    }
+    cache.ensure_names(&keys).await
+}
+
+pub fn skew_key(pack: &Pack, entry: &LockEntry) -> String {
+    format!("{}:{}:{}", entry.sha1, pack.lock.minecraft.as_deref().unwrap_or_default(), pack.lock.loader.as_ref().map(ToString::to_string).unwrap_or_default())
+}
+
+/// Looks up which versions of each mod Modrinth has, for the CurseForge files it doesn't host.
+pub async fn look_up_modrinth_skews(pack: &Pack, cache: &mut MetadataCache) -> Result<()> {
+    let Some(target) = twins::Target::of(&pack.lock).filter(|_| pack.config.targets_modrinth() && curseforge::core_key().is_some()) else { return Ok(()) };
+    let undecided = export::not_on(pack, cache, Platform::Modrinth)?;
+    let wanting: Vec<&LockEntry> = pack.lock.files.iter().filter(|e| e.curseforge.is_some() && undecided.contains(&e.path) && cache.skew(&skew_key(pack, e)).is_none()).collect();
+    if wanting.is_empty() {
         return Ok(());
     }
-    let keys: Vec<ModKey> = export::not_on_modrinth(pack, cache)?.iter().filter_map(|path| pack.lock.files.iter().find(|e| e.path == *path)?.key()).collect();
-    cache.ensure_names(&keys).await
+    let projects = curseforge::mods(&wanting.iter().filter_map(|e| e.curseforge_project()).collect::<Vec<_>>()).await?;
+    let loader_type = curseforge::loader_type(&pack.lock.mod_loader()?);
+    for entry in wanting {
+        let Some((file, project)) = entry.curseforge.as_ref().and_then(|file| Some((file, projects.get(&file.project_id)?))) else { continue };
+        let loader = entry.path.starts_with("mods/").then_some(loader_type);
+        let skew = links::skew(&target, loader, pack.config.updates.channel, file, project).await?;
+        cache.remember_skew(skew_key(pack, entry), skew);
+    }
+    Ok(())
 }
 
 pub struct PublishContext {
@@ -245,7 +263,7 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
     let refresh = modsync::refresh_mod_list(&pack.dir).await?;
     let mut cache = MetadataCache::load(&cache_path);
     // The authors you allowed decide some files, so we need every undecided file's authors first.
-    look_up_modrinth_candidates(&pack, &mut cache).await?;
+    look_up_override_candidates(&pack, &mut cache).await?;
     cache.save(&cache_path)?;
     let problems = preflight(&pack, &cache, &version, &refresh.unknown, refresh.modrinth_error.as_deref(), &identity);
     if !problems.is_empty() {
@@ -258,7 +276,7 @@ pub async fn publish(ctx: PublishContext, options: PublishOptions, log: Log) -> 
     pack.set_version(&version)?;
     log.info(format!("Set the pack version to {version}"));
     let out_dir = pack_data.join("builds").join(&version);
-    let client_zip = pack.config.targets_curseforge().then(|| export::client_export(&pack, &version, &out_dir, &log)).transpose()?;
+    let client_zip = pack.config.targets_curseforge().then(|| export::client_export(&pack, &cache, &version, &out_dir, &log)).transpose()?;
 
     let sides = sides::classify(&pack, &mut cache).await?;
     let baseline_path = pack_data.join(changelog::BASELINE_FILE);

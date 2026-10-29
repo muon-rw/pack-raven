@@ -12,7 +12,9 @@ use crate::export;
 use crate::git;
 use crate::jobs::{JobQueue, Jobs};
 use crate::launch;
-use crate::pack::{ModKey, Pack, PackConfig};
+use crate::allowlist::Allowlist;
+use crate::links::Skew;
+use crate::pack::{ModKey, Pack, PackConfig, Platform};
 use crate::publish::{self, PublishContext, PublishOptions};
 use crate::settings::Settings;
 use crate::sides::{self, MetadataCache, ModSide};
@@ -75,6 +77,10 @@ impl AppState {
         self.data_dir.join("metadata-cache.json")
     }
 
+    pub(crate) fn allowlist_path(&self) -> PathBuf {
+        self.data_dir.join("curseforge-allowlist.json")
+    }
+
     fn version(&self, pack: &Pack) -> String {
         pack.version().unwrap_or_else(|| "dev".into())
     }
@@ -117,8 +123,10 @@ pub struct Overview {
     loader: Option<String>,
     lock_count: usize,
     addons: AddonCounts,
-    not_on_curseforge: Vec<String>,
-    not_on_modrinth: Vec<ModrinthCandidate>,
+    /// Files neither platform hosts, which you need to add to git or remove.
+    unhosted: Vec<String>,
+    not_on_curseforge: Vec<OverrideCandidate>,
+    not_on_modrinth: Vec<OverrideCandidate>,
     modrinth_error: Option<String>,
     releases_missing_modrinth: usize,
     mod_list_error: Option<String>,
@@ -130,7 +138,6 @@ pub struct Overview {
     changed: Vec<String>,
     last_tag: Option<String>,
     dev_jars: Vec<String>,
-    unpublishable_jars: Vec<String>,
     project_id: u64,
     modrinth_project_id: String,
     running_jobs: Vec<String>,
@@ -139,37 +146,55 @@ pub struct Overview {
     hooks: crate::setup::HooksState,
 }
 
-/// A file Modrinth doesn't host, with the mod it belongs to when we know it, so you can check its license.
+/// A file a platform doesn't host, with the mod it belongs to when we know it, so you can decide whether you may share it there.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ModrinthCandidate {
+pub struct OverrideCandidate {
     path: String,
     name: Option<String>,
     url: Option<String>,
     authors: Vec<String>,
     license: Option<String>,
     open_license: bool,
+    /// CurseForge's list of mods it allows in packs includes this one.
+    allowlisted: bool,
     /// We have the project's authors and license, or the file isn't from a project we can ask about.
     known: bool,
+    /// What Modrinth has of the mod, for a CurseForge file Modrinth doesn't host.
+    skew: Option<Skew>,
+    /// We've looked for the mod's other versions, or there's nothing to look for.
+    versions_known: bool,
+    /// You locked the mod's version in Mods.
+    locked: bool,
 }
 
-// We build the overview after every file, git and job change, so we only read the name cache when
-// there's a file to name.
-fn modrinth_candidates(pack: &Pack, cache_path: &std::path::Path) -> Vec<ModrinthCandidate> {
-    let cache = MetadataCache::load(cache_path);
-    export::not_on_modrinth(pack, &cache)
-        .unwrap_or_default()
+// We build the overview after every file, git and job change, so we only read the caches when
+// there's a file to describe.
+fn override_candidates(pack: &Pack, state: &AppState, platform: Platform) -> Vec<OverrideCandidate> {
+    if !pack.config.targets(platform) {
+        return Vec::new();
+    }
+    let cache = MetadataCache::load(&state.cache_path());
+    let paths = export::not_on(pack, &cache, platform).unwrap_or_default();
+    let allowlist = if platform == Platform::Curseforge && !paths.is_empty() { Allowlist::load(&state.allowlist_path()) } else { Allowlist::default() };
+    paths
         .into_iter()
         .map(|path| {
-            let has_project = pack.lock.files.iter().any(|e| e.path == path && e.key().is_some());
+            let entry = pack.lock.files.iter().find(|e| e.path == path);
             let project = export::project_of(pack, &cache, &path);
             let license = project.and_then(|p| p.license.clone()).filter(|l| !l.is_empty());
-            ModrinthCandidate {
+            let authors = project.and_then(|p| p.authors.clone()).unwrap_or_default();
+            let skew = entry.filter(|e| platform == Platform::Modrinth && e.curseforge.is_some()).map(|e| cache.skew(&publish::skew_key(pack, e)));
+            OverrideCandidate {
                 name: project.map(|p| p.name.clone()),
                 url: project.and_then(|p| p.url.clone()),
-                authors: project.and_then(|p| p.authors.clone()).unwrap_or_default(),
+                allowlisted: platform == Platform::Curseforge && project.is_some_and(|p| allowlist.find(&p.name, &authors).is_some()),
                 open_license: license.as_deref().is_some_and(export::is_open_license),
-                known: !has_project || project.is_some_and(|p| p.authors.is_some() && p.license.is_some()),
+                known: entry.and_then(|e| e.key()).is_none() || project.is_some_and(|p| p.authors.is_some() && p.license.is_some()),
+                versions_known: skew.is_none_or(|checked| checked.is_some()),
+                locked: entry.is_some_and(|e| pack.config.updates.locked.iter().any(|key| e.has_key(key))),
+                skew: skew.flatten().flatten().cloned(),
+                authors,
                 license,
                 path,
             }
@@ -221,8 +246,9 @@ pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
         loader: pack.lock.loader.as_ref().map(ToString::to_string),
         lock_count: pack.lock.files.len(),
         addons: addon_counts(&pack),
-        not_on_curseforge: mod_list.not_on_curseforge,
-        not_on_modrinth: if pack.config.targets_modrinth() { modrinth_candidates(&pack, &state.cache_path()) } else { Vec::new() },
+        unhosted: mod_list.unhosted,
+        not_on_curseforge: override_candidates(&pack, &state, Platform::Curseforge),
+        not_on_modrinth: override_candidates(&pack, &state, Platform::Modrinth),
         releases_missing_modrinth: if pack.config.targets_modrinth() {
             publish::load_releases(&state.pack_data().join("releases.json")).iter().filter(|r| publish::awaiting_modrinth(&pack, &state.pack_data(), r).is_some()).count()
         } else {
@@ -238,7 +264,6 @@ pub fn overview(state: State<'_, AppState>) -> CmdResult<Overview> {
         changed: git::changed_files(&pack.dir),
         last_tag: git::last_release_tag(&pack.dir),
         dev_jars: export::local_dev_jars(&pack),
-        unpublishable_jars: if pack.config.targets_curseforge() { export::unallowed_override_jars(&pack).unwrap_or_default() } else { Vec::new() },
         project_id: pack.config.curseforge.project_id,
         modrinth_project_id: pack.config.modrinth.project_id.trim().to_string(),
         running_jobs: state.jobs.running(),
@@ -383,8 +408,10 @@ pub struct Preflight {
     client: publish::UploadNames,
     server: publish::UploadNames,
     modrinth_file: String,
-    modrinth_shipped: Vec<ModrinthFileView>,
-    modrinth_left_out: Vec<ModrinthFileView>,
+    curseforge_shipped: Vec<OverrideFileView>,
+    curseforge_left_out: Vec<OverrideFileView>,
+    modrinth_shipped: Vec<OverrideFileView>,
+    modrinth_left_out: Vec<OverrideFileView>,
 }
 
 #[tauri::command(async)]
@@ -393,16 +420,28 @@ pub fn publish_preflight(state: State<'_, AppState>, version: String) -> CmdResu
     let pack = state.pack().map_err(err)?;
     let version = version.trim();
     let cache = MetadataCache::load(&state.cache_path());
-    let modrinth_files = if pack.config.targets_modrinth() { export::modrinth_files(&pack, &cache).map_err(err)? } else { export::ModrinthFiles { undecided: Vec::new(), shipped: Vec::new(), left_out: Vec::new() } };
+    let allowlist = Allowlist::load(&state.allowlist_path());
+    let decided = |platform| -> CmdResult<(Vec<OverrideFileView>, Vec<OverrideFileView>)> {
+        if !pack.config.targets(platform) {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let files = export::override_files_for(&pack, &cache, platform).map_err(err)?;
+        let view = |path, author| file_view(&pack, &cache, &allowlist, path, author);
+        Ok((files.shipped.into_iter().map(|(path, author)| view(path, author)).collect(), files.left_out.into_iter().map(|path| view(path, None)).collect()))
+    };
+    let (curseforge_shipped, curseforge_left_out) = decided(Platform::Curseforge)?;
+    let (modrinth_shipped, modrinth_left_out) = decided(Platform::Modrinth)?;
     Ok(Preflight {
-        problems: publish::preflight(&pack, &cache, version, &mod_list.not_on_curseforge, mod_list.modrinth_error.as_deref(), &state.settings().identity()),
+        problems: publish::preflight(&pack, &cache, version, &mod_list.unhosted, mod_list.modrinth_error.as_deref(), &state.settings().identity()),
         warnings: publish::preflight_warnings(&pack),
         tag_taken: !version.is_empty() && publish::tag_exists(&pack, version),
         client: publish::default_client_names(&pack),
         server: publish::default_server_names(&pack),
         modrinth_file: pack.modrinth_pack_name("{version}"),
-        modrinth_shipped: modrinth_files.shipped.into_iter().map(|(path, author)| file_view(&pack, &cache, path, author)).collect(),
-        modrinth_left_out: modrinth_files.left_out.into_iter().map(|path| file_view(&pack, &cache, path, None)).collect(),
+        curseforge_shipped,
+        curseforge_left_out,
+        modrinth_shipped,
+        modrinth_left_out,
     })
 }
 
@@ -410,8 +449,9 @@ pub fn publish_preflight(state: State<'_, AppState>, version: String) -> CmdResu
 pub fn build_client_export(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let pack = state.pack().map_err(err)?;
     let out_dir = state.pack_data().join("builds").join(state.version(&pack));
+    let cache_path = state.cache_path();
     state.jobs.start(&app, "client-export", move |log| async move {
-        let path = export::client_export(&pack, &pack.version().unwrap_or_else(|| "dev".into()), &out_dir, &log)?;
+        let path = export::client_export(&pack, &MetadataCache::load(&cache_path), &pack.version().unwrap_or_else(|| "dev".into()), &out_dir, &log)?;
         Ok(path.to_string_lossy().into_owned())
     })
 }
@@ -437,18 +477,18 @@ pub fn upload_release_to_modrinth(app: AppHandle, state: State<'_, AppState>, ve
 
 #[derive(serde::Deserialize, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub enum ModrinthChoice {
+pub enum OverrideChoice {
     Ship,
     LeaveOut,
 }
 
-// Modrinth asks for permission to share each file it doesn't host, so we record choices by path rather
+// Platforms ask for permission to share each file they don't host, so we record choices by path rather
 // than letting a pattern take in files you haven't looked at. Without a choice, the file is undecided again.
 #[tauri::command]
-pub fn set_modrinth_choice(state: State<'_, AppState>, paths: Vec<String>, choice: Option<ModrinthChoice>) -> CmdResult<()> {
+pub fn set_override_choice(state: State<'_, AppState>, platform: Platform, paths: Vec<String>, choice: Option<OverrideChoice>) -> CmdResult<()> {
     let mut pack = state.pack().map_err(err)?;
-    let modrinth = &mut pack.config.modrinth;
-    for (list, kind) in [(&mut modrinth.allowed_override_jars, ModrinthChoice::Ship), (&mut modrinth.exclude, ModrinthChoice::LeaveOut)] {
+    let (shipped, kept_off) = pack.config.override_choices_mut(platform);
+    for (list, kind) in [(shipped, OverrideChoice::Ship), (kept_off, OverrideChoice::LeaveOut)] {
         list.retain(|pattern| !paths.contains(pattern));
         if choice == Some(kind) {
             list.extend(paths.iter().cloned());
@@ -458,67 +498,76 @@ pub fn set_modrinth_choice(state: State<'_, AppState>, paths: Vec<String>, choic
     pack.save_config().map_err(err)
 }
 
-/// A file Modrinth doesn't host, with what you'd want to know when you decide about it or review it.
+/// A file a platform doesn't host, with what you'd want to know when you decide about it or review it.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ModrinthFileView {
+pub struct OverrideFileView {
     path: String,
     name: Option<String>,
     license: Option<String>,
     open_license: bool,
-    /// The author whose permission ships it, when that's why the Modrinth pack carries it.
+    allowlisted: bool,
+    /// The author whose permission ships it, when that's why the pack carries it.
     author: Option<String>,
 }
 
-fn file_view(pack: &Pack, cache: &MetadataCache, path: String, author: Option<String>) -> ModrinthFileView {
+fn file_view(pack: &Pack, cache: &MetadataCache, allowlist: &Allowlist, path: String, author: Option<String>) -> OverrideFileView {
     let project = export::project_of(pack, cache, &path);
     let license = project.and_then(|p| p.license.clone()).filter(|l| !l.is_empty());
-    ModrinthFileView { name: project.map(|p| p.name.clone()), open_license: license.as_deref().is_some_and(export::is_open_license), license, author, path }
+    let allowlisted = project.is_some_and(|p| allowlist.find(&p.name, p.authors.as_deref().unwrap_or_default()).is_some());
+    OverrideFileView { name: project.map(|p| p.name.clone()), open_license: license.as_deref().is_some_and(export::is_open_license), allowlisted, license, author, path }
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthorPermission {
     author: String,
-    files: Vec<ModrinthFileView>,
+    files: Vec<OverrideFileView>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ModrinthChoices {
-    shipped: Vec<ModrinthFileView>,
+pub struct OverrideChoices {
+    shipped: Vec<OverrideFileView>,
     by_author: Vec<AuthorPermission>,
-    kept_off: Vec<ModrinthFileView>,
+    kept_off: Vec<OverrideFileView>,
 }
 
 #[tauri::command(async)]
-pub fn modrinth_choices(state: State<'_, AppState>) -> CmdResult<ModrinthChoices> {
+pub fn override_choices(state: State<'_, AppState>, platform: Platform) -> CmdResult<OverrideChoices> {
     let pack = state.pack().map_err(err)?;
     let cache = MetadataCache::load(&state.cache_path());
-    let files = export::modrinth_files(&pack, &cache).map_err(err)?;
-    let config = &pack.config.modrinth;
-    let by_author = config
-        .allowed_authors
+    let allowlist = if platform == Platform::Curseforge { Allowlist::load(&state.allowlist_path()) } else { Allowlist::default() };
+    let files = export::override_files_for(&pack, &cache, platform).map_err(err)?;
+    let view = |path: &String, author: Option<String>| file_view(&pack, &cache, &allowlist, path.clone(), author);
+    let by_author = pack
+        .config
+        .allowed_authors(platform)
         .iter()
         .map(|author| AuthorPermission {
             author: author.clone(),
-            files: files.shipped.iter().filter(|(_, by)| by.as_ref().is_some_and(|by| by.eq_ignore_ascii_case(author))).map(|(path, by)| file_view(&pack, &cache, path.clone(), by.clone())).collect(),
+            files: files.shipped.iter().filter(|(_, by)| by.as_ref().is_some_and(|by| by.eq_ignore_ascii_case(author))).map(|(path, by)| view(path, by.clone())).collect(),
         })
         .collect();
-    Ok(ModrinthChoices {
-        shipped: config.allowed_override_jars.iter().map(|path| file_view(&pack, &cache, path.clone(), None)).collect(),
-        by_author,
-        kept_off: config.exclude.iter().map(|path| file_view(&pack, &cache, path.clone(), None)).collect(),
-    })
+    let (shipped, kept_off) = pack.config.override_choices(platform);
+    Ok(OverrideChoices { shipped: shipped.iter().map(|path| view(path, None)).collect(), by_author, kept_off: kept_off.iter().map(|path| view(path, None)).collect() })
 }
 
+/// Looks up the authors, licenses and other versions of the files a platform doesn't host, and
+/// CurseForge's list of the mods it allows in packs.
 #[tauri::command]
-pub async fn look_up_modrinth_candidates(state: State<'_, AppState>) -> CmdResult<()> {
+pub async fn look_up_override_candidates(state: State<'_, AppState>) -> CmdResult<()> {
     let pack = state.pack().map_err(err)?;
     let cache_path = state.cache_path();
     let mut cache = MetadataCache::load(&cache_path);
-    publish::look_up_modrinth_candidates(&pack, &mut cache).await.map_err(err)?;
-    cache.save(&cache_path).map_err(err)
+    publish::look_up_override_candidates(&pack, &mut cache).await.map_err(err)?;
+    cache.save(&cache_path).map_err(err)?;
+    let skews = publish::look_up_modrinth_skews(&pack, &mut cache).await;
+    cache.save(&cache_path).map_err(err)?;
+    if pack.config.targets_curseforge() {
+        Allowlist::refresh(&state.allowlist_path()).await.map_err(err)?;
+    }
+    skews.map_err(err)
 }
 
 #[tauri::command]

@@ -148,7 +148,7 @@
     // When CurseForge approves a jar you uploaded, nothing changes on disk, so while one is waiting we
     // check again on the timer. In the background we ask CurseForge about it at most once a minute.
     const timer = setInterval(() => {
-      if (overview?.notOnCurseforge.length) resync()
+      if (overview?.unhosted.length) resync()
       poll()
     }, FALLBACK_POLL_MS)
     const unlisten = listen<{ kind: string }>('test-event', ({ payload }) => {
@@ -242,15 +242,21 @@
   let modListStatus = $derived(
     overview?.modListError
       ? "Couldn't update the mod list"
-      : overview?.notOnCurseforge.length
-        ? notOnHostsSummary(overview.notOnCurseforge, hostsOf(overview))
+      : overview?.unhosted.length
+        ? notOnHostsSummary(overview.unhosted, hostsOf(overview))
         : overview?.watchError
           ? "Can't watch the pack folder"
-          : overview?.modrinthError
-            ? "Couldn't check Modrinth"
-            : overview?.notOnModrinth.length
-              ? notOnHostsSummary(overview.notOnModrinth, 'Modrinth')
-              : undefined,
+          : undefined,
+  )
+  // Publish is where you decide what each platform's pack carries, so it flags the files waiting on you.
+  let hostingStatus = $derived(
+    overview?.modrinthError
+      ? "Couldn't check Modrinth"
+      : overview?.notOnCurseforge.length
+        ? notOnHostsSummary(overview.notOnCurseforge, 'CurseForge')
+        : overview?.notOnModrinth.length
+          ? notOnHostsSummary(overview.notOnModrinth, 'Modrinth')
+          : undefined,
   )
   let incomingSummary = $derived(overview?.incoming ? modCountsSummary(overview.incoming) : null)
 
@@ -321,8 +327,8 @@
           id: 'publish',
           title: 'Publish',
           key: '7',
-          status: { running: 'Uploading', failed: 'Publish failed', done: 'Published', idle: undefined }[publishPhase],
-          tone: ({ running: 'busy', failed: 'bad', done: 'ok', idle: 'idle' } as const)[publishPhase],
+          status: { running: 'Uploading', failed: 'Publish failed', done: 'Published', idle: hostingStatus }[publishPhase],
+          tone: publishPhase === 'idle' && hostingStatus ? 'warn' : ({ running: 'busy', failed: 'bad', done: 'ok', idle: 'idle' } as const)[publishPhase],
         },
         {
           id: 'releases',
