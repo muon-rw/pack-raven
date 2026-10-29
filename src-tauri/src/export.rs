@@ -65,11 +65,38 @@ fn is_moderated_override(path: &str) -> bool {
     ["mods/", "resourcepacks/", "shaderpacks/"].iter().any(|folder| path.starts_with(folder)) && (path.ends_with(".jar") || path.ends_with(".zip"))
 }
 
-// We record Modrinth choices as the paths you picked, and file names often hold [1.20.1] or {build},
-// so only * stays a wildcard in them.
+// We record choices as the paths you picked, or as a pattern for every version of a file, and file
+// names often hold [1.20.1] or {build}, so only * stays a wildcard in them.
 fn literal_paths(patterns: &[String]) -> Vec<String> {
     let literal = |c: char| if matches!(c, '[' | ']' | '{' | '}' | '?') { format!("[{c}]") } else { c.to_string() };
     patterns.iter().map(|pattern| pattern.chars().map(literal).collect()).collect()
+}
+
+pub fn choice_covers(choice: &str, path: &str) -> bool {
+    choice == path || (choice.contains('*') && globs(&literal_paths(&[choice.to_string()])).is_ok_and(|set| set.is_match(path)))
+}
+
+// Mod files change names with every version, as in Prominent-GLOBAL-MC1.20.1-4.1.5.jar, so we keep
+// the name up to its first part with a digit in it, or up to the first digit after a letter. A file
+// with no digits yet keeps its whole stem before *, so a later versioned drop still matches. We
+// never cut before the first part, since names like 3dskinlayers start with one.
+pub fn any_version_pattern(path: &str) -> Option<String> {
+    let (dir, name) = path.rsplit_once('/').map_or(("", path), |(dir, name)| (dir, name));
+    let (stem, extension) = name.rsplit_once('.')?;
+    let is_separator = |c: char| matches!(c, '-' | '_' | '+' | ' ');
+    let by_part = stem.char_indices().filter(|&(_, c)| is_separator(c)).map(|(i, _)| i + 1).find(|&start| {
+        let part = stem[start..].split(is_separator).next().unwrap_or_default();
+        part.chars().any(|c| c.is_ascii_digit())
+    });
+    let first_part = stem.split(is_separator).next().unwrap_or_default();
+    let by_digit = first_part
+        .starts_with(|c: char| c.is_ascii_alphabetic())
+        .then(|| first_part.find(|c: char| c.is_ascii_digit()))
+        .flatten();
+    let cut = by_part.or(by_digit).or_else(|| (!stem.chars().any(|c| c.is_ascii_digit()) && stem.chars().any(|c| c.is_ascii_alphabetic())).then_some(stem.len()))?;
+    let prefix = &stem[..cut];
+    let dir = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+    Some(format!("{dir}{prefix}*.{extension}"))
 }
 
 // Licenses that let anyone redistribute the work. CurseForge names them in its own words, like "MIT
@@ -219,7 +246,7 @@ pub fn client_export(pack: &Pack, cache: &MetadataCache, version: &str, out_dir:
     }
     let blocked = not_on(pack, cache, Platform::Curseforge)?;
     if !blocked.is_empty() {
-        bail!("CurseForge rejects packs with jars it doesn't host in overrides: {}. In Publish, include them in the CurseForge pack or omit them.", blocked.join(", "));
+        bail!("CurseForge rejects packs with jars it doesn't host in overrides: {}. In Publish, include them in the CurseForge pack or leave them out.", blocked.join(", "));
     }
     let kept_off = literal_paths(&pack.config.curseforge.exclude);
     let left_out = globs(&kept_off)?;
@@ -251,7 +278,7 @@ pub fn modrinth_export(pack: &Pack, sides: &[ModSide], cache: &MetadataCache, ve
     }
     let blocked = not_on(pack, cache, Platform::Modrinth)?;
     if !blocked.is_empty() {
-        bail!("Modrinth won't publish a pack with files it doesn't host unless you have permission to share them: {}. In Publish, include them in the Modrinth pack or omit them.", blocked.join(", "));
+        bail!("Modrinth won't publish a pack with files it doesn't host unless you have permission to share them: {}. In Publish, include them in the Modrinth pack or leave them out.", blocked.join(", "));
     }
     let left_out = globs(&literal_paths(&pack.config.modrinth.exclude))?;
     let side_of: HashMap<&str, Side> = sides.iter().map(|m| (m.path.as_str(), m.side)).collect();
@@ -765,6 +792,26 @@ mod tests {
         let modrinth = override_files_for(&pack, &cache, Platform::Modrinth).unwrap();
         assert!(modrinth.undecided.contains(&"mods/own.jar".to_string()), "a choice on CurseForge doesn't decide the Modrinth pack");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn any_version_pattern_keeps_the_name_before_its_version() {
+        assert_eq!(any_version_pattern("mods/Prominent-GLOBAL-MC1.20.1-4.1.5.jar").as_deref(), Some("mods/Prominent-GLOBAL-*.jar"));
+        assert_eq!(any_version_pattern("mods/Prominent_OST-GLOBAL-MC1.20.1-1.0.0.jar").as_deref(), Some("mods/Prominent_OST-GLOBAL-*.jar"));
+        assert_eq!(any_version_pattern("mods/sodium-extra-neoforge-0.6.6+mc1.21.1.jar").as_deref(), Some("mods/sodium-extra-neoforge-*.jar"));
+        assert_eq!(any_version_pattern("mods/3dskinlayers-1.6.jar").as_deref(), Some("mods/3dskinlayers-*.jar"));
+        assert_eq!(any_version_pattern("mods/ProgressiveVelocity1.2.jar").as_deref(), Some("mods/ProgressiveVelocity*.jar"));
+        assert_eq!(any_version_pattern("resourcepacks/FreshAnimations-PT-BR.zip").as_deref(), Some("resourcepacks/FreshAnimations-PT-BR*.zip"));
+        assert_eq!(any_version_pattern("mods/1.0.jar"), None);
+    }
+
+    #[test]
+    fn a_pattern_choice_covers_other_versions_but_not_other_mods() {
+        let pattern = "mods/Prominent-GLOBAL-*.jar";
+        assert!(choice_covers(pattern, "mods/Prominent-GLOBAL-MC1.20.1-4.1.6.jar"));
+        assert!(!choice_covers(pattern, "mods/Prominent_OST-GLOBAL-MC1.20.1-1.0.0.jar"));
+        assert!(choice_covers("mods/ftb-library [1.21]-*.jar", "mods/ftb-library [1.21]-2.0.jar"), "only * is a wildcard");
+        assert!(!choice_covers("mods/a?.jar", "mods/ab.jar"));
     }
 
     #[test]

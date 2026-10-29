@@ -35,14 +35,16 @@
   // Long enough to catch the second press of a double click on a row that just moved up.
   const SETTLE_MS = 400
 
-  type Undo = { kind: 'files'; paths: string[] } | { kind: 'author'; author: string }
+  type Undo = { kind: 'files'; paths: string[]; restore?: { path: string; choice: OverrideChoice } } | { kind: 'author'; author: string }
+  // After a choice about one file, the result offers the same choice for its other versions.
+  type Widen = { path: string; pattern: string; choice: OverrideChoice; earlier?: { path: string; choice: OverrideChoice } | null }
   let copy = $derived(PLATFORM[platform])
   let showAll = $state(false)
   let choosing = $state<string | null>(null)
   let settling = $state(false)
-  let result = $state<{ ok: boolean; text: string; undo?: Undo } | null>(null)
+  let result = $state<{ ok: boolean; text: string; undo?: Undo; widen?: Widen } | null>(null)
   // Where your place goes once the list catches up: the row that moved up after you include one, the
-  // same button after you omit one, or the result after a choice about several files.
+  // same button after you leave one out, or the result after a choice about several files.
   let refocus = $state<{ paths: string[]; index: number; target: 'row' | 'leaveOut' | 'result' } | null>(null)
   let permittingAuthor = $state('')
 
@@ -69,7 +71,7 @@
     return `Bundle ${what} inside the ${copy.name} pack's overrides, so players get it even though ${copy.name} doesn't host it. ${rule}`
   }
 
-  let omitTip = $derived(
+  let leaveOutTip = $derived(
     `Leave this file out of the ${copy.name} pack. Make sure the pack still runs without it, or tell players to download it themselves, for example with an in-game notice.${dual ? ` The ${copy.other} pack still includes it.` : ''}`,
   )
 
@@ -80,16 +82,37 @@
   }
 
   async function choose(chosen: string[], choice: OverrideChoice, index: number, label: string, target: 'row' | 'leaveOut' | 'result') {
-    choosing = `${choice}:${chosen.length === 1 ? chosen[0] : 'all'}`
+    const them = chosen.length === 1 ? 'it' : 'them'
+    const text =
+      choice === 'ship'
+        ? `The ${copy.name} pack includes ${label}.`
+        : `The ${copy.name} pack leaves out ${label}, so players who install it won't get ${them}.${dual ? ` The ${copy.other} pack still has ${them}.` : ''}`
+    const single = chosen.length === 1 ? candidates.find((file) => file.path === chosen[0]) : undefined
+    const widen = single?.anyVersion ? { path: chosen[0], pattern: single.anyVersion, choice, earlier: single.earlier } : undefined
+    await save(chosen, choice, `${choice}:${chosen.length === 1 ? chosen[0] : 'all'}`, text, { paths: chosen, index, target }, widen)
+  }
+
+  // A pattern choice also covers files you haven't looked at yet, so the result names the pattern.
+  async function chooseEveryVersion(path: string, pattern: string, choice: OverrideChoice, index: number, target: 'row' | 'result', earlier?: { path: string; choice: OverrideChoice } | null) {
+    const text =
+      choice === 'ship'
+        ? `The ${copy.name} pack includes every file matching ${pattern}, including versions you add later.`
+        : `The ${copy.name} pack leaves out every file matching ${pattern}, so players who install it won't get them.${dual ? ` The ${copy.other} pack still has them.` : ''}`
+    const alreadyGone = !candidates.some((file) => file.path === path)
+    await save([pattern], choice, `${choice}:${path}:every`, text, { paths: [path], index, target }, undefined, earlier ?? undefined)
+    if (alreadyGone && target === 'result') {
+      refocus = null
+      await tick()
+      document.getElementById(id('choice-result'))?.focus()
+    }
+  }
+
+  async function save(chosen: string[], choice: OverrideChoice, key: string, text: string, focus: NonNullable<typeof refocus>, widen?: Widen, restore?: { path: string; choice: OverrideChoice }) {
+    choosing = key
     try {
       await api.setOverrideChoice(platform, chosen, choice)
-      const them = chosen.length === 1 ? 'it' : 'them'
-      const text =
-        choice === 'ship'
-          ? `The ${copy.name} pack includes ${label}.`
-          : `The ${copy.name} pack omits ${label}, so players who install it won't get ${them}.${dual ? ` The ${copy.other} pack still has ${them}.` : ''}`
-      result = { ok: true, text, undo: { kind: 'files', paths: chosen } }
-      refocus = { paths: chosen, index, target }
+      result = { ok: true, text, undo: { kind: 'files', paths: chosen, restore }, widen }
+      refocus = focus
       onchange()
     } catch (error) {
       result = { ok: false, text: `Couldn't save the choice for ${chosen.length === 1 ? chosen[0] : 'those files'}: ${errorText(error)}` }
@@ -98,11 +121,17 @@
     }
   }
 
+  const fileName = (path: string) => path.slice(path.lastIndexOf('/') + 1)
+
   async function undo(undo: Undo) {
     choosing = 'undo'
     try {
-      if (undo.kind === 'files') await api.setOverrideChoice(platform, undo.paths, null)
-      else await api.setModrinthAuthor(undo.author, false)
+      if (undo.kind === 'files') {
+        await api.setOverrideChoice(platform, undo.paths, null)
+        if (undo.restore) await api.setOverrideChoice(platform, [undo.restore.path], undo.restore.choice)
+      } else {
+        await api.setModrinthAuthor(undo.author, false)
+      }
       result = { ok: true, text: undo.kind === 'files' ? 'Undone. Decide again below.' : `Undone. The Modrinth pack no longer includes everything by ${undo.author}.` }
       onchange()
     } catch (error) {
@@ -172,8 +201,8 @@
     <div class="mod-list-notice">
       <p>
         <strong>{notOnHostsSummary(paths, copy.name)}.</strong>
-        Include the ones {platform === 'modrinth' ? 'you may share' : 'CurseForge allows'}, and omit the rest. Players who install the {copy.name} pack won't get the
-        ones you omit{#if dual}, though the {copy.other} pack keeps them{/if}.
+        Include the ones {platform === 'modrinth' ? 'you may share' : 'CurseForge allows'}, and leave out the rest. Players who install the {copy.name} pack won't get the
+        ones you leave out{#if dual}, though the {copy.other} pack keeps them{/if}.
       </p>
       <details class="how">
         <summary>{copy.how}</summary>
@@ -217,7 +246,7 @@
             </span>
           {/if}
           {#if candidates.length > 1}
-            <button class:busy={choosing === 'leaveOut:all'} disabled={busy} onclick={() => choose(paths, 'leaveOut', 0, `${paths.length} files`, 'result')}>Omit all {paths.length}</button>
+            <button class:busy={choosing === 'leaveOut:all'} disabled={busy} onclick={() => choose(paths, 'leaveOut', 0, `${paths.length} files`, 'result')}>Leave out all {paths.length}</button>
           {/if}
         </div>
       {/if}
@@ -254,6 +283,9 @@
               {:else if platform === 'modrinth' && !file.versionsKnown && checking}
                 <span class="skew muted">Checking which versions Modrinth has</span>
               {/if}
+              {#if file.earlier && file.anyVersion}
+                <span class="earlier muted">You {file.earlier.choice === 'ship' ? 'included' : 'left out'} another version before: <span class="file">{fileName(file.earlier.path)}</span></span>
+              {/if}
               <span class="file" class:muted={!!file.name}>{file.path}</span>
             </span>
             <span class="choices">
@@ -263,6 +295,26 @@
                   {switching ? 'Switching' : target.label}<span class="visually-hidden">: {label} to {target.name}</span>
                 </button>
               {/if}
+              {#if file.anyVersion && (file.earlier || !skew?.switchTo)}
+                {@const choice = file.earlier?.choice ?? 'ship'}
+                {@const pattern = file.anyVersion}
+                {@const everyTip = file.earlier
+                  ? `Save one choice for every file matching ${pattern}, so you won't have to decide again when you update it. This replaces your choice about ${fileName(file.earlier.path)}.`
+                  : `${includeTip(file.path)} Saves ${pattern}, so you won't have to decide again when you update it.`}
+                <Tip tip={everyTip}>
+                  {#snippet children(why)}
+                    <button
+                      class:primary={!skew?.switchTo && choice === 'ship' && !!file.earlier}
+                      class:busy={choosing === `${choice}:${file.path}:every`}
+                      disabled={busy}
+                      aria-describedby={why}
+                      onclick={() => chooseEveryVersion(file.path, pattern, choice, index, 'row', file.earlier)}
+                    >
+                      {choice === 'ship' ? 'Include' : 'Leave out'} every version<span class="visually-hidden"> of {label}</span>
+                    </button>
+                  {/snippet}
+                </Tip>
+              {/if}
               <Tip tip={includeTip(file.path)}>
                 {#snippet children(why)}
                   <button id={id(`ship-${index}`)} class:busy={choosing === `ship:${file.path}`} disabled={busy} aria-describedby={why} onclick={() => choose([file.path], 'ship', index, label, 'row')}>
@@ -270,10 +322,10 @@
                   </button>
                 {/snippet}
               </Tip>
-              <Tip tip={omitTip}>
+              <Tip tip={leaveOutTip}>
                 {#snippet children(why)}
                   <button id={id(`leaveOut-${index}`)} class:busy={choosing === `leaveOut:${file.path}`} disabled={busy} aria-describedby={why} onclick={() => choose([file.path], 'leaveOut', index, label, 'leaveOut')}>
-                    Omit<span class="visually-hidden"> {label} from the {copy.name} pack</span>
+                    Leave out<span class="visually-hidden"> {label} from the {copy.name} pack</span>
                   </button>
                 {/snippet}
               </Tip>
@@ -294,7 +346,13 @@
     {result.text}
     {#if result.undo}
       {@const last = result.undo}
-      {' '}<button class="link" disabled={!!choosing} onclick={() => undo(last)}>Undo</button>, or change it later in
+      {@const widen = result.widen}
+      {' '}<button class="link" disabled={!!choosing} onclick={() => undo(last)}>Undo</button>,
+      {#if widen}
+        {@const action = widen.choice === 'ship' ? 'include' : 'leave out'}
+        <button class="link" disabled={!!choosing} onclick={() => chooseEveryVersion(widen.path, widen.pattern, widen.choice, 0, 'result', widen.earlier)}>{action} every version matching <span class="file">{widen.pattern}</span></button>,
+      {/if}
+      or change it later in
       <button class="link" onclick={onsettings}>Pack settings</button>.
     {/if}
   {/if}
@@ -304,6 +362,10 @@
   .mod-list-notice {
     display: grid;
     gap: 10px;
+  }
+
+  .mod-list-notice > p {
+    max-width: 52ch;
   }
 
   /* A cap keeps each file within reach of its buttons in a wide window. Notice caps the height of its
@@ -345,7 +407,8 @@
 
   .what .file,
   .facts,
-  .skew {
+  .skew,
+  .earlier {
     overflow-wrap: anywhere;
     font-size: var(--step--1);
   }

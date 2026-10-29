@@ -168,6 +168,24 @@ pub struct OverrideCandidate {
     versions_known: bool,
     /// You locked the mod's version in Mods.
     locked: bool,
+    /// A pattern for this file's other versions, so one choice covers its updates.
+    any_version: Option<String>,
+    /// What you decided about another version of this file, which is usually one it replaced.
+    earlier: Option<EarlierChoice>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EarlierChoice {
+    path: String,
+    choice: OverrideChoice,
+}
+
+fn earlier_choice(pack: &Pack, platform: Platform, path: &str, any_version: Option<&str>) -> Option<EarlierChoice> {
+    let any_version = any_version?;
+    let (shipped, kept_off) = pack.config.override_choices(platform);
+    let earlier = |list: &[String], choice| list.iter().find(|entry| *entry != path && !entry.contains('*') && export::choice_covers(any_version, entry)).map(|entry| EarlierChoice { path: entry.clone(), choice });
+    earlier(shipped, OverrideChoice::Ship).or_else(|| earlier(kept_off, OverrideChoice::LeaveOut))
 }
 
 // We build the overview after every file, git and job change, so we only read the caches when
@@ -187,7 +205,10 @@ fn override_candidates(pack: &Pack, state: &AppState, platform: Platform) -> Vec
             let license = project.and_then(|p| p.license.clone()).filter(|l| !l.is_empty());
             let authors = project.and_then(|p| p.authors.clone()).unwrap_or_default();
             let skew = entry.filter(|e| platform == Platform::Modrinth && e.curseforge.is_some()).map(|e| cache.skew(&publish::skew_key(pack, e)));
+            let any_version = export::any_version_pattern(&path);
             OverrideCandidate {
+                earlier: earlier_choice(pack, platform, &path, any_version.as_deref()),
+                any_version,
                 name: project.map(|p| p.name.clone()),
                 url: project.and_then(|p| p.url.clone()),
                 allowlisted: platform == Platform::Curseforge && project.is_some_and(|p| allowlist.find(&p.name, &authors).is_some()),
@@ -479,21 +500,23 @@ pub fn upload_release_to_modrinth(app: AppHandle, state: State<'_, AppState>, ve
     state.jobs.start(&app, "publish", move |log| publish::upload_release_to_modrinth(pack, pack_data, version, log))
 }
 
-#[derive(serde::Deserialize, Clone, Copy, PartialEq)]
+#[derive(serde::Deserialize, Serialize, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum OverrideChoice {
     Ship,
     LeaveOut,
 }
 
-// Platforms ask for permission to share each file they don't host, so we record choices by path rather
-// than letting a pattern take in files you haven't looked at. Without a choice, the file is undecided again.
+// Platforms ask for permission to share each file they don't host, so we record choices by path. The
+// one pattern we write is for every version of one file, which you ask for in Publish once you've
+// looked at a version. It replaces the choices about the versions it covers. Without a choice, the
+// file is undecided again.
 #[tauri::command]
 pub fn set_override_choice(state: State<'_, AppState>, platform: Platform, paths: Vec<String>, choice: Option<OverrideChoice>) -> CmdResult<()> {
     let mut pack = state.pack().map_err(err)?;
     let (shipped, kept_off) = pack.config.override_choices_mut(platform);
     for (list, kind) in [(shipped, OverrideChoice::Ship), (kept_off, OverrideChoice::LeaveOut)] {
-        list.retain(|pattern| !paths.contains(pattern));
+        list.retain(|entry| !paths.iter().any(|path| export::choice_covers(path, entry)));
         if choice == Some(kind) {
             list.extend(paths.iter().cloned());
             list.sort();
@@ -513,13 +536,33 @@ pub struct OverrideFileView {
     allowlisted: bool,
     /// The author whose permission ships it, when that's why the pack carries it.
     author: Option<String>,
+    /// For a choice about every version of a file, the versions in the pack now.
+    matches: Vec<String>,
+    /// A pattern for this file's other versions, when the choice is for one file.
+    any_version: Option<String>,
 }
 
 fn file_view(pack: &Pack, cache: &MetadataCache, allowlist: &Allowlist, path: String, author: Option<String>) -> OverrideFileView {
     let project = export::project_of(pack, cache, &path);
     let license = project.and_then(|p| p.license.clone()).filter(|l| !l.is_empty());
     let allowlisted = project.is_some_and(|p| allowlist.find(&p.name, p.authors.as_deref().unwrap_or_default()).is_some());
-    OverrideFileView { name: project.map(|p| p.name.clone()), open_license: license.as_deref().is_some_and(export::is_open_license), allowlisted, license, author, path }
+    let any_version = (!path.contains('*')).then(|| export::any_version_pattern(&path)).flatten();
+    OverrideFileView { name: project.map(|p| p.name.clone()), open_license: license.as_deref().is_some_and(export::is_open_license), allowlisted, license, author, path, matches: Vec::new(), any_version }
+}
+
+// We describe a pattern by the first version it matches, since every version is the same project.
+fn choice_view(pack: &Pack, cache: &MetadataCache, allowlist: &Allowlist, files: &export::OverrideFiles, choice: &str) -> OverrideFileView {
+    if !choice.contains('*') {
+        return file_view(pack, cache, allowlist, choice.to_string(), None);
+    }
+    let all = files.undecided.iter().chain(files.shipped.iter().map(|(path, _)| path)).chain(&files.left_out);
+    let mut matches: Vec<String> = all.filter(|path| export::choice_covers(choice, path)).cloned().collect();
+    matches.sort();
+    let mut view = file_view(pack, cache, allowlist, matches.first().cloned().unwrap_or_default(), None);
+    view.path = choice.to_string();
+    view.matches = matches;
+    view.any_version = None;
+    view
 }
 
 #[derive(Serialize)]
@@ -554,7 +597,8 @@ pub fn override_choices(state: State<'_, AppState>, platform: Platform) -> CmdRe
         })
         .collect();
     let (shipped, kept_off) = pack.config.override_choices(platform);
-    Ok(OverrideChoices { shipped: shipped.iter().map(|path| view(path, None)).collect(), by_author, kept_off: kept_off.iter().map(|path| view(path, None)).collect() })
+    let choice = |entry: &String| choice_view(&pack, &cache, &allowlist, &files, entry);
+    Ok(OverrideChoices { shipped: shipped.iter().map(choice).collect(), by_author, kept_off: kept_off.iter().map(choice).collect() })
 }
 
 /// Looks up the authors, licenses and other versions of the files a platform doesn't host, and

@@ -80,7 +80,8 @@ const pack = {
 const config = {
   author: 'muon-rw',
   curseforge: { project_id: scenario === 'empty' ? 0 : 1234567, release_type: 'beta', manual_release: false, allowed_override_jars: [] as string[], exclude: [] as string[] },
-  modrinth: { project_id: scenario === 'empty' ? '' : 'ravens-high-fantasy', allowed_override_jars: [] as string[], exclude: [] as string[], allowed_authors: [] as string[] },
+  // In the dirty scenario, you included an older Prominent-GLOBAL before updating it.
+  modrinth: { project_id: scenario === 'empty' ? '' : 'ravens-high-fantasy', allowed_override_jars: scenario === 'dirty' ? ['mods/Prominent-GLOBAL-MC1.21.1-4.1.4.jar'] : [], exclude: [] as string[], allowed_authors: [] as string[] },
   export: { exclude: [] },
   server: {
     exclude: [],
@@ -123,6 +124,7 @@ const candidates: Record<Platform, Record<string, MockCandidate>> = {
     'mods/overgrowns-origins-1.4.2.jar': candidate({ name: "Overgrown's Origins", url: 'https://www.curseforge.com/minecraft/mc-mods/overgrowns-origins', authors: ['Overgrown'], license: 'All Rights Reserved', locked: true,
       skew: onModrinthAs("Overgrown's Origins", 'sameSource', { shared: null, modrinthNewest: '2.0.1', modrinthNewer: true, newestOnCurseforge: false, sameNameDiffers: false }) }),
     'resourcepacks/FreshAnimations-PT-BR.zip': candidate({}),
+    'mods/Prominent-GLOBAL-MC1.21.1-4.1.5.jar': candidate({}),
   } : {},
   curseforge: scenario === 'dirty' ? {
     'mods/sodium-extra-neoforge-0.6.6+mc1.21.1.jar': candidate({ name: 'Sodium Extra', url: 'https://modrinth.com/project/sodium-extra', authors: ['FlashyReese'], license: 'GNU Lesser General Public License v3.0 only', openLicense: true, allowlisted: true }),
@@ -131,27 +133,51 @@ const candidates: Record<Platform, Record<string, MockCandidate>> = {
 }
 const choicesOf = (platform: Platform) => (platform === 'curseforge' ? config.curseforge : config.modrinth)
 const permittedAuthors = (platform: Platform): string[] => (platform === 'modrinth' ? config.modrinth.allowed_authors : [])
+// export::choice_covers and export::any_version_pattern, where only * is a wildcard.
+const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const covers = (choice: string, path: string) => choice === path || (choice.includes('*') && new RegExp('^' + choice.split('*').map(escapeRegex).join('.*') + '$').test(path))
+const anyVersion = (path: string) => {
+  const slash = path.lastIndexOf('/')
+  const name = path.slice(slash + 1)
+  const dot = name.lastIndexOf('.')
+  if (dot < 0) return null
+  const stem = name.slice(0, dot)
+  const byPart = [...stem.matchAll(/[-_+ ]/g)].map((m) => m.index! + 1).find((start) => /\d/.test(stem.slice(start).split(/[-_+ ]/)[0]))
+  const firstPart = stem.split(/[-_+ ]/)[0]
+  const byDigit = /^[a-z]/i.test(firstPart) ? firstPart.search(/\d/) : -1
+  const cut = byPart ?? (byDigit > 0 ? byDigit : !/\d/.test(stem) && /[a-z]/i.test(stem) ? stem.length : undefined)
+  return cut === undefined ? null : `${path.slice(0, slash + 1)}${stem.slice(0, cut)}*${name.slice(dot)}`
+}
+const isChosen = (platform: Platform, path: string) => [...choicesOf(platform).allowed_override_jars, ...choicesOf(platform).exclude].some((choice) => covers(choice, path))
+const earlierChoice = (platform: Platform, path: string) => {
+  const pattern = anyVersion(path)
+  if (!pattern) return null
+  const earlier = (list: string[], choice: 'ship' | 'leaveOut') => list.filter((entry) => entry !== path && !entry.includes('*') && covers(pattern, entry)).map((entry) => ({ path: entry, choice }))[0]
+  return earlier(choicesOf(platform).allowed_override_jars, 'ship') ?? earlier(choicesOf(platform).exclude, 'leaveOut') ?? null
+}
 const fileView = (platform: Platform, path: string, author: string | null = null) => {
-  const known = candidates[platform][path]
-  return { path, name: known?.name ?? null, license: known?.license ?? null, openLicense: known?.openLicense ?? false, allowlisted: known?.allowlisted ?? false, author }
+  const matches = path.includes('*') ? Object.keys(candidates[platform]).filter((file) => covers(path, file)).sort() : []
+  const known = candidates[platform][matches[0] ?? path]
+  return { path, name: known?.name ?? null, license: known?.license ?? null, openLicense: known?.openLicense ?? false, allowlisted: known?.allowlisted ?? false, author, anyVersion: path.includes('*') ? null : anyVersion(path), matches }
 }
 const overrideChoices = (platform: Platform) => ({
   shipped: choicesOf(platform).allowed_override_jars.map((path) => fileView(platform, path)),
   byAuthor: permittedAuthors(platform).map((author) => ({
     author,
     files: Object.keys(candidates[platform])
-      .filter((path) => candidates[platform][path].authors.includes(author) && !choicesOf(platform).allowed_override_jars.includes(path) && !choicesOf(platform).exclude.includes(path))
+      .filter((path) => candidates[platform][path].authors.includes(author) && !isChosen(platform, path))
       .map((path) => fileView(platform, path, author)),
   })),
   keptOff: choicesOf(platform).exclude.map((path) => fileView(platform, path)),
 })
 const notOn = (platform: Platform) =>
   Object.keys(candidates[platform]).filter(
-    (path) =>
-      !choicesOf(platform).allowed_override_jars.includes(path) &&
-      !choicesOf(platform).exclude.includes(path) &&
-      !candidates[platform][path].authors.some((author) => permittedAuthors(platform).includes(author)),
+    (path) => !isChosen(platform, path) && !candidates[platform][path].authors.some((author) => permittedAuthors(platform).includes(author)),
   )
+// Like export::override_files_for, the files in the pack that a choice covers, not the choices.
+const decidedFiles = (platform: Platform, list: 'allowed_override_jars' | 'exclude') =>
+  Object.keys(candidates[platform]).filter((path) => choicesOf(platform)[list].some((choice) => covers(choice, path))).map((path) => fileView(platform, path))
+const candidateView = (platform: Platform, path: string) => ({ path, ...candidates[platform][path], anyVersion: anyVersion(path), earlier: earlierChoice(platform, path) })
 
 const modChange = (name: string, from: string | null, to: string | null) => ({ name, url: `https://www.curseforge.com/minecraft/mc-mods/${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, from, to, inModList: true })
 const modDiff = {
@@ -860,8 +886,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
       lockCount: fx.lockCount,
       addons: scenario === 'empty' ? { mods: 0, resourcePacks: 0, shaderPacks: 0, dataPacks: 0, other: 0 } : { mods: fx.lockCount - 14, resourcePacks: 9, shaderPacks: 2, dataPacks: 3, other: 0 },
       unhosted: scenario === 'dirty' ? ['mods/raven_tweaks-1.2.jar'] : [],
-      notOnCurseforge: notOn('curseforge').map((path) => ({ path, ...candidates.curseforge[path] })),
-      notOnModrinth: notOn('modrinth').map((path) => ({ path, ...candidates.modrinth[path] })),
+      notOnCurseforge: notOn('curseforge').map((path) => candidateView('curseforge', path)),
+      notOnModrinth: notOn('modrinth').map((path) => candidateView('modrinth', path)),
       modrinthError: null,
       releasesMissingModrinth: releases.filter((r) => r.modrinthMissing).length,
       modListError: null,
@@ -1090,7 +1116,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     const blockedOn = (platform: Platform, name: string) => {
       const blocked = notOn(platform)
       if (!blocked.length) return []
-      return blocked.length === 1 ? [`${blocked[0]} isn't on ${name}. Include it in the ${name} pack or omit it, below.`] : [`${blocked.length} files aren't on ${name}. Include them in the ${name} pack or omit them, below.`]
+      return blocked.length === 1 ? [`${blocked[0]} isn't on ${name}. Include it in the ${name} pack or leave it out, below.`] : [`${blocked.length} files aren't on ${name}. Include them in the ${name} pack or leave them out, below.`]
     }
     const modrinth = [...blockedOn('curseforge', 'CurseForge'), ...blockedOn('modrinth', 'Modrinth')]
     return {
@@ -1100,10 +1126,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
       client: { displayName: `${pack.name} {version}`, fileName: `${stem}.zip` },
       server: { displayName: 'Server Pack {version}', fileName: `${stem}-server.zip` },
       modrinthFile: `${stem}.mrpack`,
-      modrinthShipped: overrideChoices('modrinth').shipped.concat(overrideChoices('modrinth').byAuthor.flatMap((group) => group.files)),
-      modrinthLeftOut: overrideChoices('modrinth').keptOff,
-      curseforgeShipped: overrideChoices('curseforge').shipped,
-      curseforgeLeftOut: overrideChoices('curseforge').keptOff,
+      modrinthShipped: decidedFiles('modrinth', 'allowed_override_jars').concat(overrideChoices('modrinth').byAuthor.flatMap((group) => group.files)),
+      modrinthLeftOut: decidedFiles('modrinth', 'exclude'),
+      curseforgeShipped: decidedFiles('curseforge', 'allowed_override_jars'),
+      curseforgeLeftOut: decidedFiles('curseforge', 'exclude'),
     }
   },
   build_modrinth_export: () =>
@@ -1117,7 +1143,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   set_override_choice: (a) => {
     const paths = a.paths as string[]
     const lists = choicesOf(a.platform as Platform)
-    const keep = (list: string[]) => list.filter((p) => !paths.includes(p))
+    const keep = (list: string[]) => list.filter((entry) => !paths.some((path) => covers(path, entry)))
     lists.allowed_override_jars = [...keep(lists.allowed_override_jars), ...(a.choice === 'ship' ? paths : [])].sort()
     lists.exclude = [...keep(lists.exclude), ...(a.choice === 'leaveOut' ? paths : [])].sort()
   },

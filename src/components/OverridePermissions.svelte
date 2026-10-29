@@ -19,7 +19,7 @@
   let name = $derived(NAME[platform])
   const id = (part: string) => `${platform}-${part}`
 
-  // Changes saves each choice as you make it, so changing one here saves right away too.
+  // Publish saves each choice as you make it, so changing one here saves right away too.
   let choices = $state<OverrideChoices | null>(null)
   let changing = $state<string | null>(null)
   let error = $state<string | null>(null)
@@ -76,21 +76,33 @@
       What the {name} pack does with {platform === 'curseforge' ? 'jars' : 'files'} {name} doesn't host. Unlike the settings above, packraven saves these as soon
       as you change them. Decide again to put a file back in Publish, where it blocks publishing to {name} until you choose.
     </p>
-    {#snippet fileRow(file: OverrideFileView, actions: { label: string; choice: OverrideChoice | null; quiet?: boolean }[])}
+    {#snippet fileRow(file: OverrideFileView, actions: { label: string; path?: string; choice: OverrideChoice | null; quiet?: boolean }[])}
       {@const label = file.name ?? file.path}
+      {@const everyVersion = file.path.includes('*')}
+      {@const a11yLabel = everyVersion && file.name ? `${label}, every version` : label}
       <li>
         <span class="what">
           <span>
-            {label}{#if file.license}<span class="muted"> · {file.license}</span>{/if}
+            {#if everyVersion && !file.name}<span class="file">{file.path}</span>{:else}{label}{/if}{#if everyVersion && file.name}, every version{/if}{#if file.license}<span class="muted">{' · '}{file.license}</span>{/if}
             {#if platform === 'modrinth' && file.openLicense}{' '}<span class="chip ok">open license</span>{/if}
             {#if platform === 'curseforge' && file.allowlisted}{' '}<span class="chip ok">on CurseForge's list</span>{/if}
           </span>
-          {#if file.name}<span class="file path muted">{file.path}</span>{/if}
+          {#if file.name && !everyVersion}<span class="file path muted">{file.path}</span>{/if}
+          {#if everyVersion}
+            <span class="hint path">
+              {#if file.name}<span class="file">{file.path}</span> · {/if}{#if file.matches.length}
+                Matches <span class="file">{file.matches.map((path) => path.slice(path.lastIndexOf('/') + 1)).join(', ')}</span> now.
+              {:else}
+                No version of it is in the pack now.
+              {/if}
+            </span>
+          {/if}
         </span>
         <span class="choice-actions">
           {#each actions as action (action.label)}
-            <button type="button" class:quiet={action.quiet} class:busy={changing === file.path && !action.quiet} disabled={!!changing} onclick={() => changeChoice(file.path, action.choice)}>
-              {action.label}<span class="visually-hidden">: {label}</span>
+            {@const targetPath = action.path ?? file.path}
+            <button type="button" class:quiet={action.quiet} class:busy={changing === targetPath && !action.quiet} disabled={!!changing} onclick={() => changeChoice(targetPath, action.choice)}>
+              {action.label}<span class="visually-hidden">: {a11yLabel}</span>
             </button>
           {/each}
         </span>
@@ -105,7 +117,7 @@
         </p>
         {#if group.files.length}
           <ul class="choices" aria-labelledby={id(`author-${index}`)}>
-            {#each group.files as file (file.path)}{@render fileRow(file, [{ label: 'Omit instead', choice: 'leaveOut' }])}{/each}
+            {#each group.files as file (file.path)}{@render fileRow(file, [{ label: 'Leave out instead', choice: 'leaveOut' }])}{/each}
           </ul>
         {/if}
         <div>
@@ -120,15 +132,15 @@
         <!-- CurseForge checks these jars against its list itself, so only Modrinth's rest on your word. -->
         <h4 id={id('shipped-title')}>{platform === 'modrinth' ? 'Included on your word' : 'Included in the CurseForge pack'}</h4>
         <ul class="choices" aria-labelledby={id('shipped-title')}>
-          {#each choices.shipped as file (file.path)}{@render fileRow(file, [{ label: 'Omit instead', choice: 'leaveOut' }, { label: 'Decide again', choice: null, quiet: true }])}{/each}
+          {#each choices.shipped as file (file.path)}{@render fileRow(file, [...(file.anyVersion ? [{ label: 'Include every version', path: file.anyVersion, choice: 'ship' as const }] : []), { label: 'Leave out instead', choice: 'leaveOut' }, { label: 'Decide again', choice: null, quiet: true }])}{/each}
         </ul>
       </div>
     {/if}
     {#if choices.keptOff.length}
       <div class="field">
-        <h4 id={id('kept-off-title')}>Omitted from the {name} pack</h4>
+        <h4 id={id('kept-off-title')}>Left out of the {name} pack</h4>
         <ul class="choices" aria-labelledby={id('kept-off-title')}>
-          {#each choices.keptOff as file (file.path)}{@render fileRow(file, [{ label: 'Include instead', choice: 'ship' }, { label: 'Decide again', choice: null, quiet: true }])}{/each}
+          {#each choices.keptOff as file (file.path)}{@render fileRow(file, [...(file.anyVersion ? [{ label: 'Leave out every version', path: file.anyVersion, choice: 'leaveOut' as const }] : []), { label: 'Include instead', choice: 'ship' }, { label: 'Decide again', choice: null, quiet: true }])}{/each}
         </ul>
       </div>
     {/if}
@@ -178,6 +190,7 @@
   }
 
   .hint {
+    max-width: 52ch;
     color: var(--muted);
     font-size: var(--step--1);
   }
@@ -188,7 +201,7 @@
 
   .choices {
     display: grid;
-    gap: 4px;
+    gap: 6px;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -196,13 +209,15 @@
 
   .choices li {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: 6px 12px;
   }
 
   .choice-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 6px;
   }
 

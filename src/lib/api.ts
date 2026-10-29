@@ -226,6 +226,10 @@ export interface OverrideCandidate {
   versionsKnown: boolean
   // You locked the mod's version in Mods.
   locked: boolean
+  // A pattern for this file's other versions, so one choice covers its updates.
+  anyVersion: string | null
+  // What you decided about another version of this file, which is usually one it replaced.
+  earlier: { path: string; choice: OverrideChoice } | null
 }
 
 export interface Skew {
@@ -248,6 +252,10 @@ export interface OverrideFileView {
   allowlisted: boolean
   // The author whose permission ships it, when that's why the pack carries it.
   author: string | null
+  // For a choice about every version of a file, the versions in the pack now.
+  matches: string[]
+  // A pattern for this file's other versions, when the choice is for one file.
+  anyVersion: string | null
 }
 
 export interface OverrideChoices {

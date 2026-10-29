@@ -220,8 +220,8 @@ pub fn preflight(pack: &Pack, cache: &MetadataCache, version: &str, unknown: &[S
         let name = platform.name();
         match export::not_on(pack, cache, platform).as_deref() {
             Ok([]) => {}
-            Ok([path]) => problems.push(format!("{path} isn't on {name}. Include it in the {name} pack or omit it, below.")),
-            Ok(paths) => problems.push(format!("{} files aren't on {name}. Include them in the {name} pack or omit them, below.", paths.len())),
+            Ok([path]) => problems.push(format!("{path} isn't on {name}. Include it in the {name} pack or leave it out, below.")),
+            Ok(paths) => problems.push(format!("{} files aren't on {name}. Include them in the {name} pack or leave them out, below.", paths.len())),
             Err(error) => problems.push(format!("Couldn't check which files the {name} pack would carry: {error:#}")),
         }
     }

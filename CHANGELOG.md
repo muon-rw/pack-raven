@@ -5,6 +5,7 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 ## [Unreleased]
 ### Changed
 - Having a too-old packraven version for your pack no longer locks you out of Files and Git view
+- Added optional fuzzy file name matching for mod overrides, used to always include future versions of a mod in exports
 
 ## [0.3.0] - 2026-10-29
 ### Added

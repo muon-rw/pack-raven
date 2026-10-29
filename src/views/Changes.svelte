@@ -580,6 +580,10 @@
     gap: 10px;
   }
 
+  .mod-list-notice > p {
+    max-width: 52ch;
+  }
+
   .mod-list-notice .actions {
     display: flex;
     flex-wrap: wrap;

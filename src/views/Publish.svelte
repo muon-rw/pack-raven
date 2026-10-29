@@ -512,7 +512,7 @@
               {@render fileGroup('curseforge-included', 'The client pack includes', curseforgeShipped, describe, "CurseForge rejects any that aren't on its list of allowed mods, unless it gave you permission.")}
             {/if}
             {#if curseforgeLeftOut.length}
-              {@render fileGroup('curseforge-omitted', `Omitted from the CurseForge pack${toModrinth ? ', while the Modrinth pack includes them' : ''}`, curseforgeLeftOut, nameOf)}
+              {@render fileGroup('curseforge-left-out', `Left out of the CurseForge pack${toModrinth ? ', while the Modrinth pack includes them' : ''}`, curseforgeLeftOut, nameOf)}
             {/if}
             <button class="link small" onclick={onsettings}>Change in Pack settings</button>
           </dd>
@@ -549,7 +549,7 @@
               {@render modrinthIncludes()}
             {/if}
             {#if modrinthLeftOut.length}
-              {@render fileGroup('modrinth-omitted', 'Omits, while the CurseForge pack includes them', modrinthLeftOut, nameOf)}
+              {@render fileGroup('modrinth-left-out', 'Leaves out, while the CurseForge pack includes them', modrinthLeftOut, nameOf)}
             {/if}
             {#if modrinthShipped.length || modrinthLeftOut.length}<button class="link small" onclick={onsettings}>Change in Pack settings</button>{/if}
           </dd>
@@ -781,6 +781,10 @@
     display: grid;
     gap: 4px;
     max-width: 480px;
+  }
+
+  #commit-hint {
+    max-width: 52ch;
   }
 
   summary {

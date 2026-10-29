@@ -709,6 +709,45 @@ test('a file in a mod jar can be overridden in a new data pack after adding Paxi
   await expect(page.getByRole('button', { name: /^Saved/ })).toBeVisible()
 })
 
+test('one override choice can cover every version of a file', async ({ page }) => {
+  await openApp(page, 'publish', 'dirty')
+  const notice = page.getByRole('list', { name: 'Files not on Modrinth' })
+  const result = page.locator('#modrinth-choice-result')
+  await page.getByRole('button', { name: 'Show 2 more' }).click()
+
+  // An update renamed a file you included, so the row offers to cover every version.
+  const prominent = notice.getByRole('listitem').filter({ hasText: 'Prominent-GLOBAL-MC1.21.1-4.1.5.jar' })
+  await expect(prominent).toContainText('You included another version before: Prominent-GLOBAL-MC1.21.1-4.1.4.jar')
+  await prominent.getByRole('button', { name: /^Include every version/ }).click()
+  await expect(result).toContainText('includes every file matching mods/Prominent-GLOBAL-*.jar, including versions you add later')
+  await expect(prominent).toHaveCount(0)
+
+  // Undoing a choice that replaced an earlier version restores that earlier choice.
+  await result.getByRole('button', { name: 'Undo' }).click()
+  await expect(prominent).toContainText('You included another version before: Prominent-GLOBAL-MC1.21.1-4.1.4.jar')
+  await prominent.getByRole('button', { name: /^Include every version/ }).click()
+
+  // Unhosted files without a version number in their name still offer a choice for every version.
+  const pack = notice.getByRole('listitem').filter({ hasText: 'resourcepacks/FreshAnimations-PT-BR.zip' })
+  await pack.getByRole('button', { name: /^Include every version/ }).click()
+  await expect(result).toContainText('includes every file matching resourcepacks/FreshAnimations-PT-BR*.zip')
+
+  // After a choice about one file, the result offers the same choice for its other versions.
+  await notice.getByRole('listitem').filter({ hasText: 'AllTheLeaks' }).getByRole('button', { name: /^Include jar/ }).click()
+  await notice.getByRole('button', { name: /^Leave out FTB Library/ }).click()
+  await result.getByRole('button', { name: 'leave out every version matching mods/ftb-library-neoforge-*.jar' }).click()
+  await expect(result).toContainText('leaves out every file matching mods/ftb-library-neoforge-*.jar')
+
+  await result.getByRole('button', { name: 'Pack settings' }).click()
+  const permissions = page.getByRole('region', { name: 'Modrinth permissions' })
+  const included = permissions.getByRole('list', { name: 'Included on your word' })
+  await expect(included).toContainText('Matches Prominent-GLOBAL-MC1.21.1-4.1.5.jar now.')
+  await expect(included).toContainText('Matches FreshAnimations-PT-BR.zip now.')
+  await included.getByRole('listitem').filter({ hasText: 'AllTheLeaks' }).getByRole('button', { name: /^Include every version/ }).click()
+  await expect(included).toContainText('AllTheLeaks, every version')
+  await expect(permissions.getByRole('list', { name: 'Left out of the Modrinth pack' })).toContainText('FTB Library (NeoForge), every version')
+})
+
 test('a link in one pane opens its target in the other', async ({ page }) => {
   await openApp(page, 'test', 'dirty', 'files')
   await page.getByRole('region', { name: 'Run, left pane' }).getByRole('button', { name: 'Manage your sign-in in App settings' }).click()
