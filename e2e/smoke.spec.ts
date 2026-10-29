@@ -508,13 +508,21 @@ test('extra launch arguments check what Java will receive', async ({ page }) => 
   await expect(page.locator('code', { hasText: '-javaagent:C:/Program Files/spark.jar' })).toBeVisible()
   await page.getByRole('textbox', { name: 'Server arguments' }).fill('--world\nDebug World')
   await expect(page.getByText('(3 lines in use)')).toBeVisible()
-  await page.getByRole('button', { name: 'Save pack settings' }).click()
+  await expect(page.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible()
+
+  // Pack and app settings save as you edit them, without a Save button.
+  await page.getByLabel('Author', { exact: true }).fill('Raven')
   await expect(page.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible()
 
   // Saved arguments keep the fields open the next time you look.
   await page.getByRole('button', { name: 'Run', exact: true }).click()
   await page.getByRole('button', { name: 'Pack settings', exact: true }).click()
   await expect(page.getByRole('textbox', { name: 'Server arguments' })).toHaveValue('--world\nDebug World')
+  await expect(page.getByLabel('Author', { exact: true })).toHaveValue('Raven')
+
+  await page.getByRole('button', { name: 'App settings', exact: true }).click()
+  await page.getByLabel('Name', { exact: true }).fill('Raven Dev')
+  await expect(page.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible()
 })
 
 test('you can search the text of every file, open a match, and replace and undo', async ({ page }) => {

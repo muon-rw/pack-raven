@@ -3,35 +3,52 @@
   import CredentialField from '../components/CredentialField.svelte'
   import JavaPicker from '../components/JavaPicker.svelte'
   import ExtraLaunchArgs, { emptyDraft, fromDraft, toDraft } from '../components/ExtraLaunchArgs.svelte'
-  import { onMount, tick } from 'svelte'
+  import SaveBadge from '../components/SaveBadge.svelte'
+  import { onDestroy, onMount, tick } from 'svelte'
   import { open } from '@tauri-apps/plugin-dialog'
   import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
   import { openUrl } from '@tauri-apps/plugin-opener'
-  import { api, errorText, type CredentialsView, type DefenderView, type Settings, type UpdateView } from '../lib/api'
+  import { api, errorText, type CredentialsView, type DefenderView, type RunArgs, type Settings, type UpdateView } from '../lib/api'
   import { installNow, selfUpdate, updateWaiting } from '../lib/selfUpdate.svelte'
   import { javas, scanJava } from '../lib/java.svelte'
+  import { trackSave } from '../lib/launch.svelte'
   import { cancelSignIn, minecraft, signIn, signOut } from '../lib/minecraft.svelte'
 
   let { onchange }: { onchange: () => void } = $props()
 
   let settings: Settings | null = $state(null)
+  let savedSettings: Settings | null = $state(null)
+  let editorAskDraft = $state<number | null>(50)
+  let editorMaxDraft = $state<number | null>(100)
   let autostart = $state(false)
   let credentials = $state<CredentialsView | null>(null)
   let envNames = $state<string[]>([])
-  let message: string | null = $state(null)
-  let messageFailed = $state(false)
   let settingsError: string | null = $state(null)
   let autostartError: string | null = $state(null)
   let credentialsError: string | null = $state(null)
-  let saving = $state(false)
+  let savedField = $state<string | null>(null)
+  let saveState = $state<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  let saveTick = $state(0)
+  let saveError = $state<string | null>(null)
   let runArgs = $state(emptyDraft())
-  let runArgsEditor = $state<ExtraLaunchArgs>()
+  let savedRunArgs = $state<RunArgs>(fromDraft(emptyDraft()))
+
+  let editorAskInvalid = $derived(editorAskDraft === null || !Number.isInteger(editorAskDraft) || editorAskDraft < 1)
+  let editorMaxBelowAsk = $derived.by(() => {
+    const current = settings
+    return current !== null && editorMaxDraft !== null && Number.isInteger(editorMaxDraft) && editorMaxDraft >= 1 && editorMaxDraft < current.editorAskMb
+  })
+  let editorMaxInvalid = $derived(editorMaxDraft === null || !Number.isInteger(editorMaxDraft) || editorMaxDraft < 1 || editorMaxBelowAsk)
 
   async function load() {
     try {
       const loaded = await api.getSettings()
       runArgs = toDraft(loaded.runArgs)
+      savedRunArgs = fromDraft(runArgs)
+      editorAskDraft = loaded.editorAskMb
+      editorMaxDraft = loaded.editorMaxMb
       settings = loaded
+      savedSettings = structuredClone(loaded)
       settingsError = null
     } catch (error) {
       settingsError = errorText(error)
@@ -103,17 +120,201 @@
   const GITHUB_TOKEN_PAGE = 'https://github.com/settings/personal-access-tokens/new'
   const MODRINTH_TOKEN_PAGE = 'https://modrinth.com/settings/pats'
 
+  // Other views and background checks update settings.json too, so each save merges only the changed
+  // field into a fresh read and chains in order.
+  let saving = Promise.resolve()
+
+  function cleanJavaByMajor(javaByMajor: Record<string, string>): Record<string, string> {
+    return Object.fromEntries(
+      Object.entries(javaByMajor)
+        .map(([major, java]) => [major, java.trim()])
+        .filter(([, java]) => java),
+    )
+  }
+
+  function runSave(field: string, action: () => Promise<void>, after?: () => void) {
+    savedField = field
+    saveState = 'saving'
+    saveError = null
+    saving = trackSave(
+      saving.then(async () => {
+        try {
+          await action()
+          after?.()
+          onchange()
+          if (savedField === field) {
+            saveTick += 1
+            saveState = 'saved'
+          }
+        } catch (error) {
+          saveError = `Couldn't save: ${errorText(error)}`
+          if (savedField === field) saveState = 'failed'
+        }
+      }),
+    )
+  }
+
+  function saveSettingsField(field: string, apply: (target: Settings) => void, after?: () => void) {
+    if (!settings || !savedSettings) return
+    apply(settings)
+    apply(savedSettings)
+    runSave(
+      field,
+      async () => {
+        const fresh = await api.getSettings()
+        apply(fresh)
+        fresh.javaByMajor = cleanJavaByMajor(fresh.javaByMajor)
+        await api.saveSettings(fresh)
+      },
+      after,
+    )
+  }
+
+  const timers = new Map<string, { timer: ReturnType<typeof setTimeout>; commit: () => void }>()
+
+  function clearEdit(field: string) {
+    const pending = timers.get(field)
+    if (pending) {
+      clearTimeout(pending.timer)
+      timers.delete(field)
+    }
+  }
+
+  function scheduleSave(field: string, commit: () => void) {
+    clearEdit(field)
+    if (saveState !== 'failed') saveState = 'idle'
+    const timer = setTimeout(() => {
+      timers.delete(field)
+      commit()
+    }, 400)
+    timers.set(field, { timer, commit })
+  }
+
+  function flushField(field: string, commit: () => void) {
+    clearEdit(field)
+    commit()
+  }
+
+  onDestroy(() => {
+    for (const { timer, commit } of timers.values()) {
+      clearTimeout(timer)
+      commit()
+    }
+    timers.clear()
+  })
+
+  function onFormKey(event: KeyboardEvent) {
+    if (event.key === 'Enter' && event.target instanceof HTMLInputElement && event.target.type !== 'checkbox' && event.target.type !== 'button') {
+      event.preventDefault()
+      event.target.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+  }
+
+  function saveInstallDir() {
+    if (!settings || !savedSettings || settings.installDir === savedSettings.installDir) return
+    const next = settings.installDir
+    saveSettingsField('install-dir', (s) => (s.installDir = next), () => scanJava())
+  }
+
+  function saveGitName() {
+    if (!settings || !savedSettings || settings.gitName === savedSettings.gitName) return
+    const next = settings.gitName
+    identityMessage = null
+    saveSettingsField('git-name', (s) => (s.gitName = next))
+  }
+
+  function saveGitEmail() {
+    if (!settings || !savedSettings || settings.gitEmail === savedSettings.gitEmail) return
+    const next = settings.gitEmail
+    identityMessage = null
+    saveSettingsField('git-email', (s) => (s.gitEmail = next))
+  }
+
+  function saveJavaSlot(major: string) {
+    if (!settings || !savedSettings) return
+    const next = (settings.javaByMajor[major] ?? '').trim()
+    const prev = (savedSettings.javaByMajor[major] ?? '').trim()
+    if (next === prev) return
+    saveSettingsField(
+      `java-${major}`,
+      (s) => {
+        if (next) s.javaByMajor[major] = next
+        else delete s.javaByMajor[major]
+      },
+      () => scanJava(),
+    )
+  }
+
+  function saveJavaSlotQuiet(major: string, path: string) {
+    if (!settings || !savedSettings) return
+    const next = path.trim()
+    settings.javaByMajor[major] = next
+    savedSettings.javaByMajor[major] = next
+    saving = trackSave(
+      saving.then(async () => {
+        try {
+          const fresh = await api.getSettings()
+          if (next) fresh.javaByMajor[major] = next
+          else delete fresh.javaByMajor[major]
+          fresh.javaByMajor = cleanJavaByMajor(fresh.javaByMajor)
+          await api.saveSettings(fresh)
+          onchange()
+        } catch (error) {
+          saveError = `Couldn't save: ${errorText(error)}`
+        }
+      }),
+    )
+  }
+
+  function saveRunArgs(key: keyof RunArgs) {
+    if (!settings || !savedSettings) return
+    const next = fromDraft(runArgs)
+    if (JSON.stringify(next) === JSON.stringify(savedRunArgs)) return
+    savedRunArgs = next
+    saveSettingsField(key, (s) => (s.runArgs = next))
+  }
+
+  function saveEditorAsk() {
+    if (!savedSettings || editorAskInvalid || editorAskDraft === null || editorAskDraft === savedSettings.editorAskMb) return
+    const next = editorAskDraft
+    if (editorMaxDraft === null || editorMaxDraft < next) editorMaxDraft = next
+    saveSettingsField('editor-ask', (s) => {
+      s.editorAskMb = next
+      if (s.editorMaxMb < next) s.editorMaxMb = next
+    })
+  }
+
+  function saveEditorMax() {
+    if (!savedSettings || editorMaxInvalid || editorMaxDraft === null || editorMaxDraft === savedSettings.editorMaxMb) return
+    const next = editorMaxDraft
+    saveSettingsField('editor-max', (s) => (s.editorMaxMb = next))
+  }
+
   let identityBusy = $state(false)
   let identityMessage = $state<{ ok: boolean; text: string } | null>(null)
 
   async function fillIdentityFromGithub() {
-    if (!settings) return
+    if (!settings || !savedSettings) return
     identityBusy = true
+    clearEdit('git-name')
+    clearEdit('git-email')
     try {
       const identity = await api.githubIdentity()
       settings.gitName = identity.name
       settings.gitEmail = identity.email
-      identityMessage = { ok: true, text: 'Filled in from your GitHub account. Save app settings to keep it.' }
+      savedSettings.gitName = identity.name
+      savedSettings.gitEmail = identity.email
+      await (saving = trackSave(
+        saving.then(async () => {
+          const fresh = await api.getSettings()
+          fresh.gitName = identity.name
+          fresh.gitEmail = identity.email
+          fresh.javaByMajor = cleanJavaByMajor(fresh.javaByMajor)
+          await api.saveSettings(fresh)
+          onchange()
+        }),
+      ))
+      identityMessage = { ok: true, text: 'Filled in from your GitHub account.' }
     } catch (error) {
       identityMessage = { ok: false, text: `Couldn't read your GitHub account: ${errorText(error)}` }
     } finally {
@@ -129,7 +330,10 @@
 
   async function pickInstall() {
     const chosen = await open({ directory: true, defaultPath: settings?.installDir })
-    if (typeof chosen === 'string' && settings) settings.installDir = chosen
+    if (typeof chosen === 'string' && settings) {
+      settings.installDir = chosen
+      flushField('install-dir', saveInstallDir)
+    }
   }
 
   const JAVA_SLOTS = [
@@ -138,42 +342,22 @@
     { major: '25', versions: 'Minecraft 26.1 and later (Java 25)' },
   ]
 
-  async function save() {
-    if (!settings) return
-    const argsProblem = runArgsEditor?.revealProblem() ?? false
-    saving = true
-    try {
-      const editorAskMb = Math.max(1, Math.round(settings.editorAskMb || 50))
-      const editorMaxMb = Math.max(editorAskMb, Math.round(settings.editorMaxMb || 100))
-      const adjusted = editorAskMb !== settings.editorAskMb || editorMaxMb !== settings.editorMaxMb
-      const javaByMajor = Object.fromEntries(Object.entries(settings.javaByMajor).map(([major, java]) => [major, java.trim()]).filter(([, java]) => java))
-      await api.saveSettings({ ...settings, javaByMajor, editorAskMb, editorMaxMb, runArgs: fromDraft(runArgs) })
-      await load()
-      scanJava()
-      onchange()
-      messageFailed = false
-      identityMessage = null
-      message = argsProblem
-        ? 'Saved, but an extra launch argument will stop test runs from starting'
-        : adjusted
-          ? `Saved. The editor limits are now ${editorAskMb} MB and ${editorMaxMb} MB, since the second can't be lower than the first.` : 'Saved'
-    } catch (error) {
-      messageFailed = true
-      message = `Couldn't save: ${errorText(error)}`
-    } finally {
-      saving = false
-    }
-  }
-
   async function toggleAutostart() {
     const wanted = !autostart
     autostart = wanted
+    savedField = 'autostart'
+    saveState = 'saving'
     try {
       autostartError = null
       if (wanted) await enable()
       else await disable()
+      if (savedField === 'autostart') {
+        saveTick += 1
+        saveState = 'saved'
+      }
     } catch (error) {
       autostart = !wanted
+      if (savedField === 'autostart') saveState = 'failed'
       autostartError = `Couldn't change the startup setting: ${errorText(error)}`
     }
   }
@@ -187,11 +371,19 @@
     if (!settings) return
     const wanted = !settings.autoUpdate
     settings.autoUpdate = wanted
+    savedField = 'auto-update'
+    saveState = 'saving'
     try {
       autoUpdateError = null
       await api.setAutoUpdate(wanted)
+      if (savedSettings) savedSettings.autoUpdate = wanted
+      if (savedField === 'auto-update') {
+        saveTick += 1
+        saveState = 'saved'
+      }
     } catch (error) {
       settings.autoUpdate = !wanted
+      if (savedField === 'auto-update') saveState = 'failed'
       autoUpdateError = `Couldn't change the update setting: ${errorText(error)}`
     }
   }
@@ -257,16 +449,28 @@
   }
 
   async function setDefenderPrompt(enabled: boolean, box: HTMLInputElement) {
+    savedField = 'defender-prompt'
+    saveState = 'saving'
     try {
       await api.defenderDismiss(!enabled)
       if (settings) settings.defenderDismissed = !enabled
+      if (savedSettings) savedSettings.defenderDismissed = !enabled
+      if (savedField === 'defender-prompt') {
+        saveTick += 1
+        saveState = 'saved'
+      }
     } catch (error) {
       box.checked = !enabled
+      if (savedField === 'defender-prompt') saveState = 'failed'
       defenderFailed = true
       defenderMessage = `Couldn't change the reminder: ${errorText(error)}`
     }
   }
 </script>
+
+{#snippet badge(field: string)}
+  <SaveBadge active={savedField === field} state={saveState} tick={saveTick} />
+{/snippet}
 
 {#if settingsError}
   <Notice tone="error">
@@ -280,8 +484,8 @@
     <p class="muted">Configure general packraven settings. For individual packs, see Pack settings.</p>
   </header>
 
-  <section class="account" id="minecraft-account">
-    <h3>Minecraft account</h3>
+  <section class="account" id="minecraft-account" aria-labelledby="minecraft-account-title">
+    <h3 id="minecraft-account-title">Minecraft account</h3>
     {#if account}
       <p>
         Signed in as <strong>{account.name}</strong>. Test clients on this computer launch as this account{#if credentials}, and packraven keeps your Microsoft tokens in
@@ -317,7 +521,10 @@
   <div class="app-switches">
   <div class="switch-row">
     <div>
-      <div id="autostart-label">Start in the tray when I sign in to this computer</div>
+      <div class="switch-label">
+        <span id="autostart-label">Start in the tray when I sign in to this computer</span>
+        {@render badge('autostart')}
+      </div>
       <p class="muted" id="autostart-hint">Keep packraven running so builds and test servers are a click away.</p>
       {#if autostartError}<p class="failed" role="alert">{autostartError}</p>{/if}
     </div>
@@ -334,7 +541,10 @@
 
   <div class="switch-row" id="updates">
     <div class="updates">
-      <div id="auto-update-label">Keep packraven up to date automatically</div>
+      <div class="switch-label">
+        <span id="auto-update-label">Keep packraven up to date automatically</span>
+        {@render badge('auto-update')}
+      </div>
       {#if autoUpdateError}<p class="failed" role="alert">{autoUpdateError}</p>{/if}
       {#if selfUpdate.view}
         {@const view = selfUpdate.view}
@@ -375,22 +585,60 @@
   </div>
   </div>
 
-  <form class="form" onsubmit={(e) => { e.preventDefault(); save() }} oninput={() => !messageFailed && (message = null)}>
-    <section>
-      <h3>This machine</h3>
-      <div class="path">
-        <label>CurseForge install folder <input bind:value={settings.installDir} /></label>
-        <button type="button" onclick={pickInstall}>Choose</button>
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <form class="form" onsubmit={(e) => e.preventDefault()} onkeydown={onFormKey}>
+    {#if saveError}<p class="failed" role="alert">{saveError}</p>{/if}
+
+    <section aria-labelledby="machine-title">
+      <h3 id="machine-title">This machine</h3>
+      <div class="field">
+        <div class="label-row">
+          <label for="install-dir">CurseForge install folder</label>
+          {@render badge('install-dir')}
+        </div>
+        <div class="path">
+          <input
+            id="install-dir"
+            bind:value={settings.installDir}
+            oninput={() => scheduleSave('install-dir', saveInstallDir)}
+            onchange={() => flushField('install-dir', saveInstallDir)}
+          />
+          <button type="button" onclick={pickInstall}>Choose</button>
+        </div>
       </div>
     </section>
 
-    <section>
-      <h3>Commits</h3>
-      <label>Name <input bind:value={settings.gitName} placeholder="From your git config" autocomplete="name" /></label>
-      <label>
-        Email
-        <input bind:value={settings.gitEmail} placeholder="From your git config" autocomplete="email" aria-describedby="commit-identity-hint" />
-      </label>
+    <section aria-labelledby="commits-title">
+      <h3 id="commits-title">Commits</h3>
+      <div class="field">
+        <div class="label-row">
+          <label for="git-name">Name</label>
+          {@render badge('git-name')}
+        </div>
+        <input
+          id="git-name"
+          bind:value={settings.gitName}
+          oninput={() => scheduleSave('git-name', saveGitName)}
+          onchange={() => flushField('git-name', saveGitName)}
+          placeholder="From your git config"
+          autocomplete="name"
+        />
+      </div>
+      <div class="field">
+        <div class="label-row">
+          <label for="git-email">Email</label>
+          {@render badge('git-email')}
+        </div>
+        <input
+          id="git-email"
+          bind:value={settings.gitEmail}
+          oninput={() => scheduleSave('git-email', saveGitEmail)}
+          onchange={() => flushField('git-email', saveGitEmail)}
+          placeholder="From your git config"
+          autocomplete="email"
+          aria-describedby="commit-identity-hint"
+        />
+      </div>
       <p class="muted hint" id="commit-identity-hint">
         packraven makes commits as this person when you publish or press commit. Leave a field empty to use your git config.
       </p>
@@ -402,8 +650,8 @@
       {/if}
     </section>
 
-    <section>
-      <h3>Java</h3>
+    <section aria-labelledby="java-title">
+      <h3 id="java-title">Java</h3>
       <p class="muted">
         On Automatic, we use CurseForge's Java for each version, or another Java of that version on this computer. A newer Java runs most packs from
         Minecraft 1.18 on, though some mods may break. To use a different Java for one pack, choose it in Pack settings.
@@ -417,11 +665,14 @@
           defaultName="Automatic"
           defaultPath={javas.scan?.automatic[slot.major] ?? null}
           needed={javas.scan?.needed.includes(Number(slot.major)) ?? false}
+          onchange={() => saveJavaSlot(slot.major)}
           ondownload={(java) => {
             // The backend only chooses a download for a slot when Automatic wouldn't pick it, like GraalVM 21 for Java 17.
-            if (java.major !== Number(slot.major)) settings!.javaByMajor[slot.major] = java.path
+            if (java.major !== Number(slot.major)) saveJavaSlotQuiet(slot.major, java.path)
           }}
-        />
+        >
+          {#snippet status()}{@render badge(`java-${slot.major}`)}{/snippet}
+        </JavaPicker>
       {/each}
       <p class="muted hint java-scan" role="status">
         {#if javas.error}
@@ -431,39 +682,75 @@
         {/if}
         <button type="button" class="link" disabled={javas.scanning} onclick={scanJava}>{javas.scanning ? 'Looking' : 'Look again'}</button>
       </p>
-      <ExtraLaunchArgs bind:this={runArgsEditor} bind:draft={runArgs} scope="app" />
+      <ExtraLaunchArgs
+        bind:draft={runArgs}
+        scope="app"
+        onedit={() => saveState !== 'failed' && (saveState = 'idle')}
+        onchange={saveRunArgs}
+      >
+        {#snippet status(key)}{@render badge(key)}{/snippet}
+      </ExtraLaunchArgs>
     </section>
 
-    <section>
-      <h3>Editor</h3>
-      <label>
-        Ask before opening files larger than (MB)
-        <input type="number" min="1" step="1" bind:value={settings.editorAskMb} aria-describedby="editor-ask-hint" />
-      </label>
+    <section aria-labelledby="editor-title">
+      <h3 id="editor-title">Editor</h3>
+      <div class="field">
+        <div class="label-row">
+          <label for="editor-ask-mb">Ask before opening files larger than (MB)</label>
+          {@render badge('editor-ask')}
+        </div>
+        <input
+          id="editor-ask-mb"
+          type="number"
+          min="1"
+          step="1"
+          bind:value={editorAskDraft}
+          oninput={() => scheduleSave('editor-ask', saveEditorAsk)}
+          onchange={() => flushField('editor-ask', saveEditorAsk)}
+          aria-invalid={editorAskInvalid}
+          aria-describedby={editorAskInvalid ? 'editor-ask-error editor-ask-hint' : 'editor-ask-hint'}
+        />
+      </div>
+      {#if editorAskInvalid}
+        <p class="hint failed" id="editor-ask-error">Enter a whole number of at least 1 MB.</p>
+      {/if}
       <p class="muted hint" id="editor-ask-hint">Past this size, you can open a file in a simplified editor, without checking or folding, so typing stays responsive.</p>
-      <label>
-        Never open files larger than (MB)
-        <input type="number" min="1" step="1" bind:value={settings.editorMaxMb} aria-describedby="editor-max-hint" />
-      </label>
+      <div class="field">
+        <div class="label-row">
+          <label for="editor-max-mb">Never open files larger than (MB)</label>
+          {@render badge('editor-max')}
+        </div>
+        <input
+          id="editor-max-mb"
+          type="number"
+          min="1"
+          step="1"
+          bind:value={editorMaxDraft}
+          oninput={() => scheduleSave('editor-max', saveEditorMax)}
+          onchange={() => flushField('editor-max', saveEditorMax)}
+          aria-invalid={editorMaxInvalid}
+          aria-describedby={editorMaxInvalid ? 'editor-max-error editor-max-hint' : 'editor-max-hint'}
+        />
+      </div>
+      {#if editorMaxInvalid}
+        <p class="hint failed" id="editor-max-error">
+          {editorMaxBelowAsk ? `Enter at least ${settings.editorAskMb} MB, so this stays at or above the first limit.` : 'Enter a whole number of at least 1 MB.'}
+        </p>
+      {/if}
       <p class="muted hint" id="editor-max-hint">Larger files can run the editor out of memory, so we offer your default app for them instead.</p>
     </section>
-
-    <div class="actions">
-      <button type="submit" class="primary" class:busy={saving} disabled={saving}>{saving ? 'Saving' : 'Save app settings'}</button>
-      <span class:muted={!messageFailed} class:failed={messageFailed} role="status">{message ?? ''}</span>
-    </div>
   </form>
 
   {#if credentialsError}
-    <section class="removal">
-      <h3>Access tokens</h3>
+    <section class="removal" aria-labelledby="access-tokens-title">
+      <h3 id="access-tokens-title">Access tokens</h3>
       <Notice tone="error">
         <p>Couldn't read your saved CurseForge, Modrinth and GitHub tokens: {credentialsError}</p>
         <p><button type="button" onclick={loadCredentials}>Try again</button></p>
       </Notice>
     </section>
   {:else if credentials}
-    <section class="removal" id="curseforge-access">
+    <section class="removal" id="curseforge-access" aria-labelledby="curseforge-access-title">
       <h3 id="curseforge-access-title" tabindex="-1">CurseForge access</h3>
       <p class="muted">Changes here take effect right away, including in the git hooks.</p>
       {#if !credentials.builtInApiKey}
@@ -480,7 +767,7 @@
       </CredentialField>
     </section>
 
-    <section class="removal" id="modrinth-access">
+    <section class="removal" id="modrinth-access" aria-labelledby="modrinth-access-title">
       <h3 id="modrinth-access-title" tabindex="-1">Modrinth access</h3>
       <CredentialField credential="modrinth" label="Modrinth token" status={credentials.modrinth} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
         {#snippet help()}
@@ -492,8 +779,8 @@
       </CredentialField>
     </section>
 
-    <section class="removal" id="github-access">
-      <h3>GitHub access</h3>
+    <section class="removal" id="github-access" aria-labelledby="github-access-title">
+      <h3 id="github-access-title">GitHub access</h3>
       <CredentialField credential="github" label="GitHub token" status={credentials.github} keychain={credentials.keychain} {envNames} onchange={loadCredentials}>
         {#snippet help()}
           <p class="muted hint">
@@ -507,8 +794,8 @@
   {/if}
 
   {#if defender?.active}
-    <section class="removal">
-      <h3>Windows Security</h3>
+    <section class="removal" aria-labelledby="windows-security-title">
+      <h3 id="windows-security-title">Windows Security</h3>
       {#if defender.missing.length}
         <p class="muted">
           Windows Defender can slow things down. Exclude {defender.missing.length === 1 ? 'this folder' : 'these folders'} to speed things up, but Defender will stop scanning files in {defender.missing.length === 1 ? 'it' : 'them'}.
@@ -520,11 +807,14 @@
       {:else}
         <p class="muted">Windows Defender will skip the pack, CurseForge and packraven folders. Only install projects you trust.</p>
       {/if}
-      <p class:muted={!defenderFailed} class:failed={defenderFailed} role="status">{defenderMessage ?? ''}</p>
-      <label class="check">
-        <input type="checkbox" checked={!settings.defenderDismissed} onchange={(e) => setDefenderPrompt(e.currentTarget.checked, e.currentTarget)} />
-        Remind me when these folders aren't excluded
-      </label>
+      <p class:muted={!defenderFailed} class:failed={defenderFailed} class:visually-hidden={!defenderMessage} role="status">{defenderMessage ?? ''}</p>
+      <div class="check-line">
+        <label class="check">
+          <input type="checkbox" checked={!settings.defenderDismissed} onchange={(e) => setDefenderPrompt(e.currentTarget.checked, e.currentTarget)} />
+          Remind me when these folders aren't excluded
+        </label>
+        {@render badge('defender-prompt')}
+      </div>
     </section>
   {/if}
   </div>
@@ -547,6 +837,7 @@
   .folders {
     margin: 0;
     padding-left: 18px;
+    overflow-wrap: anywhere;
   }
 
   .removal {
@@ -582,6 +873,13 @@
     justify-content: space-between;
     align-items: center;
     gap: 24px;
+  }
+
+  .switch-label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px 10px;
   }
 
   /* The status and buttons below the label would otherwise pull the switch down, away from it. */
@@ -652,9 +950,23 @@
     transform: translateX(20px);
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    .switch span {
+      transition: none;
+    }
+  }
+
   .hint {
-    margin-top: -8px;
+    color: var(--muted);
     font-size: var(--step--1);
+  }
+
+  .field + .hint {
+    margin-top: -6px;
+  }
+
+  .hint.failed {
+    color: var(--fail);
   }
 
   .form {
@@ -667,19 +979,39 @@
     gap: 14px;
   }
 
+  .field {
+    display: grid;
+    gap: 6px;
+  }
+
+  .label-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--text);
+    font-size: var(--step-0);
+  }
+
+  .label-row > label {
+    color: var(--text);
+    font-size: var(--step-0);
+  }
+
+  .check-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+  }
+
   .path {
     display: flex;
-    align-items: end;
+    align-items: center;
     gap: 10px;
   }
 
-  .path label {
+  .path input {
     flex: 1;
-  }
-
-  .actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
   }
 </style>

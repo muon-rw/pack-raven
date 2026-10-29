@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte'
   import Notice from './Notice.svelte'
   import { open } from '@tauri-apps/plugin-dialog'
   import { errorText, type JavaInstall } from '../lib/api'
@@ -13,6 +14,8 @@
     defaultPath,
     needed,
     hint,
+    status,
+    onchange,
     ondownload,
   }: {
     id: string
@@ -23,6 +26,8 @@
     defaultPath: string | null
     needed: boolean
     hint?: string
+    status?: Snippet
+    onchange?: () => void
     ondownload: (java: JavaInstall) => void
   } = $props()
 
@@ -82,9 +87,16 @@
     }
   }
 
+  function selectJava(next: string) {
+    if (next === value) return
+    downloadStatus = null
+    value = next
+    onchange?.()
+  }
+
   async function pick() {
     const file = await open({ title: `Choose a Java ${major} executable`, defaultPath: chosen || undefined })
-    if (typeof file === 'string') value = file
+    if (typeof file === 'string') selectJava(file)
   }
 
   const megabytes = (bytes: number) => Math.round(bytes / 1_000_000)
@@ -108,7 +120,7 @@
     {#if installedNewer || graalvm}
       <div class="actions">
         {#if installedNewer}
-          <button type="button" class:primary={needed} onclick={() => (value = installedNewer.path)}>Use {installedNewer.distribution} {installedNewer.version}</button>
+          <button type="button" class:primary={needed} onclick={() => selectJava(installedNewer.path)}>Use {installedNewer.distribution} {installedNewer.version}</button>
         {/if}
         {#if graalvm}
           <button type="button" class:primary={needed && !installedNewer} onclick={download}>Download GraalVM {graalvm}</button>
@@ -131,12 +143,15 @@
 {/snippet}
 
 <div class="java">
-  <label for={id}>{label}</label>
+  <div class="label-row">
+    <label for={id}>{label}</label>
+    {@render status?.()}
+  </div>
   <div class="row">
     <select
       {id}
       value={listed?.path ?? value}
-      onchange={(e) => (value = e.currentTarget.value)}
+      onchange={(e) => selectJava(e.currentTarget.value)}
       aria-describedby={[chosen ? `${id}-path` : missing && `${id}-missing`, hint].filter(Boolean).join(' ') || undefined}
     >
       <option value="">{defaultName}: {defaultText}</option>
@@ -179,7 +194,14 @@
     gap: 6px;
   }
 
-  .java > label {
+  .label-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .label-row > label {
     color: var(--text);
     font-size: var(--step-0);
   }

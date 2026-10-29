@@ -25,6 +25,7 @@ export async function startServer(connect: boolean) {
 }
 
 export async function launchClient(join: boolean) {
+  await pendingSaves
   clearLog('client')
   testState.clientJoins = join
   await api.startClient(join)

@@ -68,12 +68,25 @@
 </script>
 
 <script lang="ts">
+  import { onDestroy, type Snippet } from 'svelte'
+
   let {
     draft = $bindable(),
     scope,
     inherited = 0,
     onappsettings,
-  }: { draft: RunArgsDraft; scope: 'app' | 'pack'; inherited?: number; onappsettings?: () => void } = $props()
+    onedit,
+    onchange,
+    status,
+  }: {
+    draft: RunArgsDraft
+    scope: 'app' | 'pack'
+    inherited?: number
+    onappsettings?: () => void
+    onedit?: () => void
+    onchange?: (key: keyof RunArgs) => void
+    status?: Snippet<[keyof RunArgs]>
+  } = $props()
 
   const fields = [
     { key: 'clientJvmArgs', label: 'Client JVM flags', placeholder: '-Dmixin.debug.export=true', jvm: true },
@@ -93,13 +106,38 @@
     if (inUse) open = true
   })
 
-  export function revealProblem() {
-    const field = fields.find((f) => checks[f.key]?.problem)
-    if (!field) return false
-    open = true
-    requestAnimationFrame(() => details?.querySelector<HTMLTextAreaElement>(`#${scope}-${field.key}`)?.focus())
-    return true
+  const timers = new Map<keyof RunArgs, ReturnType<typeof setTimeout>>()
+
+  function clearTimer(key: keyof RunArgs) {
+    const timer = timers.get(key)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      timers.delete(key)
+    }
   }
+
+  function scheduleChange(key: keyof RunArgs) {
+    clearTimer(key)
+    onedit?.()
+    if (checks[key]?.problem) return
+    timers.set(
+      key,
+      setTimeout(() => {
+        timers.delete(key)
+        if (!checks[key]?.problem) onchange?.(key)
+      }, 400),
+    )
+  }
+
+  function commitChange(key: keyof RunArgs) {
+    clearTimer(key)
+    if (checks[key]?.problem) return
+    onchange?.(key)
+  }
+
+  onDestroy(() => {
+    for (const key of [...timers.keys()]) commitChange(key)
+  })
 </script>
 
 <details bind:open bind:this={details}>
@@ -129,12 +167,17 @@
         {@const check = checks[field.key]}
         {@const id = `${scope}-${field.key}`}
         <div class="field">
-          <label for={id}>{field.label}</label>
+          <div class="label-row">
+            <label for={id}>{field.label}</label>
+            {@render status?.(field.key)}
+          </div>
           <textarea
             {id}
             rows={Math.min(8, Math.max(3, draft[field.key].split('\n').length))}
             wrap="off"
             bind:value={draft[field.key]}
+            oninput={() => scheduleChange(field.key)}
+            onchange={() => commitChange(field.key)}
             placeholder={field.placeholder}
             spellcheck="false"
             aria-invalid={!!check?.problem}
@@ -198,8 +241,15 @@
     min-width: 0;
   }
 
-  label {
+  .label-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
     margin-bottom: 6px;
+  }
+
+  label {
     color: var(--text);
     font-size: var(--step-0);
   }

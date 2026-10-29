@@ -2,11 +2,13 @@
   import Notice from '../components/Notice.svelte'
   import JavaPicker from '../components/JavaPicker.svelte'
   import ExtraLaunchArgs, { activeLines, emptyDraft, fromDraft, toDraft } from '../components/ExtraLaunchArgs.svelte'
-  import { onMount } from 'svelte'
+  import SaveBadge from '../components/SaveBadge.svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { ask } from '@tauri-apps/plugin-dialog'
-  import { api, errorText, type PackConfig, type PackJavaDefault } from '../lib/api'
+  import { api, errorText, type PackConfig, type PackJavaDefault, type RunArgs } from '../lib/api'
   import OverridePermissions from '../components/OverridePermissions.svelte'
   import { scanJava } from '../lib/java.svelte'
+  import { trackSave } from '../lib/launch.svelte'
   import { serverView } from '../lib/nav.svelte'
 
   let {
@@ -19,36 +21,58 @@
   }: { dir: string; name: string; onserver: () => void; onappsettings: () => void; onchange: () => void; onremoved: () => void } = $props()
 
   let config: PackConfig | null = $state(null)
+  let savedConfig: PackConfig | null = $state(null)
   let configError: string | null = $state(null)
+  let cfProjectDraft = $state<number | null>(null)
+  let modrinthProjectDraft = $state('')
+  let portDraft = $state<number | null>(25565)
+  let clientMemoryDraft = $state('8G')
   let webhook = $state('')
+  let savedWebhook = $state('')
   let packJava = $state('')
+  let savedPackJava = $state('')
   let runArgs = $state(emptyDraft())
+  let savedRunArgs = $state<RunArgs>(fromDraft(emptyDraft()))
   let appRunArgs = $state(0)
-  let runArgsEditor = $state<ExtraLaunchArgs>()
   let javaDefault = $state<PackJavaDefault | null>(null)
-  let message: string | null = $state(null)
-  let messageFailed = $state(false)
+  let savedField = $state<string | null>(null)
+  let saveState = $state<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  let saveTick = $state(0)
+  let saveError = $state<string | null>(null)
   let discordMessage = $state<string | null>(null)
   let discordFailed = $state(false)
   let testing = $state(false)
   let removeError: string | null = $state(null)
-  let saving = $state(false)
-  let portMissing = $state(false)
-  let portField = $state<HTMLInputElement>()
+
+  const validMemory = (text: string) => /^\d+[mg]$/i.test(text.trim())
+  let cfProjectInvalid = $derived(cfProjectDraft !== null && (!Number.isInteger(cfProjectDraft) || cfProjectDraft < 0))
+  let portInvalid = $derived(portDraft === null || !Number.isInteger(portDraft) || portDraft < 1 || portDraft > 65535)
+  let clientMemoryInvalid = $derived(!validMemory(clientMemoryDraft))
 
   async function load() {
     try {
-      runArgs = toDraft(await api.getRunArgs())
+      const loadedArgs = await api.getRunArgs()
+      runArgs = toDraft(loadedArgs)
+      savedRunArgs = fromDraft(runArgs)
       // Only the App settings hint depends on this, so a failed read shouldn't hide the pack's settings.
       appRunArgs = await api.getSettings().then((settings) => activeLines(settings.runArgs), () => 0)
-      config = await api.getPackConfig()
-      checkModrinthProject(config.modrinth.project_id.trim())
+      const loadedConfig = await api.getPackConfig()
+      config = loadedConfig
+      savedConfig = structuredClone(loadedConfig)
+      cfProjectDraft = loadedConfig.curseforge.project_id || null
+      modrinthProjectDraft = loadedConfig.modrinth.project_id
+      portDraft = loadedConfig.test.port
+      clientMemoryDraft = loadedConfig.test.client_memory
+      checkModrinthProject(loadedConfig.modrinth.project_id.trim())
       webhook = (await api.getWebhook()) ?? ''
+      savedWebhook = webhook.trim()
       packJava = (await api.getPackJava()) ?? ''
+      savedPackJava = packJava.trim()
       configError = null
       await loadJavaDefault()
     } catch (error) {
       config = null
+      savedConfig = null
       configError = errorText(error)
     }
   }
@@ -62,53 +86,163 @@
     load()
   })
 
-  async function save() {
-    if (!config) return
-    // Svelte binds a cleared number field to null, which packraven.toml can't hold. We treat an
-    // empty project ID as not set, but the test server needs a port.
-    config.curseforge.project_id = Number(config.curseforge.project_id) || 0
-    config.modrinth.project_id = config.modrinth.project_id.trim()
-    portMissing = !config.test.port
-    if (portMissing) {
-      messageFailed = true
-      message = 'Enter a test server port, such as 25565.'
-      portField?.focus()
-      return
-    }
-    // These are for debugging, so we save a problem and only point it out.
-    const argsProblem = runArgsEditor?.revealProblem() ?? false
-    saving = true
-    try {
-      // Server saves its own settings as you change them, so we keep whatever it wrote since we loaded.
+  // Other views and permissions sections write packraven.toml on their own, so each save merges only
+  // the changed field into a fresh read and chains in order.
+  let saving = Promise.resolve()
+
+  function runSave(field: string, action: () => Promise<void>) {
+    savedField = field
+    saveState = 'saving'
+    saveError = null
+    saving = trackSave(
+      saving.then(async () => {
+        try {
+          await action()
+          onchange()
+          if (savedField === field) {
+            saveTick += 1
+            saveState = 'saved'
+          }
+        } catch (error) {
+          saveError = `Couldn't save: ${errorText(error)}`
+          if (savedField === field) saveState = 'failed'
+        }
+      }),
+    )
+  }
+
+  function saveConfigField(field: string, apply: (target: PackConfig) => void) {
+    if (!config || !savedConfig) return
+    apply(config)
+    apply(savedConfig)
+    runSave(field, async () => {
       const fresh = await api.getPackConfig()
-      const { allowed_override_jars, exclude, allowed_authors } = fresh.modrinth
-      const modrinth = { ...config.modrinth, allowed_override_jars, exclude, allowed_authors }
-      const curseforge = { ...config.curseforge, allowed_override_jars: fresh.curseforge.allowed_override_jars, exclude: fresh.curseforge.exclude }
-      await api.savePackConfig({ ...config, server: fresh.server, updates: fresh.updates, modrinth, curseforge })
-      await api.setWebhook(webhook)
-      await api.setPackJava(packJava.trim() || null)
-      await api.setRunArgs(fromDraft(runArgs))
-      await load()
-      onchange()
-      messageFailed = false
-      message = argsProblem ? 'Saved, but an extra launch argument will stop test runs from starting' : 'Saved'
-      const project = config?.modrinth.project_id ?? ''
-      await checkModrinthProject(project)
-      if (project && modrinthProject?.title === null) {
-        messageFailed = true
-        message = "Saved, but Modrinth has no project with that ID or slug, so publishing to Modrinth would fail"
-      }
-    } catch (error) {
-      messageFailed = true
-      message = `Couldn't save: ${errorText(error)}`
-    } finally {
-      saving = false
+      apply(fresh)
+      await api.savePackConfig(fresh)
+    })
+  }
+
+  const timers = new Map<string, { timer: ReturnType<typeof setTimeout>; commit: () => void }>()
+
+  function clearEdit(field: string) {
+    const pending = timers.get(field)
+    if (pending) {
+      clearTimeout(pending.timer)
+      timers.delete(field)
     }
+  }
+
+  function scheduleSave(field: string, commit: () => void) {
+    clearEdit(field)
+    if (saveState !== 'failed') saveState = 'idle'
+    const timer = setTimeout(() => {
+      timers.delete(field)
+      commit()
+    }, 400)
+    timers.set(field, { timer, commit })
+  }
+
+  function flushField(field: string, commit: () => void) {
+    clearEdit(field)
+    commit()
+  }
+
+  onDestroy(() => {
+    for (const { timer, commit } of timers.values()) {
+      clearTimeout(timer)
+      commit()
+    }
+    timers.clear()
+  })
+
+  function onFormKey(event: KeyboardEvent) {
+    if (event.key === 'Enter' && event.target instanceof HTMLInputElement && event.target.type !== 'checkbox' && event.target.type !== 'button') {
+      event.preventDefault()
+      event.target.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+  }
+
+  function saveCfProject() {
+    if (!savedConfig || cfProjectInvalid) return
+    const next = cfProjectDraft ?? 0
+    if (next === savedConfig.curseforge.project_id) return
+    saveConfigField('curseforge-project', (c) => (c.curseforge.project_id = next))
+  }
+
+  function saveModrinthProject() {
+    if (!config || !savedConfig) return
+    const next = modrinthProjectDraft.trim()
+    if (next === savedConfig.modrinth.project_id.trim()) return
+    saveConfigField('modrinth-project', (c) => (c.modrinth.project_id = next))
+    checkModrinthProject(next)
+  }
+
+  function saveReleaseType() {
+    if (!config || !savedConfig || config.curseforge.release_type === savedConfig.curseforge.release_type) return
+    const next = config.curseforge.release_type
+    saveConfigField('release-type', (c) => (c.curseforge.release_type = next))
+  }
+
+  function saveAuthor() {
+    if (!config || !savedConfig || config.author === savedConfig.author) return
+    const next = config.author
+    saveConfigField('author', (c) => (c.author = next))
+  }
+
+  function saveManualRelease() {
+    if (!config || !savedConfig || config.curseforge.manual_release === savedConfig.curseforge.manual_release) return
+    const next = config.curseforge.manual_release
+    saveConfigField('manual-release', (c) => (c.curseforge.manual_release = next))
+  }
+
+  function savePort() {
+    if (!savedConfig || portInvalid || portDraft === null || portDraft === savedConfig.test.port) return
+    const next = portDraft
+    saveConfigField('port', (c) => (c.test.port = next))
+  }
+
+  function saveClientMemory() {
+    if (!savedConfig || clientMemoryInvalid) return
+    const next = clientMemoryDraft.trim()
+    if (next === savedConfig.test.client_memory) return
+    saveConfigField('client-memory', (c) => (c.test.client_memory = next))
+  }
+
+  function savePackJava() {
+    const next = packJava.trim()
+    if (next === savedPackJava) return
+    savedPackJava = next
+    runSave('pack-java', async () => {
+      await api.setPackJava(next || null)
+      await loadJavaDefault()
+    })
+  }
+
+  function saveRunArgs(key: keyof RunArgs) {
+    const next = fromDraft(runArgs)
+    if (JSON.stringify(next) === JSON.stringify(savedRunArgs)) return
+    savedRunArgs = next
+    runSave(key, () => api.setRunArgs(next))
+  }
+
+  function saveWebhook() {
+    const next = webhook.trim()
+    if (next === savedWebhook) return
+    savedWebhook = next
+    runSave('webhook', () => api.setWebhook(webhook))
+  }
+
+  function saveDiscordField<K extends keyof PackConfig['discord']>(field: string, key: K) {
+    if (!config || !savedConfig || config.discord[key] === savedConfig.discord[key]) return
+    const next = config.discord[key]
+    saveConfigField(field, (c) => (c.discord[key] = next))
   }
 
   async function testWebhook() {
     testing = true
+    clearEdit('webhook')
     try {
+      savedWebhook = webhook.trim()
       await api.setWebhook(webhook)
       await api.discordTest()
       discordFailed = false
@@ -122,14 +256,16 @@
   }
 
   let modrinthProject = $state<{ id: string; title: string | null } | null>(null)
+  let modrinthMissing = $derived(!!modrinthProject && modrinthProject.id === modrinthProjectDraft.trim() && modrinthProject.title === null)
 
   // A mistyped project would otherwise only show up when you publish.
   async function checkModrinthProject(id: string) {
     if (!id) return (modrinthProject = null)
     try {
-      modrinthProject = { id, title: await api.modrinthProjectTitle(id) }
+      const title = await api.modrinthProjectTitle(id)
+      if (modrinthProjectDraft.trim() === id) modrinthProject = { id, title }
     } catch {
-      modrinthProject = null
+      if (modrinthProjectDraft.trim() === id) modrinthProject = null
     }
   }
 
@@ -151,6 +287,10 @@
   }
 </script>
 
+{#snippet badge(field: string)}
+  <SaveBadge active={savedField === field} state={saveState} tick={saveTick} />
+{/snippet}
+
 <div class="settings">
   <header>
     <h2>Pack settings</h2>
@@ -163,47 +303,134 @@
       <p><button onclick={load}>Try again</button></p>
     </Notice>
   {:else if config}
-    <form class="form" onsubmit={(e) => { e.preventDefault(); save() }} oninput={() => !messageFailed && (message = null)}>
-      <section>
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <form class="form" onsubmit={(e) => e.preventDefault()} onkeydown={onFormKey}>
+      {#if saveError}<p class="failed" role="alert">{saveError}</p>{/if}
+
+      <section aria-labelledby="publishing-title">
         <h3 id="publishing-title" tabindex="-1">Publishing</h3>
         <div class="grid">
-          <label>CurseForge project ID <input type="number" min="0" bind:value={config.curseforge.project_id} placeholder="Not set" /></label>
-          <label>
-            Modrinth project
-            <input bind:value={config.modrinth.project_id} placeholder="Not set" spellcheck="false" aria-describedby="modrinth-project-hint" />
+          <div class="field">
+            <div class="label-row">
+              <label for="cf-project-id">CurseForge project ID</label>
+              {@render badge('curseforge-project')}
+            </div>
+            <input
+              id="cf-project-id"
+              type="number"
+              min="0"
+              step="1"
+              bind:value={cfProjectDraft}
+              oninput={() => scheduleSave('curseforge-project', saveCfProject)}
+              onchange={() => flushField('curseforge-project', saveCfProject)}
+              placeholder="Not set"
+              aria-invalid={cfProjectInvalid}
+              aria-describedby={cfProjectInvalid ? 'cf-project-hint' : undefined}
+            />
+            {#if cfProjectInvalid}
+              <span class="hint failed" id="cf-project-hint">Enter a whole number, or leave it empty.</span>
+            {/if}
+          </div>
+          <div class="field">
+            <div class="label-row">
+              <label for="modrinth-project">Modrinth project</label>
+              {@render badge('modrinth-project')}
+            </div>
+            <input
+              id="modrinth-project"
+              bind:value={modrinthProjectDraft}
+              oninput={() => scheduleSave('modrinth-project', saveModrinthProject)}
+              onchange={() => flushField('modrinth-project', saveModrinthProject)}
+              placeholder="Not set"
+              spellcheck="false"
+              aria-invalid={modrinthMissing}
+              aria-describedby="modrinth-project-hint"
+            />
             <span class="hint" id="modrinth-project-hint">
-              {#if modrinthProject && modrinthProject.id === config.modrinth.project_id.trim()}
+              {#if modrinthProject && modrinthProject.id === modrinthProjectDraft.trim()}
                 {#if modrinthProject.title}On Modrinth as {modrinthProject.title}{:else}<span class="failed">Modrinth has no project with this ID or slug</span>{/if}
               {:else}
                 The ID, or the slug from the project's URL
               {/if}
             </span>
-          </label>
-          <label>
-            Release type
-            <select bind:value={config.curseforge.release_type} aria-describedby="release-type-hint">
+          </div>
+          <div class="field">
+            <div class="label-row">
+              <label for="release-type">Release type</label>
+              {@render badge('release-type')}
+            </div>
+            <select id="release-type" bind:value={config.curseforge.release_type} onchange={saveReleaseType} aria-describedby="release-type-hint">
               <option value="release">Release</option>
               <option value="beta">Beta</option>
               <option value="alpha">Alpha</option>
             </select>
             <span class="hint" id="release-type-hint">On both platforms</span>
-          </label>
-          <label>Author <input bind:value={config.author} /></label>
+          </div>
+          <div class="field">
+            <div class="label-row">
+              <label for="pack-author">Author</label>
+              {@render badge('author')}
+            </div>
+            <input
+              id="pack-author"
+              bind:value={config.author}
+              oninput={() => scheduleSave('author', saveAuthor)}
+              onchange={() => flushField('author', saveAuthor)}
+            />
+          </div>
         </div>
         <p class="hint">packraven publishes to each platform you give a project.</p>
-        <label class="check">
-          <input type="checkbox" bind:checked={config.curseforge.manual_release} /> Hold approved files until I release them on CurseForge
-        </label>
+        <div class="check-line">
+          <label class="check">
+            <input type="checkbox" bind:checked={config.curseforge.manual_release} onchange={saveManualRelease} /> Hold approved files until I release them on CurseForge
+          </label>
+          {@render badge('manual-release')}
+        </div>
       </section>
 
-      <section>
-        <h3>Test runs</h3>
+      <section aria-labelledby="test-runs-title">
+        <h3 id="test-runs-title">Test runs</h3>
         <div class="grid">
-          <label>
-            Server port
-            <input type="number" min="1" max="65535" bind:this={portField} bind:value={config.test.port} aria-invalid={portMissing} aria-describedby={portMissing ? 'pack-save-status' : undefined} />
-          </label>
-          <label>Client memory <input bind:value={config.test.client_memory} placeholder="8G" aria-describedby="test-memory-hint" /></label>
+          <div class="field">
+            <div class="label-row">
+              <label for="test-port">Server port</label>
+              {@render badge('port')}
+            </div>
+            <input
+              id="test-port"
+              type="number"
+              min="1"
+              max="65535"
+              step="1"
+              bind:value={portDraft}
+              oninput={() => scheduleSave('port', savePort)}
+              onchange={() => flushField('port', savePort)}
+              aria-invalid={portInvalid}
+              aria-describedby={portInvalid ? 'test-port-hint test-memory-hint' : 'test-memory-hint'}
+            />
+            {#if portInvalid}
+              <span class="hint failed" id="test-port-hint">Enter a port between 1 and 65535, such as 25565.</span>
+            {/if}
+          </div>
+          <div class="field">
+            <div class="label-row">
+              <label for="client-memory">Client memory</label>
+              {@render badge('client-memory')}
+            </div>
+            <input
+              id="client-memory"
+              bind:value={clientMemoryDraft}
+              oninput={() => scheduleSave('client-memory', saveClientMemory)}
+              onchange={() => flushField('client-memory', saveClientMemory)}
+              placeholder="8G"
+              spellcheck="false"
+              aria-invalid={clientMemoryInvalid}
+              aria-describedby={clientMemoryInvalid ? 'client-memory-hint test-memory-hint' : 'test-memory-hint'}
+            />
+            {#if clientMemoryInvalid}
+              <span class="hint failed" id="client-memory-hint">Enter a size in gigabytes or megabytes, such as 8G or 8192M.</span>
+            {/if}
+          </div>
         </div>
         <p class="hint" id="test-memory-hint">
           These stay in the test loop. The test client gets the client memory as its Java heap size, such as 8G or 8192M. For the memory, Java and flags
@@ -219,73 +446,150 @@
             defaultPath={javaDefault.path}
             needed
             hint="pack-java-hint"
+            onchange={savePackJava}
             ondownload={loadJavaDefault}
-          />
+          >
+            {#snippet status()}{@render badge('pack-java')}{/snippet}
+          </JavaPicker>
           <p class="hint" id="pack-java-hint">
             packraven uses this Java for the pack's test runs and server builds, and saves your choice only on this machine, never in the pack repo. To choose a Java for every pack, open <button type="button" class="link" onclick={onappsettings}>App settings</button>.
           </p>
         {/if}
-        <ExtraLaunchArgs bind:this={runArgsEditor} bind:draft={runArgs} scope="pack" inherited={appRunArgs} {onappsettings} />
+        <ExtraLaunchArgs
+          bind:draft={runArgs}
+          scope="pack"
+          inherited={appRunArgs}
+          {onappsettings}
+          onedit={() => saveState !== 'failed' && (saveState = 'idle')}
+          onchange={saveRunArgs}
+        >
+          {#snippet status(key)}{@render badge(key)}{/snippet}
+        </ExtraLaunchArgs>
       </section>
 
-      <section>
-        <h3>Discord announcements</h3>
+      <section aria-labelledby="discord-title">
+        <h3 id="discord-title">Discord announcements</h3>
         <div class="field">
-          <label for="webhook">Webhook URL</label>
+          <div class="label-row">
+            <label for="webhook">Webhook URL</label>
+            {@render badge('webhook')}
+          </div>
           <div class="inline">
-            <input id="webhook" type="password" autocomplete="off" bind:value={webhook} placeholder="https://discord.com/api/webhooks/..." aria-describedby="webhook-hint" />
+            <input
+              id="webhook"
+              type="password"
+              autocomplete="off"
+              bind:value={webhook}
+              oninput={() => {
+                discordMessage = null
+                scheduleSave('webhook', saveWebhook)
+              }}
+              onchange={() => flushField('webhook', saveWebhook)}
+              placeholder="https://discord.com/api/webhooks/..."
+              aria-describedby="webhook-hint"
+            />
             <button type="button" class:busy={testing} disabled={testing || !webhook.trim()} onclick={testWebhook}>{testing ? 'Sending' : 'Send test message'}</button>
           </div>
           <p class="hint" id="webhook-hint">
-            Copy it from the channel's Settings, Integrations, Webhooks. packraven saves it only on this machine, never in the pack repo. Sending a test
-            message saves it right away.
+            Copy it from the channel's Settings, Integrations, Webhooks. packraven saves it only on this machine, never in the pack repo.
           </p>
-          <p class:muted={!discordFailed} class:failed={discordFailed} role="status">{discordMessage ?? ''}</p>
+          {#if discordMessage}<p class:muted={!discordFailed} class:failed={discordFailed} role="status">{discordMessage}</p>{/if}
         </div>
         <div class="grid">
-          <label>Role to ping <input bind:value={config.discord.role_id} placeholder="Role ID" aria-describedby="role-hint" /></label>
-          <label>Embed color <input type="color" bind:value={config.discord.color} /></label>
+          <div class="field">
+            <div class="label-row">
+              <label for="discord-role">Role to ping</label>
+              {@render badge('role')}
+            </div>
+            <input
+              id="discord-role"
+              bind:value={config.discord.role_id}
+              oninput={() => scheduleSave('role', () => saveDiscordField('role', 'role_id'))}
+              onchange={() => flushField('role', () => saveDiscordField('role', 'role_id'))}
+              placeholder="Role ID"
+              aria-describedby="role-hint"
+            />
+          </div>
+          <div class="field">
+            <div class="label-row">
+              <label for="discord-color">Embed color</label>
+              {@render badge('color')}
+            </div>
+            <input id="discord-color" type="color" bind:value={config.discord.color} onchange={() => saveDiscordField('color', 'color')} />
+          </div>
         </div>
         <p class="hint" id="role-hint">
           To get a role ID, turn on Developer Mode in Discord's Advanced settings, then right-click the role and choose Copy Role ID. Leave it empty
           for no ping.
         </p>
-        <label class="block">
-          Title
-          <input bind:value={config.discord.title} placeholder={'{project_name} - v{version}'} aria-describedby="discord-placeholders" />
-        </label>
-        <label class="block">
-          Text above the changelog
-          <textarea rows="3" bind:value={config.discord.header} aria-describedby="discord-placeholders"></textarea>
-        </label>
-        <label class="block">
-          Text below the changelog
-          <textarea rows="4" bind:value={config.discord.footer} placeholder={'[Install]({file_url})\n**Back up your world before updating**'} aria-describedby="discord-placeholders"></textarea>
-        </label>
+        <div class="block">
+          <div class="label-row">
+            <label for="discord-title-input">Title</label>
+            {@render badge('title')}
+          </div>
+          <input
+            id="discord-title-input"
+            bind:value={config.discord.title}
+            oninput={() => scheduleSave('title', () => saveDiscordField('title', 'title'))}
+            onchange={() => flushField('title', () => saveDiscordField('title', 'title'))}
+            placeholder={'{project_name} - v{version}'}
+            aria-describedby="discord-placeholders"
+          />
+        </div>
+        <div class="block">
+          <div class="label-row">
+            <label for="discord-header">Text above the changelog</label>
+            {@render badge('header')}
+          </div>
+          <textarea
+            id="discord-header"
+            rows="3"
+            bind:value={config.discord.header}
+            oninput={() => scheduleSave('header', () => saveDiscordField('header', 'header'))}
+            onchange={() => flushField('header', () => saveDiscordField('header', 'header'))}
+            aria-describedby="discord-placeholders"
+          ></textarea>
+        </div>
+        <div class="block">
+          <div class="label-row">
+            <label for="discord-footer">Text below the changelog</label>
+            {@render badge('footer')}
+          </div>
+          <textarea
+            id="discord-footer"
+            rows="4"
+            bind:value={config.discord.footer}
+            oninput={() => scheduleSave('footer', () => saveDiscordField('footer', 'footer'))}
+            onchange={() => flushField('footer', () => saveDiscordField('footer', 'footer'))}
+            placeholder={'[Install]({file_url})\n**Back up your world before updating**'}
+            aria-describedby="discord-placeholders"
+          ></textarea>
+        </div>
         <p class="hint" id="discord-placeholders">
           These use Discord markdown and appear in every announcement. <code>{'{file_url}'}</code> links to the released file, <code>{'{project_url}'}</code> to the project page. <code>{'{project_name}'}</code> is the CurseForge project's name, <code>{'{name}'}</code> the instance name, and <code>{'{version}'}</code> the version. packraven uses the project logo as the thumbnail.
         </p>
-        <label class="check">
-          <input type="checkbox" bind:checked={config.discord.show_author} /> Show the project author, with their CurseForge avatar and a link to their profile
-        </label>
-        <label class="check">
-          <input type="checkbox" bind:checked={config.discord.announce_on_approval} /> Announce each release once every platform it's on has approved it
-        </label>
+        <div class="check-line">
+          <label class="check">
+            <input type="checkbox" bind:checked={config.discord.show_author} onchange={() => saveDiscordField('show-author', 'show_author')} /> Show the project author, with their CurseForge avatar and a link to their profile
+          </label>
+          {@render badge('show-author')}
+        </div>
+        <div class="check-line">
+          <label class="check">
+            <input type="checkbox" bind:checked={config.discord.announce_on_approval} onchange={() => saveDiscordField('announce-on-approval', 'announce_on_approval')} /> Announce each release once every platform it's on has approved it
+          </label>
+          {@render badge('announce-on-approval')}
+        </div>
         <p class="hint">packraven checks every few minutes while it's running in the tray. You can also announce a release by hand from Releases.</p>
       </section>
-
-      <div class="actions">
-        <button type="submit" class="primary" class:busy={saving} disabled={saving}>{saving ? 'Saving' : 'Save pack settings'}</button>
-        <span id="pack-save-status" class:muted={!messageFailed} class:failed={messageFailed} role="status">{message ?? ''}</span>
-      </div>
     </form>
 
-    <OverridePermissions platform="curseforge" targeted={config.curseforge.project_id > 0} reloadKey={config} {onchange} />
-    <OverridePermissions platform="modrinth" targeted={!!config.modrinth.project_id.trim()} reloadKey={config} {onchange} />
+    <OverridePermissions platform="curseforge" targeted={config.curseforge.project_id > 0} reloadKey={config.curseforge.project_id} {onchange} />
+    <OverridePermissions platform="modrinth" targeted={!!config.modrinth.project_id.trim()} reloadKey={config.modrinth.project_id} {onchange} />
   {/if}
 
-  <section class="removal">
-    <h3>Remove pack</h3>
+  <section class="removal" aria-labelledby="remove-pack-title">
+    <h3 id="remove-pack-title">Remove pack</h3>
     <p class="muted">Stop showing <span class="file path">{dir}</span> in packraven, without deleting anything on disk.</p>
     <div><button type="button" class="danger" onclick={removePack}>Remove pack</button></div>
     {#if removeError}<p class="failed" role="alert">{removeError}</p>{/if}
@@ -315,7 +619,7 @@
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     align-items: start;
     gap: 14px 18px;
   }
@@ -325,11 +629,25 @@
     gap: 6px;
   }
 
-  .field > label,
-  .grid > label,
-  .block {
+  .label-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
     color: var(--text);
     font-size: var(--step-0);
+  }
+
+  .label-row > label {
+    color: var(--text);
+    font-size: var(--step-0);
+  }
+
+  .check-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
   }
 
   .inline {
@@ -344,6 +662,10 @@
   .hint {
     color: var(--muted);
     font-size: var(--step--1);
+  }
+
+  .hint.failed {
+    color: var(--fail);
   }
 
   .grid + .hint,
@@ -368,12 +690,6 @@
     font-size: var(--step--1);
   }
 
-  .actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
   .removal {
     padding-top: 28px;
     border-top: 1px solid var(--line);
@@ -383,9 +699,8 @@
     overflow-wrap: anywhere;
   }
 
-  .grid > label .hint {
+  .grid > .field .hint {
     display: block;
-    margin-top: 4px;
+    margin-top: 2px;
   }
-
 </style>
