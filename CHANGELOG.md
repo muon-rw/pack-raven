@@ -2,7 +2,7 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0]
+## [0.3.0] - 2026-10-29
 ### Added
 - You can now build and publish Modrinth packs, alongside CurseForge or on their own. Set the Modrinth project in Pack settings and add a Modrinth token in App settings to get started
 - Added browse page to add mods from Modrinth
@@ -161,7 +161,8 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 - Mod updates skip jars Minecraft is currently holding open instead of stopping partway
 - Failed downloads will retry up to three times
 
-[Unreleased]: https://github.com/muon-rw/packraven/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/muon-rw/packraven/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/muon-rw/packraven/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/muon-rw/packraven/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/muon-rw/packraven/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/muon-rw/packraven/compare/v0.1.8...v0.1.9
