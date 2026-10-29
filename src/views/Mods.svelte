@@ -23,14 +23,14 @@
   let {
     pack,
     game,
-    platforms,
+    publishesTo,
     clientRunning,
     ontest,
   }: {
     pack: string | null
     game: string
-    // The platforms you can add mods from: the ones the pack publishes to.
-    platforms: Platform[]
+    // The platforms with a project in Pack settings. You can add mods from either platform before you set one.
+    publishesTo: Platform[]
     clientRunning: boolean
     ontest: () => void
   } = $props()
@@ -587,6 +587,14 @@
     browseField?.focus()
   }
 
+  // A pack that publishes elsewhere can't download mods only this platform has, so we gray out its
+  // button and say why, without stopping you from browsing it.
+  function elsewhereWarning(platform: Platform): string | null {
+    if (!publishesTo.length || publishesTo.includes(platform)) return null
+    const other = PLATFORM_NAMES[publishesTo[0]]
+    return `This pack publishes to ${other} but not ${PLATFORM_NAMES[platform]}. The ${other} pack can't download mods only ${PLATFORM_NAMES[platform]} has, so you'd have to include them in its overrides.`
+  }
+
   async function stopAdding() {
     const from = browse.platform
     browse.platform = null
@@ -607,11 +615,10 @@
     return () => (current = false)
   })
 
-  // A pack that doesn't publish to the platform you were adding from opens on its installed list.
+  // Another pack opens on its installed list.
   let browsedPack: string | null | undefined
   $effect(() => {
-    const changed = browsedPack !== undefined && pack !== browsedPack
-    if (changed || (browse.platform && !platforms.includes(browse.platform))) browse.platform = null
+    if (browsedPack !== undefined && pack !== browsedPack) browse.platform = null
     browsedPack = pack
   })
 
@@ -662,6 +669,7 @@
       <p class="muted">
         {#if browse.platform}
           Mods, resource packs, shaders and data packs on {PLATFORM_NAMES[browse.platform]} that run on {game}.
+          {#if elsewhereWarning(browse.platform)}<span class="elsewhere">{elsewhereWarning(browse.platform)}</span>{/if}
         {:else if loading && !mods.length}
           Reading the mod list.
         {:else if !mods.length}
@@ -709,11 +717,16 @@
           Back to installed{#if mods.length}<span class="muted tab-count">{mods.length}<span class="visually-hidden"> files</span></span>{/if}
         </button>
       {:else}
-        {#each platforms as platform (platform)}
-          <button id="mods-add-{platform}" onclick={() => startAdding(platform)}>
-            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2v8M2 6h8" /></svg>
-            Add from {PLATFORM_NAMES[platform]}
-          </button>
+        {#each ['curseforge', 'modrinth'] as const as platform (platform)}
+          {@const warning = elsewhereWarning(platform)}
+          <Tip tip={warning}>
+            {#snippet children(why)}
+              <button id="mods-add-{platform}" class:quiet={!!warning} aria-describedby={why} onclick={() => startAdding(platform)}>
+                <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2v8M2 6h8" /></svg>
+                Add from {PLATFORM_NAMES[platform]}
+              </button>
+            {/snippet}
+          </Tip>
         {/each}
       {/if}
     </div>
@@ -811,7 +824,7 @@
         </div>
       </div>
       {#key browse.platform}
-        <ModBrowser platform={browse.platform} {installedKeys} {game} dual={platforms.length > 1} install={update} />
+        <ModBrowser platform={browse.platform} {installedKeys} {game} dual={publishesTo.length > 1} install={update} />
       {/key}
     {:else}
       <div class="tools">
@@ -1092,7 +1105,7 @@
                       <button class="link" onclick={() => (search = '')}>Clear the search</button>
                     {:else}
                       This pack has no {kindLabels[kindFilter].toLowerCase()} yet.
-                      {#each platforms as platform (platform)}
+                      {#each ['curseforge', 'modrinth'] as const as platform (platform)}
                         <button class="link" onclick={() => startAdding(platform)}>Add from {PLATFORM_NAMES[platform]}</button>{' '}
                       {/each}
                     {/if}
@@ -1192,6 +1205,12 @@
   }
 
   /* Category and sort wrap below the type chips together, so they never split across two rows. */
+  .elsewhere {
+    display: block;
+    margin-top: 4px;
+    color: var(--warn);
+  }
+
   .refine {
     flex: 1 1 auto;
     display: flex;

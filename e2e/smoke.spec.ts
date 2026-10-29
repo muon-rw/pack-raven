@@ -149,6 +149,13 @@ test('mods can be added from Modrinth, and Escape goes back to the installed lis
   await expect(page.getByRole('button', { name: 'Add from Modrinth' })).toBeFocused()
 })
 
+test('a pack with no projects yet can add from either platform', async ({ page }) => {
+  await openApp(page, 'mods', 'empty')
+  await page.locator('#mods-add-modrinth').click()
+  await expect(page.getByRole('heading', { name: 'Add from Modrinth' })).toBeVisible()
+  await expect(page.getByRole('searchbox', { name: 'Search Modrinth' })).toBeFocused()
+})
+
 test("an update Modrinth doesn't have yet waits, and says why", async ({ page }) => {
   await openApp(page, 'mods', 'dirty')
   await expect(page.getByText("isn't on Modrinth yet")).toBeVisible()

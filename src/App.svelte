@@ -239,8 +239,7 @@
       : [],
   )
 
-  // You add mods from the platforms the pack publishes to, and from CurseForge before you choose any.
-  let addPlatforms = $derived<Platform[]>(overview?.modrinthProjectId ? (overview.projectId > 0 ? ['curseforge', 'modrinth'] : ['modrinth']) : ['curseforge'])
+  let publishesTo = $derived<Platform[]>([...(overview && overview.projectId > 0 ? ['curseforge' as const] : []), ...(overview?.modrinthProjectId ? ['modrinth' as const] : [])])
 
   let modListStatus = $derived(
     overview?.modListError
@@ -687,7 +686,7 @@
     {:else if pane === 'changes'}
       <Changes {overview} onchange={refresh} />
     {:else if pane === 'mods'}
-      <Mods pack={packs?.active ?? null} platforms={addPlatforms} game={overview ? `${overview.minecraft} ${loaderName(overview.loader).split(' ')[0]}` : 'this pack'} clientRunning={!!overview?.clientRunning} ontest={() => showFrom('test', index)} />
+      <Mods pack={packs?.active ?? null} {publishesTo} game={overview ? `${overview.minecraft} ${loaderName(overview.loader).split(' ')[0]}` : 'this pack'} clientRunning={!!overview?.clientRunning} ontest={() => showFrom('test', index)} />
     {:else if pane === 'server'}
       <Server {overview} />
     {:else if pane === 'test'}
