@@ -13,6 +13,10 @@ We record notable changes to packraven here. The format follows [Keep a Changelo
 ### Changed
 - Updated the pack list format version. Everyone working on the pack needs this version or newer, and on older versions you'll be asked to update before opening a pack built with a newer packraven version.
 
+### Fixed
+- Failing to find Fabric install even after you'd launched the instance from CurseForge
+- BCC detection on older and newer versions
+
 ## [0.2.1] - 2026-10-28
 
 ### Changed

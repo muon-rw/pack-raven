@@ -14,7 +14,6 @@ const NEWER_LOCK_FORMAT: &str = "A newer version of packraven wrote this pack's 
 pub const CHANGELOG: &str = "changelog.md";
 pub const CHANGELOG_ARCHIVE: &str = "changelogs";
 pub const SERVER_ICON: &str = "server-icon.png";
-const BCC_CONFIG: &str = "config/bcc-common.toml";
 pub const BCC_PROJECT_ID: u64 = 551894;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -522,11 +521,12 @@ impl Pack {
         if let Some(problem) = version_problem(version) {
             bail!("{problem}");
         }
-        let path = self.dir.join(BCC_CONFIG);
+        let format = self.bcc_format();
+        let path = self.dir.join(format.path());
         let text = std::fs::read_to_string(&path).context("reading the Better Compatibility Checker config")?;
-        let pattern = bcc_pattern("modpackVersion");
+        let pattern = format.pattern("modpackVersion");
         if !pattern.is_match(&text) {
-            bail!("{BCC_CONFIG} has no modpackVersion entry");
+            bail!("{} has no modpackVersion entry", format.path());
         }
         let updated = pattern.replace(&text, |caps: &regex::Captures| format!("{}\"{}\"", &caps[1], version));
         std::fs::write(&path, updated.as_ref())?;
@@ -540,25 +540,46 @@ impl Pack {
     // BCC only writes its config the first time the game loads it, so we write one up front to
     // give the version somewhere to live before then. BCC fills in any keys we leave out.
     pub fn write_bcc_config_if_missing(&self, version: &str) -> Result<()> {
-        let path = self.dir.join(BCC_CONFIG);
+        let format = self.bcc_format();
+        let path = self.dir.join(format.path());
         if path.exists() {
             return Ok(());
         }
-        let name = toml::Value::String(self.name()).to_string();
-        let version = toml::Value::String(version.into()).to_string();
         std::fs::create_dir_all(path.parent().context("the BCC config path has no parent")?)?;
-        std::fs::write(
-            &path,
-            format!(
-                "#General settings\n[general]\n\t#The name of the modpack\n\tmodpackName = {name}\n\t#The version of the modpack\n\tmodpackVersion = {version}\n\t#Use the metadata.json to determine the modpack version\n\t#ONLY ENABLE THIS IF YOU KNOW WHAT YOU ARE DOING\n\tuseMetadata = false\n"
-            ),
-        )
-        .with_context(|| format!("writing {BCC_CONFIG}"))
+        std::fs::write(&path, format.initial_config(&self.name(), version)).with_context(|| format!("writing {}", format.path()))
     }
 
     fn bcc_value(&self, key: &str) -> Option<String> {
-        let text = std::fs::read_to_string(self.dir.join(BCC_CONFIG)).ok()?;
-        bcc_pattern(key).captures(&text).map(|caps| caps[2].to_string())
+        let format = self.bcc_format();
+        let text = std::fs::read_to_string(self.dir.join(format.path())).ok()?;
+        let raw = format.pattern(key).captures(&text)?[2].to_string();
+        Some(serde_json::from_str(&format!("\"{raw}\"")).unwrap_or(raw))
+    }
+
+    fn bcc_format(&self) -> BccFormat {
+        BccFormat::ALL.into_iter().find(|format| self.dir.join(format.path()).exists()).unwrap_or_else(|| self.bcc_format_from_jar())
+    }
+
+    // Before the game first loads BCC there's no config to go by, so we look for the file name in BCC's
+    // classes. (Neo)Forge derives the TOML name from the mod ID, so only the JSON names show up there.
+    fn bcc_format_from_jar(&self) -> BccFormat {
+        let jar = self.lock.files.iter().find(|e| e.curseforge_project() == Some(BCC_PROJECT_ID) && !e.path.ends_with(".disabled"));
+        let classes = jar.and_then(|e| std::fs::File::open(self.dir.join(&e.path)).ok()).and_then(|file| zip::ZipArchive::new(file).ok());
+        let Some(mut classes) = classes else { return BccFormat::Toml };
+        for index in 0..classes.len() {
+            let mut bytes = Vec::new();
+            let Ok(mut entry) = classes.by_index(index) else { continue };
+            if !entry.name().is_ok_and(|name| name.ends_with(".class")) || std::io::Read::read_to_end(&mut entry, &mut bytes).is_err() {
+                continue;
+            }
+            for format in [BccFormat::NestedJson, BccFormat::FlatJson] {
+                let name = format.path().trim_start_matches("config/").as_bytes();
+                if bytes.windows(name.len()).any(|window| window == name) {
+                    return format;
+                }
+            }
+        }
+        BccFormat::Toml
     }
 
     fn file_stem(&self, version: &str) -> String {
@@ -608,8 +629,63 @@ pub fn version_problem(version: &str) -> Option<String> {
     }
 }
 
-fn bcc_pattern(key: &str) -> Regex {
-    Regex::new(&format!(r#"(?m)^(\s*{key}\s*=\s*)"([^"]*)""#)).expect("valid regex")
+// BCC has used three config files over the years: TOML on (Neo)Forge, a flat JSON file on Fabric up to
+// 1.21.1, and JSON with a comment beside each value on Fabric after that.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum BccFormat {
+    Toml,
+    FlatJson,
+    NestedJson,
+}
+
+impl BccFormat {
+    const ALL: [BccFormat; 3] = [BccFormat::Toml, BccFormat::FlatJson, BccFormat::NestedJson];
+
+    fn path(self) -> &'static str {
+        match self {
+            BccFormat::Toml => "config/bcc-common.toml",
+            BccFormat::FlatJson => "config/bcc.json",
+            BccFormat::NestedJson => "config/bcc-common.json",
+        }
+    }
+
+    fn pattern(self, key: &str) -> Regex {
+        let value = r#""((?:[^"\\]|\\.)*)""#;
+        let pattern = match self {
+            BccFormat::Toml => format!(r#"(?m)^(\s*{key}\s*=\s*){value}"#),
+            BccFormat::FlatJson => format!(r#"("{key}"\s*:\s*){value}"#),
+            BccFormat::NestedJson => format!(r#"("{key}"\s*:\s*\{{\s*"value"\s*:\s*){value}"#),
+        };
+        Regex::new(&pattern).expect("valid regex")
+    }
+
+    fn initial_config(self, name: &str, version: &str) -> String {
+        match self {
+            BccFormat::Toml => {
+                let (name, version) = (toml::Value::String(name.into()), toml::Value::String(version.into()));
+                format!(
+                    "#General settings\n[general]\n\t#The name of the modpack\n\tmodpackName = {name}\n\t#The version of the modpack\n\tmodpackVersion = {version}\n\t#Use the metadata.json to determine the modpack version\n\t#ONLY ENABLE THIS IF YOU KNOW WHAT YOU ARE DOING\n\tuseMetadata = false\n"
+                )
+            }
+            BccFormat::FlatJson => {
+                let (name, version) = (serde_json::Value::from(name), serde_json::Value::from(version));
+                format!("{{\n    \"modpackName\": {name},\n    \"modpackVersion\": {version},\n    \"useMetadata\": false\n}}\n")
+            }
+            BccFormat::NestedJson => {
+                // We write these by hand because serde_json would sort "comments" ahead of "value", where our pattern doesn't look.
+                let entry = |key: &str, value: serde_json::Value, comments: &[&str]| {
+                    let comments = comments.iter().map(|c| format!("      {}", serde_json::Value::from(*c))).collect::<Vec<_>>().join(",\n");
+                    format!("  \"{key}\": {{\n    \"value\": {value},\n    \"comments\": [\n{comments}\n    ]\n  }}")
+                };
+                let entries = [
+                    entry("modpackName", name.into(), &["The name of the modpack"]),
+                    entry("modpackVersion", version.into(), &["The version of the modpack"]),
+                    entry("useMetadata", false.into(), &["Use the metadata.json to determine the modpack version", "ONLY ENABLE THIS IF YOU KNOW WHAT YOU ARE DOING"]),
+                ];
+                format!("{{\n{}\n}}\n", entries.join(",\n"))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -703,17 +779,56 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let pack = Pack { dir: dir.clone(), config: PackConfig::default(), lock: Lockfile::default() };
         std::fs::create_dir_all(dir.join("config")).unwrap();
-        std::fs::write(dir.join(BCC_CONFIG), "").unwrap();
+        std::fs::write(dir.join(BccFormat::Toml.path()), "").unwrap();
         pack.write_bcc_config_if_missing("1.0.0").unwrap();
         assert_eq!(pack.version(), None, "we leave an existing config alone");
+        let _ = std::fs::remove_dir_all(&dir);
 
-        std::fs::remove_file(dir.join(BCC_CONFIG)).unwrap();
-        let pack = Pack { dir: dir.join("Raven's Fantasy"), ..pack };
-        pack.write_bcc_config_if_missing("1.0.0").unwrap();
-        assert_eq!(pack.name(), "Raven's Fantasy");
-        assert_eq!(pack.version().as_deref(), Some("1.0.0"));
-        pack.set_version("1.1.0").unwrap();
-        assert_eq!(pack.version().as_deref(), Some("1.1.0"));
+        for (format, mentioned) in [(BccFormat::Toml, None), (BccFormat::FlatJson, Some("bcc.json")), (BccFormat::NestedJson, Some("bcc-common.json"))] {
+            let dir = std::env::temp_dir().join(format!("packraven-bcc-test-{}-{format:?}", std::process::id())).join("Raven's Fantasy");
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(dir.join("mods")).unwrap();
+            let mut lock = Lockfile::default();
+            if let Some(name) = mentioned {
+                let mut jar = zip::ZipWriter::new(std::fs::File::create(dir.join("mods/bcc.jar")).unwrap());
+                jar.start_file("dev/bcc/Config.class", zip::write::SimpleFileOptions::default()).unwrap();
+                std::io::Write::write_all(&mut jar, format!("\u{1}\u{0}\u{f}{name}").as_bytes()).unwrap();
+                jar.finish().unwrap();
+                let file = CurseforgeFile { project_id: BCC_PROJECT_ID, file_id: 1, url: String::new() };
+                lock.files.push(LockEntry::curseforge("mods/bcc.jar".into(), "x".into(), 1, file));
+            }
+            let pack = Pack { dir: dir.clone(), config: PackConfig::default(), lock };
+            assert_eq!(pack.bcc_format(), format);
+            pack.write_bcc_config_if_missing("1.0.0").unwrap();
+            let written = std::fs::read_to_string(dir.join(format.path())).unwrap();
+            match format {
+                BccFormat::Toml => assert!(written.parse::<toml::Table>().is_ok(), "{written}"),
+                _ => assert!(serde_json::from_str::<serde_json::Value>(&written).is_ok(), "{written}"),
+            }
+            assert_eq!(pack.name(), "Raven's Fantasy");
+            assert_eq!(pack.version().as_deref(), Some("1.0.0"));
+            pack.set_version("1.1.0").unwrap();
+            assert_eq!(pack.version().as_deref(), Some("1.1.0"));
+            let _ = std::fs::remove_dir_all(dir.parent().unwrap());
+        }
+    }
+
+    #[test]
+    fn reads_the_configs_bcc_writes_on_fabric() {
+        let dir = std::env::temp_dir().join(format!("packraven-bcc-fabric-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("config")).unwrap();
+        let pack = Pack { dir: dir.clone(), config: PackConfig::default(), lock: Lockfile::default() };
+        std::fs::write(dir.join(BccFormat::FlatJson.path()), r#"{"projectID":466901,"modpackName":"Prominence II: \"Hasturian\" Era","modpackVersion":"v4.1.5hf","useMetadata":false}"#).unwrap();
+        assert_eq!(pack.name(), r#"Prominence II: "Hasturian" Era"#);
+        assert_eq!(pack.version().as_deref(), Some("v4.1.5hf"));
+
+        std::fs::remove_file(dir.join(BccFormat::FlatJson.path())).unwrap();
+        let nested = "{\n  \"modpackName\": {\n    \"value\": \"Chronicles\",\n    \"comments\": [\n      \"The name of the modpack\"\n    ]\n  },\n  \"modpackVersion\": {\n    \"value\": \"CHANGE_ME\",\n    \"comments\": []\n  }\n}";
+        std::fs::write(dir.join(BccFormat::NestedJson.path()), nested).unwrap();
+        assert_eq!(pack.name(), "Chronicles");
+        pack.set_version("2.0").unwrap();
+        assert_eq!(pack.version().as_deref(), Some("2.0"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

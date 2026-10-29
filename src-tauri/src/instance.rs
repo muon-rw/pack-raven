@@ -49,12 +49,19 @@ impl Instance {
             };
             sources_by_sha1.insert(sha1.to_string(), CurseforgeFile { project_id, file_id, url });
         }
-        let version_id = instance.pointer("/baseModLoader/name").and_then(Value::as_str).map(String::from);
+        let loader_name = instance.pointer("/baseModLoader/name").and_then(Value::as_str);
+        // CurseForge names Fabric loaders fabric-<version>-<minecraft> but installs their profile as
+        // fabric-loader-<version>-<minecraft>, so we take the id from the profile CurseForge installed.
+        let profile_id = instance
+            .pointer("/baseModLoader/versionJson")
+            .and_then(Value::as_str)
+            .and_then(|json| serde_json::from_str::<Value>(json).ok())
+            .and_then(|profile| profile.get("id").and_then(Value::as_str).map(String::from));
         Ok(Self {
             name: instance.get("name").and_then(Value::as_str).map(String::from),
             minecraft: instance.get("gameVersion").and_then(Value::as_str).map(String::from),
-            loader: version_id.as_deref().and_then(Loader::from_curseforge),
-            version_id,
+            loader: loader_name.and_then(Loader::from_curseforge),
+            version_id: profile_id.or(loader_name.map(String::from)),
             addon_count: addons.len(),
             installed_names,
             sources_by_sha1,
