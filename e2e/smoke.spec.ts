@@ -743,6 +743,19 @@ for (const [left, right] of [['git', 'files'], ['mods', 'test'], ['changes', 'te
   })
 }
 
+test("a pack we can't load still opens in Files and Git, so you can roll it back", async ({ page }) => {
+  await openApp(page, 'git', 'newerlock', 'files')
+  const newer = /A newer version of packraven wrote/
+  for (const name of ['Git, left pane', 'Files, right pane']) {
+    await expect(page.getByRole('region', { name }).getByRole('alert').filter({ hasText: newer })).toBeVisible()
+  }
+
+  await page.getByRole('navigation', { name: 'Pack' }).getByRole('button', { name: /^Mods/ }).click()
+  const mods = page.getByRole('region', { name: 'Mods, right pane' })
+  await expect(mods.getByRole('alert').filter({ hasText: newer })).toBeVisible()
+  await expect(mods.getByRole('heading', { level: 2, name: 'Mods', exact: true })).toHaveCount(0)
+})
+
 test('views open side by side and keep their shortcuts to the focused pane', async ({ page }) => {
   await openApp(page, 'mods', 'dirty')
   const rail = page.getByRole('navigation', { name: 'Pack' })

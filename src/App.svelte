@@ -56,6 +56,9 @@
   let split = $derived(isSplit())
   let overview = $state<Overview | null>(null)
   let loadError: string | null = $state(null)
+  // Files and Git only need the pack folder, and they're how you fix a pack we can't load, like
+  // rolling back a mods.lock.json from a newer packraven or fixing packraven.toml.
+  const OPEN_WITHOUT_PACK: View[] = ['settings', 'files', 'git']
   let packs = $state<PackList | null>(null)
   let hookMessage: string | null = $state(null)
   let hookFailed = $state(false)
@@ -671,6 +674,13 @@
   {/if}
 {/snippet}
 
+{#snippet loadNotice(index: number)}
+  <Notice tone="error">
+    <p>{loadError}</p>
+    <p><button onclick={() => showFrom('settings', index)}>Open App settings</button></p>
+  </Notice>
+{/snippet}
+
 {#snippet content(pane: View, index: number)}
   <!-- Setup activates the new pack before it reports done, so we keep Add pack outside the key
        block. Otherwise the switch would remount it and drop the setup result. -->
@@ -678,11 +688,8 @@
     <AddPack first={!packs?.packs.length} onadded={() => { only('mods'); refresh() }} />
   {:else}
   {#key packs?.active}
-    {#if loadError && pane !== 'settings'}
-      <Notice tone="error">
-        <p>{loadError}</p>
-        <p><button onclick={() => showFrom('settings', index)}>Open App settings</button></p>
-      </Notice>
+    {#if loadError && !OPEN_WITHOUT_PACK.includes(pane)}
+      {@render loadNotice(index)}
     {:else if pane === 'changes'}
       <Changes {overview} onchange={refresh} />
     {:else if pane === 'mods'}
@@ -692,10 +699,12 @@
     {:else if pane === 'test'}
       <TestRun {overview} onserver={() => showFrom('server', index)} onappsettings={() => showFrom('settings', index)} />
     {:else if pane === 'files'}
+      {#if loadError}<div class="banner">{@render loadNotice(index)}</div>{/if}
       {#await loadFiles() then { default: Files }}
         <Files pack={packs?.active ?? null} />
       {/await}
     {:else if pane === 'git'}
+      {#if loadError}<div class="banner">{@render loadNotice(index)}</div>{/if}
       <Git onchange={refresh} />
     {:else if pane === 'publish'}
       <Publish {overview} onchange={refresh} onchanges={() => showFrom('changes', index)} onsettings={() => showFrom('pack', index)} onreleases={() => showFrom('releases', index)} />

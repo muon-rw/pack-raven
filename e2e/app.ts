@@ -19,7 +19,8 @@ export const views = Object.keys(headings) as View[]
 export const packViews = views.filter((view) => view !== 'add')
 
 export const scenarios = ['dirty', 'ready', 'empty', 'nopack'] as const
-export type Scenario = (typeof scenarios)[number]
+// Most views show only an error in newerlock, so it stays out of the every-view runs.
+export type Scenario = (typeof scenarios)[number] | 'newerlock'
 
 // Pass `beside` to open a second view in a split.
 export async function openApp(page: Page, view: View, scenario: Scenario, beside?: View) {

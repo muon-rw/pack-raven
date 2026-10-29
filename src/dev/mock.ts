@@ -10,6 +10,7 @@ const scenarios = {
   ready: 'A clean tree with mod changes since the last release and nothing blocking a publish',
   empty: 'A pack you just added, with no commits, releases or release notes',
   nopack: 'No packs added yet, so the app opens on Add pack',
+  newerlock: "The dirty tree, but a newer packraven wrote mods.lock.json, so the pack won't load",
 }
 type Scenario = keyof typeof scenarios
 const requested = new URLSearchParams(location.search).get('scenario')
@@ -31,7 +32,7 @@ type Fixtures = {
 
 const found = import.meta.glob('./fixtures.json', { eager: true, import: 'default' }) as Record<string, Fixtures>
 const fx: Fixtures = found['./fixtures.json'] ?? (demoFixtures as Fixtures)
-if (scenario !== 'dirty') {
+if (scenario !== 'dirty' && scenario !== 'newerlock') {
   fx.status.staged = []
   fx.status.unstaged = []
   fx.changed = []
@@ -415,6 +416,7 @@ const preflight = {
   ready: [],
   empty: ['Set a CurseForge or Modrinth project ID in Pack settings.'],
   nopack: [],
+  newerlock: [],
 }[scenario]
 
 type MockEntry = { name: string; path: string; isDir: boolean; size: number; ignored: boolean }
@@ -847,36 +849,39 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   },
   list_packs: () => (scenario === 'nopack' ? { active: null, packs: [], instancesRoot: 'C:/Instances' } : { active: pack.dir, packs: [pack], instancesRoot: 'C:/Instances' }),
   resync_mod_list: () => null,
-  overview: () => ({
-    name: pack.name,
-    version: bcc.version,
-    bccInstalled: bcc.installed,
-    minecraft: fx.minecraft,
-    loader: fx.loader,
-    lockCount: fx.lockCount,
-    addons: scenario === 'empty' ? { mods: 0, resourcePacks: 0, shaderPacks: 0, dataPacks: 0, other: 0 } : { mods: fx.lockCount - 14, resourcePacks: 9, shaderPacks: 2, dataPacks: 3, other: 0 },
-    unhosted: scenario === 'dirty' ? ['mods/raven_tweaks-1.2.jar'] : [],
-    notOnCurseforge: notOn('curseforge').map((path) => ({ path, ...candidates.curseforge[path] })),
-    notOnModrinth: notOn('modrinth').map((path) => ({ path, ...candidates.modrinth[path] })),
-    modrinthError: null,
-    releasesMissingModrinth: releases.filter((r) => r.modrinthMissing).length,
-    modListError: null,
-    watchError: null,
-    branch: 'master',
-    ahead: scenario === 'dirty' ? 1 : 0,
-    behind: 0,
-    incoming: null,
-    changed: fx.changed,
-    lastVersion: scenario === 'empty' ? null : '0.1.0',
-    lastTag: scenario === 'empty' ? null : 'v0.1.0',
-    devJars: scenario === 'dirty' ? ['raven_core-dev.jar'] : [],
-    projectId: config.curseforge.project_id,
-    modrinthProjectId: config.modrinth.project_id,
-    runningJobs: [],
-    serverRunning,
-    clientRunning,
-    hooks: 'current',
-  }),
+  overview: () => {
+    if (scenario === 'newerlock') throw "A newer version of packraven wrote this pack's mods.lock.json. Update packraven in App settings, then try again."
+    return {
+      name: pack.name,
+      version: bcc.version,
+      bccInstalled: bcc.installed,
+      minecraft: fx.minecraft,
+      loader: fx.loader,
+      lockCount: fx.lockCount,
+      addons: scenario === 'empty' ? { mods: 0, resourcePacks: 0, shaderPacks: 0, dataPacks: 0, other: 0 } : { mods: fx.lockCount - 14, resourcePacks: 9, shaderPacks: 2, dataPacks: 3, other: 0 },
+      unhosted: scenario === 'dirty' ? ['mods/raven_tweaks-1.2.jar'] : [],
+      notOnCurseforge: notOn('curseforge').map((path) => ({ path, ...candidates.curseforge[path] })),
+      notOnModrinth: notOn('modrinth').map((path) => ({ path, ...candidates.modrinth[path] })),
+      modrinthError: null,
+      releasesMissingModrinth: releases.filter((r) => r.modrinthMissing).length,
+      modListError: null,
+      watchError: null,
+      branch: 'master',
+      ahead: scenario === 'dirty' ? 1 : 0,
+      behind: 0,
+      incoming: null,
+      changed: fx.changed,
+      lastVersion: scenario === 'empty' ? null : '0.1.0',
+      lastTag: scenario === 'empty' ? null : 'v0.1.0',
+      devJars: scenario === 'dirty' ? ['raven_core-dev.jar'] : [],
+      projectId: config.curseforge.project_id,
+      modrinthProjectId: config.modrinth.project_id,
+      runningJobs: [],
+      serverRunning,
+      clientRunning,
+      hooks: 'current',
+    }
+  },
   start_test: ({ connect }) => {
     if (connect && !minecraftAccount) throw SIGN_IN_FIRST
     if (connect) emit('test-event', { kind: 'player-resolved', detail: minecraftAccount!.name })
