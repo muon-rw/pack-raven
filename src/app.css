@@ -275,6 +275,10 @@ button.quiet {
   border-color: transparent;
 }
 
+button.quiet:hover:not(:disabled, [aria-disabled='true']) {
+  color: var(--text);
+}
+
 button.ghost {
   padding: 2px 8px;
   font-size: var(--step--1);

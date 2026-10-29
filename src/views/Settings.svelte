@@ -9,7 +9,7 @@
   import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { api, errorText, type CredentialsView, type DefenderView, type RunArgs, type Settings, type UpdateView } from '../lib/api'
-  import { installNow, selfUpdate, updateWaiting } from '../lib/selfUpdate.svelte'
+  import { installNow, openUpdateChangelog, selfUpdate, updateWaiting } from '../lib/selfUpdate.svelte'
   import { javas, scanJava } from '../lib/java.svelte'
   import { trackSave } from '../lib/launch.svelte'
   import { cancelSignIn, minecraft, signIn, signOut } from '../lib/minecraft.svelte'
@@ -362,8 +362,6 @@
     }
   }
 
-  const RELEASES_PAGE = 'https://github.com/muon-rw/packraven/releases'
-
   let autoUpdateError: string | null = $state(null)
   let checkingUpdate = $state(false)
 
@@ -564,10 +562,11 @@
               <button type="button" class="primary" disabled={!!view.blocked} aria-describedby={view.blocked ? 'update-blocked' : undefined} onclick={installNow}>
                 {view.status.phase === 'available' ? 'Update and restart' : view.auto ? 'Restart now' : 'Restart to update'}
               </button>
-              <a href="{RELEASES_PAGE}/tag/v{view.status.version}" onclick={(e) => { e.preventDefault(); openUrl(e.currentTarget.href) }}>What's new</a>
+              <button type="button" class="link" onclick={() => openUpdateChangelog(view.current, view.status.version, 'available')}>What's new</button>
             {:else}
               {@const busy = checkingUpdate || view.status.phase === 'checking'}
               <button type="button" class:busy disabled={busy} onclick={checkForUpdate}>Check for updates</button>
+              <button type="button" class="link" onclick={() => openUpdateChangelog(selfUpdate.lastUpdatedFrom ?? view.current, view.current, 'current')}>What's new</button>
             {/if}
           </div>
           {#if updateWaiting(view) && view.blocked}<p class="muted hint" id="update-blocked">{view.blocked}</p>{/if}

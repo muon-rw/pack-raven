@@ -24,6 +24,7 @@
   import DefenderNotice from './components/DefenderNotice.svelte'
   import GitNotice from './components/GitNotice.svelte'
   import IgnoreDialog from './components/IgnoreDialog.svelte'
+  import UpdateChangelogDialog from './components/UpdateChangelogDialog.svelte'
   import { ask, message } from '@tauri-apps/plugin-dialog'
   import PackSwitcher from './components/PackSwitcher.svelte'
   import RavenMark from './components/RavenMark.svelte'
@@ -821,6 +822,7 @@
 {/if}
 
 <IgnoreDialog />
+<UpdateChangelogDialog />
 
 <style>
   .shell {

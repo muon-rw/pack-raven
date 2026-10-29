@@ -906,3 +906,31 @@ test('tracked files your .gitignore covers can be untracked, or kept with an exc
   await expect(done.getByRole('button', { name: 'Undo' })).toBeVisible()
   await expect(page.getByText('your .gitignore leaves out.')).toBeHidden()
 })
+
+test("packraven's changelog opens in a modal and concatenates skipped versions", async ({ page }) => {
+  await openApp(page, 'settings', 'dirty')
+  const updates = page.locator('#updates')
+  await updates.getByRole('button', { name: "What's new" }).click()
+
+  const availableDialog = page.getByRole('dialog', { name: "What's new in packraven 0.2.0" })
+  await expect(availableDialog).toBeVisible()
+  await expect(availableDialog).toContainText('You have 0.1.0 (2 releases behind).')
+  await expect(availableDialog.getByRole('heading', { level: 3, name: '0.2.0' })).toBeVisible()
+  await expect(availableDialog.getByRole('heading', { level: 3, name: '0.1.9' })).toBeVisible()
+  await expect(availableDialog).toContainText('Sign in to Minecraft right from the Run view')
+  await expect(availableDialog).toContainText('Reduced number of permission prompt popups on macOS')
+
+  // Restarting to update finishes into 0.2.0 and pops up the post-update changelog window.
+  await availableDialog.getByRole('button', { name: 'Restart now' }).click()
+  const updatedDialog = page.getByRole('dialog', { name: 'Updated to packraven 0.2.0' })
+  await expect(updatedDialog).toBeVisible()
+  await expect(updatedDialog).toContainText('Updated from 0.1.0 across 2 releases.')
+  await expect(updatedDialog.getByRole('heading', { level: 3, name: '0.2.0' })).toBeVisible()
+  await expect(updatedDialog.getByRole('heading', { level: 3, name: '0.1.9' })).toBeVisible()
+  await updatedDialog.getByRole('button', { name: 'Close' }).click()
+  await expect(updatedDialog).toBeHidden()
+
+  // While up to date, What's new still reopens the release notes.
+  await updates.getByRole('button', { name: "What's new" }).click()
+  await expect(page.getByRole('dialog', { name: "What's new in packraven 0.2.0" })).toBeVisible()
+})

@@ -668,8 +668,27 @@ let minecraftAccount: { name: string; uuid: string } | null = scenario === 'empt
 const SIGN_IN_FIRST = 'Sign in to Minecraft to launch the client.'
 let autoUpdate = true
 // The dirty scenario has an update waiting, so screenshots cover the rail's restart button.
-let updatePhase: Record<string, unknown> = scenario === 'dirty' ? { phase: 'ready', version: '0.2.0' } : { phase: 'upToDate' }
-const updateView = () => ({ current: '0.1.0', auto: autoUpdate, supported: true, blocked: null, status: updatePhase })
+const mockPackravenReleases = [
+  {
+    version: '0.2.0',
+    publishedAt: '2026-10-28',
+    body: "### Added\n- Sign in to Minecraft right from the Run view\n\n### Changed\n- Test servers now use the `online-mode` from your pack's server.properties",
+  },
+  {
+    version: '0.1.9',
+    publishedAt: '2026-10-27',
+    body: '### Fixed\n- Reduced number of permission prompt popups on macOS',
+  },
+  {
+    version: '0.1.0',
+    publishedAt: '2026-10-19',
+    body: '### Added\n- First public build of packraven',
+  },
+]
+let updatedFrom: string | null = new URLSearchParams(location.search).get('updated')
+let currentVersion = updatedFrom ? '0.2.0' : '0.1.0'
+let updatePhase: Record<string, unknown> = scenario === 'dirty' && !updatedFrom ? { phase: 'ready', version: '0.2.0' } : { phase: 'upToDate' }
+const updateView = () => ({ current: currentVersion, auto: autoUpdate, supported: true, blocked: null, updatedFrom, status: updatePhase })
 let cancelSignIn = () => {}
 
 function mockImage(path: string, older = false) {
@@ -958,7 +977,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     // We play a short download so you can see the progress bar, then act as if the restart finished.
     for (let percent = 0; percent <= 100; percent += 10) {
       setTimeout(() => {
-        updatePhase = percent < 100 ? { phase: 'downloading', version: '0.2.0', percent } : { phase: 'upToDate' }
+        if (percent < 100) {
+          updatePhase = { phase: 'downloading', version: '0.2.0', percent }
+        } else {
+          updatedFrom = currentVersion
+          currentVersion = '0.2.0'
+          updatePhase = { phase: 'upToDate' }
+        }
         emit('self-update-changed', updateView())
       }, percent * 30)
     }
@@ -966,6 +991,14 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   set_auto_update: ({ enabled }) => {
     autoUpdate = enabled as boolean
     emit('self-update-changed', updateView())
+  },
+  update_changelog: ({ since, through }) => {
+    const s = String(since)
+    const t = String(through)
+    return mockPackravenReleases.filter((r) => (s && s < t ? r.version > s && r.version <= t : r.version === t))
+  },
+  dismiss_update_changelog: () => {
+    updatedFrom = null
   },
   github_identity: () => ({ name: 'Muon', email: '1234567+muon-rw@users.noreply.github.com' }),
   git_pull_preview: () => ({

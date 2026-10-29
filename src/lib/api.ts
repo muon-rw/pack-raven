@@ -61,7 +61,14 @@ export interface UpdateView {
   auto: boolean
   supported: boolean
   blocked: string | null
+  updatedFrom: string | null
   status: UpdatePhase
+}
+
+export interface ReleaseNotes {
+  version: string
+  publishedAt: string | null
+  body: string
 }
 
 export interface MinecraftAccount {
@@ -656,6 +663,8 @@ export const api = {
   checkForUpdate: () => invoke<UpdateView>('check_for_update'),
   installUpdate: () => invoke<void>('install_update'),
   setAutoUpdate: (enabled: boolean) => invoke<void>('set_auto_update', { enabled }),
+  updateChangelog: (since: string | null = null, through: string | null = null) => invoke<ReleaseNotes[]>('update_changelog', { since, through }),
+  dismissUpdateChangelog: () => invoke<void>('dismiss_update_changelog'),
   overview: () => invoke<Overview>('overview'),
   getPackConfig: () => invoke<PackConfig>('get_pack_config'),
   savePackConfig: (config: PackConfig) => invoke<void>('save_pack_config', { config }),

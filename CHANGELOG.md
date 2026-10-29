@@ -2,9 +2,12 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.2]
+### Added
+- After updating packraven, you'll now see a changelog popup with what's new. (hi)
+
 ### Fixed
-- Switching modpacks while your selected modpack was checking for updates could result in a stale update list, until you manually clicked Check for Updates
+- Switching modpacks while the previous modpack was checking for updates resulting in a stale update list until you manually clicked Check for Updates
 - Improved performance of mod update checks for packs that publish to both CurseForge and Modrinth
 - Returning to packraven with the Mods view already open now rechecks for updates when the last check is stale
 - You can now click and drag rail tabs directly into a side-by-side window view

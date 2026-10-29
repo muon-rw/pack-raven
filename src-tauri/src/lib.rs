@@ -323,6 +323,8 @@ pub fn run() {
             system_commands::check_for_update,
             system_commands::install_update,
             system_commands::set_auto_update,
+            system_commands::update_changelog,
+            system_commands::dismiss_update_changelog,
             discord_commands::get_webhook,
             discord_commands::set_webhook,
             discord_commands::discord_test,

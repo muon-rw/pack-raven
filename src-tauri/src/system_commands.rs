@@ -240,6 +240,16 @@ pub async fn install_update(app: AppHandle) -> CmdResult<()> {
 }
 
 #[tauri::command]
+pub async fn update_changelog(app: AppHandle, since: Option<String>, through: Option<String>) -> CmdResult<Vec<crate::self_update::ReleaseNotes>> {
+    crate::self_update::changelog(&app, since.as_deref(), through.as_deref()).await.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn dismiss_update_changelog(app: AppHandle) -> CmdResult<()> {
+    crate::self_update::dismiss_updated_from(&app).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
 pub fn set_auto_update(app: AppHandle, state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
     state.update_settings(|s| s.auto_update = enabled).map_err(|e| format!("{e:#}"))?;
     crate::self_update::auto_update_changed(&app, enabled);
