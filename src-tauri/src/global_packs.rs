@@ -259,8 +259,8 @@ pub fn pack_meta(install: &Path, minecraft: &str, kind: PackKind, description: &
 #[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Copied {
-    /// The pack-relative path of the copy of what you picked.
-    pub path: String,
+    /// The pack-relative paths of the copies of what you picked.
+    pub paths: Vec<String>,
     pub created: Vec<String>,
     pub existing: usize,
 }
@@ -273,16 +273,40 @@ pub fn inside_path(relative: &str) -> Option<&str> {
     relative.get(offset..)
 }
 
-/// Copies a file or folder from inside a mod's jar into a pack, never replacing a file that's
+/// Copies files or folders from inside mod jars into a pack, never replacing a file that's
 /// already there. With `meta`, writes it as the pack's pack.mcmeta when the pack has none.
-pub fn copy_into_pack(root: &Path, source: &str, pack: &str, meta: Option<&str>) -> Result<Copied> {
-    let (file, inner) = crate::archive::split(root, source).filter(|(_, inner)| !inner.is_empty()).context("Only files inside a mod's jar can be copied into a pack")?;
-    let inside = inside_path(source).context("Only files inside a mod's jar can be copied into a pack")?;
-    let kind = PackKind::of(inside).context("Only files under data/ or assets/ belong in a pack")?;
+pub fn copy_into_pack(root: &Path, sources: &[impl AsRef<str>], pack: &str, meta: Option<&str>) -> Result<Copied> {
+    let first = sources.first().context("Pick something in a mod's jar to copy into a pack")?.as_ref();
+    let first_inside = inside_path(first).context("Only files inside a mod's jar can be copied into a pack")?;
+    let kind = PackKind::of(first_inside).context("Only files under data/ or assets/ belong in a pack")?;
+    let mut items = Vec::with_capacity(sources.len());
+    for source in sources {
+        let source = source.as_ref();
+        let (file, inner) = crate::archive::split(root, source).filter(|(_, inner)| !inner.is_empty()).context("Only files inside a mod's jar can be copied into a pack")?;
+        let inside = inside_path(source).context("Only files inside a mod's jar can be copied into a pack")?;
+        let item_kind = PackKind::of(inside).context("Only files under data/ or assets/ belong in a pack")?;
+        if item_kind != kind {
+            bail!("Data pack files and resource pack files can't go in the same pack");
+        }
+        items.push((file, inner, inside));
+    }
     let pack = normalize(pack);
     let pack_dir = crate::files::resolve(root, &pack)?;
     if pack_dir.is_file() {
         bail!("{pack} is a zipped pack. Extract it to add files to it.");
+    }
+    if !is_pack_dir(&pack_dir) && meta.is_none() {
+        bail!("{pack} isn't a {}: it has no pack.mcmeta", kind.noun());
+    }
+    let mut entries = Vec::new();
+    let mut paths = Vec::with_capacity(items.len());
+    let mut budget = COPY_LIMIT;
+    for (file, inner, inside) in items {
+        let tree = crate::archive::read_tree(&file, &inner, budget)?;
+        let used: u64 = tree.iter().map(|(_, bytes)| bytes.len() as u64).sum();
+        budget = budget.saturating_sub(used);
+        entries.extend(tree);
+        paths.push(format!("{pack}/{inside}"));
     }
     let mut created = Vec::new();
     if !is_pack_dir(&pack_dir) {
@@ -294,8 +318,12 @@ pub fn copy_into_pack(root: &Path, source: &str, pack: &str, meta: Option<&str>)
     }
     let fresh_pack = created.first() == Some(&pack);
     let mut existing = 0;
-    for (name, bytes) in crate::archive::read_tree(&file, &inner, COPY_LIMIT)? {
+    let mut written = std::collections::HashSet::new();
+    for (name, bytes) in entries {
         let target = crate::files::resolve(&pack_dir, &name)?;
+        if !written.insert(target.clone()) {
+            continue;
+        }
         if target.exists() {
             existing += 1;
             continue;
@@ -306,7 +334,7 @@ pub fn copy_into_pack(root: &Path, source: &str, pack: &str, meta: Option<&str>)
             created.push(format!("{pack}/{name}"));
         }
     }
-    Ok(Copied { path: format!("{pack}/{inside}"), created, existing })
+    Ok(Copied { paths, created, existing })
 }
 
 #[cfg(test)]
@@ -411,17 +439,26 @@ lang:en_us
     fn copies_files_and_folders_without_replacing_any() {
         let root = fresh("packraven-copy-into-pack-test");
         jar(&root.join("mods/a.jar"), &[("data/a/recipe/one.json", b"1"), ("data/a/recipe/two.json", b"2"), ("assets/a/lang/en_us.json", b"{}")]);
+        jar(&root.join("mods/b.jar"), &[("data/b/recipe/three.json", b"3")]);
 
-        let copied = copy_into_pack(&root, "mods/a.jar/data/a/recipe/one.json", "datapacks/Mine", Some("{}")).unwrap();
-        assert_eq!(copied, Copied { path: "datapacks/Mine/data/a/recipe/one.json".into(), created: vec!["datapacks/Mine".into()], existing: 0 });
+        let copied = copy_into_pack(&root, &["mods/a.jar/data/a/recipe/one.json"], "datapacks/Mine", Some("{}")).unwrap();
+        assert_eq!(copied, Copied { paths: vec!["datapacks/Mine/data/a/recipe/one.json".into()], created: vec!["datapacks/Mine".into()], existing: 0 });
         assert_eq!(std::fs::read_to_string(root.join("datapacks/Mine/pack.mcmeta")).unwrap(), "{}");
 
         std::fs::write(root.join("datapacks/Mine/data/a/recipe/one.json"), "edited").unwrap();
-        let copied = copy_into_pack(&root, "mods/a.jar/data/a/recipe", "datapacks/Mine", None).unwrap();
-        assert_eq!((copied.created, copied.existing), (vec!["datapacks/Mine/data/a/recipe/two.json".to_string()], 1));
+        let copied = copy_into_pack(&root, &["mods/a.jar/data/a/recipe", "mods/b.jar/data/b/recipe/three.json"], "datapacks/Mine", None).unwrap();
+        assert_eq!(
+            copied,
+            Copied {
+                paths: vec!["datapacks/Mine/data/a/recipe".into(), "datapacks/Mine/data/b/recipe/three.json".into()],
+                created: vec!["datapacks/Mine/data/a/recipe/two.json".into(), "datapacks/Mine/data/b/recipe/three.json".into()],
+                existing: 1,
+            }
+        );
         assert_eq!(std::fs::read_to_string(root.join("datapacks/Mine/data/a/recipe/one.json")).unwrap(), "edited");
 
-        assert!(copy_into_pack(&root, "mods/a.jar/assets/a/lang/en_us.json", "resourcepacks/None", None).is_err());
-        assert!(copy_into_pack(&root, "mods/a.jar/data/a/recipe/one.json", "../outside", Some("{}")).is_err());
+        assert!(copy_into_pack(&root, &["mods/a.jar/data/a/recipe/one.json", "mods/a.jar/assets/a/lang/en_us.json"], "datapacks/Mine", None).is_err());
+        assert!(copy_into_pack(&root, &["mods/a.jar/assets/a/lang/en_us.json"], "resourcepacks/None", None).is_err());
+        assert!(copy_into_pack(&root, &["mods/a.jar/data/a/recipe/one.json"], "../outside", Some("{}")).is_err());
     }
 }

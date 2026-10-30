@@ -715,6 +715,20 @@ test('a file in a mod jar can be overridden in a new data pack after adding Paxi
   await expect(page.getByRole('status').filter({ hasText: 'Copied into Overrides.' })).toBeAttached()
   await expect(tree.locator('[data-path="config/paxi/datapacks/Overrides/data/example/recipe/fire_charge.json"]')).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('button', { name: /^Saved/ })).toBeVisible()
+
+  await tree.locator(`[data-path="${jar}/data/example/recipe/fire_charge.json"]`).click()
+  await tree.locator(`[data-path="${jar}/data/example/recipe/stone_bricks.json"]`).click({ modifiers: ['Shift'] })
+  await tree.locator(`[data-path="${jar}/data/example/recipe/stone_bricks.json"]`).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Override 2 items in a data pack…' }).click()
+
+  await expect(dialog).toContainText('Has 1 of 2')
+  await expect(dialog.getByRole('list', { name: 'Items to override' })).toContainText('data/example/recipe/stone_bricks.json')
+  await dialog.getByRole('button', { name: 'Copy and show' }).click()
+
+  await expect(dialog).toBeHidden()
+  await expect(tree.locator('[data-path="config/paxi/datapacks/Overrides/data/example/recipe/fire_charge.json"]')).toHaveAttribute('aria-selected', 'true')
+  await expect(tree.locator('[data-path="config/paxi/datapacks/Overrides/data/example/recipe/stone_bricks.json"]')).toHaveAttribute('aria-selected', 'true')
+  await expect(tree).toContainText("Copied 2 files into Overrides. Minecraft uses these files instead of example-mod.jar's, along with 1 file the pack already had.")
 })
 
 test('one override choice can cover every version of a file', async ({ page }) => {

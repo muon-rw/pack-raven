@@ -28,7 +28,7 @@
   import ContextMenu from '../components/ContextMenu.svelte'
   import type { MenuItem } from '../lib/menu'
   import Notice from '../components/Notice.svelte'
-  import PackOverrideDialog from '../components/PackOverrideDialog.svelte'
+  import PackOverrideDialog, { type OverrideItem } from '../components/PackOverrideDialog.svelte'
   import Splitter from '../components/Splitter.svelte'
   import { StoredSplit, clamp } from '../lib/storedSplit.svelte'
   import { paneFocus } from '../lib/panes.svelte'
@@ -503,19 +503,36 @@
 
   let overrideTarget = $derived(current?.archived ? packTarget(current.path) : null)
   let overrideNoun = $derived(overrideTarget?.kind === 'resource' ? 'resource pack' : 'data pack')
-  let overriding = $state<{ source: string; isDir: boolean } | null>(null)
+  let overrideItems = $derived.by((): OverrideItem[] => {
+    if (!overrideTarget || !current) return []
+    void selection.size
+    const fromTree = tree?.selectedOverrides(overrideTarget.kind) ?? []
+    return fromTree.length > 1 && fromTree.some((i) => i.source === current.path) ? fromTree : [{ source: current.path, isDir: false }]
+  })
+  let overriding = $state<OverrideItem[] | null>(null)
 
   let overrideNote = $state<{ path: string; text: string } | null>(null)
   let overrideTimer = 0
 
-  async function showOverride(path: string, isDir: boolean, note: string) {
+  async function showOverride(paths: string[], firstIsDir: boolean, note: string) {
     await tree.refresh()
-    if (isDir) await tree.show(path, true)
-    else await tree.show(path).then(() => openFile(path, true))
-    overrideNote = { path, text: note }
-    announce(note)
-    clearTimeout(overrideTimer)
-    overrideTimer = setTimeout(() => (overrideNote = null), 6000)
+    if (paths.length > 1) {
+      await tree.showMany(paths)
+      if (!firstIsDir) await openFile(paths[0], false)
+      tree.report(note, 'note')
+      return
+    }
+    const [path] = paths
+    if (firstIsDir) {
+      await tree.show(path, true)
+      tree.report(note, 'note')
+    } else {
+      await tree.show(path).then(() => openFile(path, true))
+      overrideNote = { path, text: note }
+      announce(note)
+      clearTimeout(overrideTimer)
+      overrideTimer = setTimeout(() => (overrideNote = null), 6000)
+    }
   }
 
   let blockedText = $derived(
@@ -805,7 +822,7 @@
         <FileSearchResults bind:this={results} bind:active={activeResult} {query} onopen={openFromSearch} onshowfolder={showFolder} />
       {/if}
     {/if}
-    <FileTree bind:this={tree} hidden={searching || textSearch.open} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} onremoved={closeRemoved} ongitchange={loadChanges} onoverride={(source, isDir) => (overriding = { source, isDir })} />
+    <FileTree bind:this={tree} hidden={searching || textSearch.open} selected={workspace.active} {status} {selection} onopen={openFile} ondelete={remove} onremoved={closeRemoved} ongitchange={loadChanges} onoverride={(items) => (overriding = items)} />
   </aside>
 
   <Splitter value={browserWidth} min={TREE_MIN} max={textSearch.open ? searchMax : treeMax} total={splitTotal} label="Resize the file browser" controls="file-browser" onresize={(px) => treeSplit.set(px)} onreset={() => treeSplit.reset()} />
@@ -865,7 +882,13 @@
           {/if}
           {#if readOnly && viewer !== 'log'}<span class="read-only" class:flash={blockedNotice}>Read-only</span>{/if}
           {#if overrideTarget}
-            <button class="primary override" title="Copy this file into a {overrideNoun}, where you can edit it" onclick={() => (overriding = { source: current!.path, isDir: false })}>Override in a {overrideNoun}…</button>
+            <button
+              class="primary override"
+              title="Copy {overrideItems.length > 1 ? `these ${overrideItems.length} items` : 'this file'} into a {overrideNoun}, where you can edit {overrideItems.length > 1 ? 'them' : 'it'}"
+              onclick={() => (overriding = overrideItems)}
+            >
+              {overrideItems.length > 1 ? `Override ${overrideItems.length} items in a ${overrideNoun}…` : `Override in a ${overrideNoun}…`}
+            </button>
           {/if}
           <button class="ghost action" onclick={() => reveal(outerArchive(current!.path))}>{current.archived ? 'Show the archive in folder' : 'Show in folder'}</button>
           <button class="ghost action" onclick={() => reloadTab(current!)}>Reload</button>

@@ -1,5 +1,10 @@
+<script lang="ts" module>
+  export type OverrideItem = { source: string; isDir: boolean }
+</script>
+
 <script lang="ts">
   import { tick } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
   import { api, errorText, type ModPreview, type PackFolder, type PackKind, type PackLoader, type SearchResult } from '../lib/api'
   import { changeQueued, dropChange, projectKey, startChange } from '../lib/modUpdates.svelte'
   import { outerArchive, packTarget } from '../lib/viewers'
@@ -11,10 +16,10 @@
     onclose,
     ondone,
   }: {
-    request: { source: string; isDir: boolean } | null
+    request: OverrideItem[] | null
     pack: string | null
     onclose: () => void
-    ondone: (path: string, isDir: boolean, note: string) => void
+    ondone: (paths: string[], isDir: boolean, note: string) => void
   } = $props()
 
   type Option = { path: string; name: string; where: string; enabled?: boolean }
@@ -47,7 +52,8 @@
   let confirming = $state<{ loader: PackLoader; preview: ModPreview } | null>(null)
   let adding = $state<PackLoader['id'] | null>(null)
   let added = $state<string[] | null>(null)
-  let alreadyThere = $state(false)
+  const excluded = new SvelteSet<string>()
+  const existingPaths = new SvelteSet<string>()
   let busy = $state(false)
   let error = $state<string | null>(null)
   let opened = 0
@@ -55,10 +61,22 @@
   // becomes available unless you've moved it yourself.
   let focusPending = false
 
-  let target = $derived(request ? packTarget(request.source) : null)
-  let noun = $derived(target?.kind === 'resource' ? 'resource pack' : 'data pack')
-  let everyone = $derived(target?.kind === 'resource' ? 'Turn it on for everyone' : 'Load it in every world')
-  let jar = $derived(request ? baseName(outerArchive(request.source)) : '')
+  let items = $derived(request ?? [])
+  let single = $derived(items.length === 1 ? items[0] : null)
+  let allTargets = $derived(
+    items.flatMap((item) => {
+      const target = packTarget(item.source)
+      return target ? [{ ...item, ...target, jar: baseName(outerArchive(item.source)) }] : []
+    }),
+  )
+  let targets = $derived(allTargets.filter((t) => !excluded.has(t.source)))
+  let kind = $derived<PackKind | null>(allTargets[0]?.kind ?? null)
+  let noun = $derived(kind === 'resource' ? 'resource pack' : 'data pack')
+  let everyone = $derived(kind === 'resource' ? 'Turn it on for everyone' : 'Load it in every world')
+  let jars = $derived([...new Set((targets.length ? targets : allTargets).map((t) => t.jar))])
+  let jarSource = $derived(jars.length === 1 ? jars[0] : jars.length === 2 ? list(jars) : `${jars.length} mods`)
+  let allDirs = $derived(targets.length > 0 && targets.every((t) => t.isDir))
+  let what = $derived(describeItems(targets))
   let installed = $derived(loaders?.filter((l) => l.installed) ?? [])
   let folders = $derived(
     [
@@ -83,8 +101,10 @@
     const clash = folders.find(({ folder }) => folder.path === newFolder)?.folder.packs.find((p) => p.name.toLowerCase() === name.toLowerCase())
     return clash ? `${newFolder} already has a pack named ${clash.name}. Pick it above instead.` : null
   })
-  let canCopy = $derived(selected === NEW ? !nameProblem && !!newFolder : options.some((o) => o.path === selected))
+  let canCopy = $derived(targets.length > 0 && (selected === NEW ? !nameProblem && !!newFolder : options.some((o) => o.path === selected)))
   let selectedName = $derived(options.find((o) => o.path === selected)?.name ?? '')
+  let existingCount = $derived(selected === NEW ? 0 : existingIn(selected))
+  let allAlreadyThere = $derived(targets.length > 0 && existingCount === targets.length)
   let turnOnNote = $derived.by(() => {
     if (selected === NEW) return newFolder === VANILLA_RESOURCE_PACKS ? 'Players have to turn a new pack on in Options, Resource Packs, unless you add it to options.txt.' : null
     const option = options.find((o) => o.path === selected)
@@ -113,17 +133,17 @@
     confirming = null
     adding = null
     added = null
-    alreadyThere = false
+    excluded.clear()
+    existingPaths.clear()
     busy = false
     error = null
     focusPending = false
-    fallback = target?.kind === 'resource' ? 'resourcepacks' : 'datapacks'
-    newName = `${baseName(pack ?? '') || 'Pack'} ${target?.kind === 'resource' ? 'resources' : 'data'}`
+    fallback = kind === 'resource' ? 'resourcepacks' : 'datapacks'
+    newName = `${baseName(pack ?? '') || 'Pack'} ${kind === 'resource' ? 'resources' : 'data'}`
   }
 
   async function load(seq: number) {
-    if (!target) return
-    const kind = target.kind
+    if (!kind) return
     const remembered = recall(kind)
     try {
       const [list, own, resources] = await Promise.all([
@@ -259,42 +279,72 @@
     ownFolder = folder
     selected = single?.path ?? NEW
     if (!single) newFolder = folder.path
-    remember(target!.kind, { folder: folder.path })
+    remember(kind!, { folder: folder.path })
     mode = 'choose'
     await tick()
     focusChoice()
   }
 
-  // A file the pack already overrides opens as it is, so you never lose your edits to it.
+  // Files and folders a pack already overrides stay as they are, so you never lose your edits.
   $effect(() => {
-    const path = selected
-    alreadyThere = false
-    if (!target || path === NEW || request?.isDir) return
-    const file = `${path}/${target.inside}`
-    const parent = file.slice(0, file.lastIndexOf('/'))
-    api
-      .listDir(parent)
-      .then((entries) => selected === path && (alreadyThere = entries.some((e) => e.path === file)))
-      .catch(() => {})
+    const packs = options.map((o) => o.path)
+    const inside = allTargets.map((t) => t.inside)
+    if (!packs.length || !inside.length) {
+      existingPaths.clear()
+      return
+    }
+    const wanted = packs.flatMap((packPath) => inside.map((rel) => `${packPath}/${rel}`))
+    const parents = [...new Set(wanted.map((p) => p.slice(0, p.lastIndexOf('/'))))]
+    let cancelled = false
+    Promise.all(parents.map((dir) => api.listDir(dir).catch(() => []))).then((lists) => {
+      if (cancelled) return
+      const present = new Set(lists.flat().map((e) => e.path))
+      existingPaths.clear()
+      for (const path of wanted) if (present.has(path)) existingPaths.add(path)
+    })
+    return () => {
+      cancelled = true
+    }
   })
 
+  function existingIn(packPath: string) {
+    return targets.filter((t) => existingPaths.has(`${packPath}/${t.inside}`)).length
+  }
+
+  function toggleTarget(source: string) {
+    if (!excluded.delete(source)) excluded.add(source)
+  }
+
+  function ignoreEnter(e: KeyboardEvent) {
+    if (e.key === 'Enter') e.preventDefault()
+  }
+
   async function copy() {
-    if (!request || !target || !canCopy || busy) return
+    if (!targets.length || !kind || !canCopy || busy) return
     const create = selected === NEW
     const destination = create ? `${newFolder}/${newName.trim()}` : selected
     const packName = baseName(destination)
     busy = true
     error = null
     try {
-      const copied = await api.copyIntoPack(request.source, destination, create)
-      remember(target.kind, { pack: destination })
-      const { isDir } = request
-      const copiedNote = !copied.created.length
-        ? `${packName} already overrides this ${isDir ? 'folder' : 'file'}, so we opened its copy.`
-        : `Copied into ${packName}. Minecraft uses ${isDir ? 'these files' : 'this copy'} instead of ${jar}'s${copied.existing ? `, along with ${plural(copied.existing, 'file')} the pack already had` : ''}.`
+      const copied = await api.copyIntoPack(
+        targets.map((t) => t.source),
+        destination,
+        create,
+      )
+      remember(kind, { pack: destination })
+      const whose = jars.length === 1 ? `${jars[0]}'s` : "the mods'"
+      const one = targets.length === 1 ? targets[0] : null
+      const copiedNote = one
+        ? !copied.created.length
+          ? `${packName} already overrides this ${one.isDir ? 'folder' : 'file'}, so we ${one.isDir ? 'showed' : 'opened'} its copy.`
+          : `Copied into ${packName}. Minecraft uses ${one.isDir ? 'these files' : 'this copy'} instead of ${whose}${copied.existing ? `, along with ${plural(copied.existing, 'file')} the pack already had` : ''}.`
+        : !copied.created.length
+          ? `${packName} already overrides these ${what}, so we showed its copies.`
+          : `Copied ${what} into ${packName}. Minecraft uses these files instead of ${whose}${copied.existing ? `, along with ${plural(copied.existing, 'file')} the pack already had` : ''}.`
       const note = turnOnNote ? `${copiedNote} ${turnOnNote}` : copiedNote
       close()
-      ondone(copied.path, isDir, note)
+      ondone(copied.paths, !!targets[0]?.isDir, note)
     } catch (e) {
       error = errorText(e)
     } finally {
@@ -351,20 +401,60 @@
     return `${count} ${noun}${count === 1 ? '' : 's'}`
   }
 
-  let copyLabel = $derived(request?.isDir ? 'Copy and show' : alreadyThere ? 'Open the override' : 'Copy and open')
+  function describeItems(list: { isDir: boolean }[]) {
+    const noun = list.every((i) => !i.isDir) ? 'file' : list.every((i) => i.isDir) ? 'folder' : 'item'
+    return plural(list.length, noun)
+  }
+
+  let copyLabel = $derived(
+    targets.length === 1
+      ? targets[0].isDir
+        ? allAlreadyThere
+          ? 'Show the override'
+          : 'Copy and show'
+        : allAlreadyThere
+          ? 'Open the override'
+          : 'Copy and open'
+      : allAlreadyThere
+        ? 'Show the overrides'
+        : 'Copy and show',
+  )
 </script>
 
 <dialog bind:this={dialog} aria-labelledby="override-title" aria-describedby="override-body" oncancel={(e) => { e.preventDefault(); close() }}>
-  {#if request && target}
+  {#if allTargets.length && kind}
     <form method="dialog" onsubmit={(e) => { e.preventDefault(); if (mode === 'choose') copy() }}>
       <h2 id="override-title">Override in a {noun}</h2>
       <p id="override-body">
-        {#if alreadyThere}
-          {selectedName} already overrides <code>{target.inside}</code>, so we'll open its copy.
+        {#if !targets.length}
+          Tick at least one item to override.
+        {:else if single}
+          {#if allAlreadyThere}
+            {selectedName} already overrides <code>{targets[0].inside}{single.isDir ? '/' : ''}</code>, so we'll {single.isDir ? 'show' : 'open'} its copy.
+          {:else}
+            We'll copy <code>{targets[0].inside}{single.isDir ? '/' : ''}</code> into a {noun}, where it replaces the {single.isDir ? 'files' : 'copy'} in {targets[0].jar}. Then you can edit {single.isDir ? 'them' : 'it'}.
+          {/if}
+        {:else if allAlreadyThere}
+          {selectedName} already overrides {targets.length === 1 ? `this ${targets[0].isDir ? 'folder' : 'file'}` : `these ${what}`}, so we'll {targets.length === 1 && !targets[0].isDir ? 'open its copy' : 'show its copies'}:
+        {:else if existingCount}
+          We'll copy {what} into a {noun}, where {targets.length === 1 ? 'it replaces' : 'they replace'} the {allDirs ? 'files' : targets.length === 1 ? 'copy' : 'copies'} in {jarSource}, and keep {selectedName}'s {existingCount === 1 ? 'copy of 1 item it already has' : `copies of ${existingCount} items it already has`}:
         {:else}
-          We'll copy <code>{target.inside}</code> into a {noun}, where it replaces the {request.isDir ? 'files' : 'copy'} in {jar}. Then you can edit {request.isDir ? 'them' : 'it'}.
+          We'll copy {what} into a {noun}, where {targets.length === 1 ? 'it replaces' : 'they replace'} the {allDirs ? 'files' : targets.length === 1 ? 'copy' : 'copies'} in {jarSource}. Then you can edit {targets.length === 1 && !targets[0].isDir ? 'it' : 'them'}:
         {/if}
       </p>
+      {#if !single}
+        <ul class="targets" aria-label="Items to override">
+          {#each allTargets as item (item.source)}
+            <li>
+              <label class="target">
+                <input type="checkbox" checked={!excluded.has(item.source)} onchange={() => toggleTarget(item.source)} onkeydown={ignoreEnter} />
+                <code>{item.inside}{item.isDir ? '/' : ''}</code>
+                {#if allTargets.some((t) => t.jar !== allTargets[0].jar)}<span class="muted small">{item.jar}</span>{/if}
+              </label>
+            </li>
+          {/each}
+        </ul>
+      {/if}
 
       {#if error}<Notice tone="error"><p>{error}</p></Notice>{/if}
 
@@ -374,7 +464,7 @@
         <section class="offer" aria-labelledby="offer-title" aria-describedby="offer-body">
           <h3 id="offer-title">{everyone}</h3>
           <p class="muted" id="offer-body">
-            {target.kind === 'data'
+            {kind === 'data'
               ? 'Minecraft only loads a data pack you add to a world. Add a mod that loads it in every world:'
               : 'Players have to turn on a resource pack themselves. Add a mod that turns it on for everyone:'}
           </p>
@@ -385,7 +475,7 @@
               <li>
                 <div class="loader">
                   <span class="loader-name">{loader.name}{#if index === 0}<span class="chip change">Recommended</span>{/if}</span>
-                  <span class="muted small">{DESCRIPTIONS[loader.id][target.kind]}</span>
+                  <span class="muted small">{DESCRIPTIONS[loader.id][kind]}</span>
                   {#if lookup?.state === 'searching'}
                     <span class="muted small" id={reason}>Checking CurseForge…</span>
                   {:else if lookup?.state === 'missing'}
@@ -435,7 +525,7 @@
               <button type="button" disabled={!fallback.trim()} onclick={useOwnFolder}>Continue</button>
             </span>
             <span class="muted small" id="override-fallback-note">
-              {#if target.kind === 'data'}
+              {#if kind === 'data'}
                 Minecraft won't load it from there by itself. Copy it into a world's datapacks folder to use it.
               {:else if fallback.trim() === 'resourcepacks'}
                 Players turn it on in Options, Resource Packs.
@@ -458,13 +548,18 @@
           {#if options.length}
             <div class="options">
               {#each options as option (option.path)}
+                {@const count = existingIn(option.path)}
                 <label class="option">
                   <input type="radio" name="override-pack" value={option.path} bind:group={selected} />
                   <span class="option-text">
                     <span class="option-name">{option.name}</span>
                     <span class="muted small file" title={option.where}>{option.where}</span>
                   </span>
-                  {#if selected === option.path && alreadyThere}<span class="chip change">Has this file</span>{/if}
+                  {#if count}
+                    <span class="chip change">
+                      {targets.length === 1 ? (targets[0].isDir ? 'Has this folder' : 'Has this file') : count === targets.length ? `Has all ${targets.length}` : `Has ${count} of ${targets.length}`}
+                    </span>
+                  {/if}
                 </label>
               {/each}
               {#if creatable.length}
@@ -518,6 +613,7 @@
         </div>
       {:else}
         <div class="actions">
+          {#if error}<button type="button" onclick={() => load(opened)}>Try again</button>{/if}
           <button type="button" class="quiet" onclick={close}>Close</button>
         </div>
       {/if}
@@ -563,6 +659,41 @@
 
   code {
     overflow-wrap: anywhere;
+  }
+
+  .targets {
+    max-height: 128px;
+    overflow: auto;
+    margin: -6px 0 0;
+    padding: 4px 10px;
+    list-style: none;
+    font-size: var(--step--1);
+    background: var(--field);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-control);
+  }
+
+  .target {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 0;
+    padding-block: 3px;
+    cursor: pointer;
+  }
+
+  .target input {
+    flex: none;
+    transform: translateY(1px);
+  }
+
+  .target code {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .target > .small {
+    flex: none;
   }
 
   .small {

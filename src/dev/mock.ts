@@ -549,8 +549,7 @@ function ensureDir(path: string, created: string[]) {
   }
 }
 
-function copyIntoPack(source: string, pack: string, create: boolean) {
-  const inside = source.slice(source.lastIndexOf('.jar/') + 5)
+function copyIntoPack(sources: string[], pack: string, create: boolean) {
   const created: string[] = []
   const exists = (path: string) => listDir(path.slice(0, path.lastIndexOf('/'))).some((e) => e.path === path)
   if (!exists(`${pack}/pack.mcmeta`)) {
@@ -562,17 +561,23 @@ function copyIntoPack(source: string, pack: string, create: boolean) {
   }
   const innerFiles = (inner: string): string[] => (jar[inner] ? jar[inner].flatMap(([name, isDir]) => (isDir ? innerFiles(`${inner}/${name}`) : [`${inner}/${name}`])) : [inner])
   let existing = 0
-  for (const file of innerFiles(inside)) {
-    const target = `${pack}/${file}`
-    if (exists(target)) {
-      existing++
-      continue
+  const paths: string[] = []
+  for (const source of sources) {
+    const inside = source.slice(source.lastIndexOf('.jar/') + 5)
+    paths.push(`${pack}/${inside}`)
+    for (const file of innerFiles(inside)) {
+      const target = `${pack}/${file}`
+      if (exists(target)) {
+        existing++
+        continue
+      }
+      ensureDir(target.slice(0, target.lastIndexOf('/')), created)
+      addEntry(target, false)
+      if (!created.includes(pack)) created.push(target)
+      fx.files[target] = { ...(readFile(source.slice(0, source.lastIndexOf('.jar/') + 5) + file) as object), archived: false }
     }
-    ensureDir(target.slice(0, target.lastIndexOf('/')), created)
-    addEntry(target, false)
-    fx.files[target] = { ...(readFile(source.slice(0, source.lastIndexOf('.jar/') + 5) + file) as object), archived: false }
   }
-  return new Promise((resolve) => setTimeout(() => resolve({ path: `${pack}/${inside}`, created, existing }), 200))
+  return new Promise((resolve) => setTimeout(() => resolve({ paths, created, existing }), 200))
 }
 
 // Exercises headings, tables, task lists, raw HTML, relative images and every kind of link.
@@ -1042,7 +1047,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   media_path: (a) => `${pack.dir}/${a.path}`,
   pack_loaders: (a) => new Promise((resolve) => setTimeout(() => resolve(packLoaders(a.kind as 'data' | 'resource')), 150)),
   pack_folder: (a) => packFolder(String(a.path).replace(/^\/+|\/+$/g, '')),
-  copy_into_pack: (a) => copyIntoPack(String(a.source), String(a.pack), Boolean(a.create)),
+  copy_into_pack: (a) => copyIntoPack((a.sources as string[]) ?? [], String(a.pack), Boolean(a.create)),
   decompile_class: (a) =>
     new Promise((resolve) =>
       setTimeout(() => resolve(`package com.example;\n\n// Decompiled from ${a.path}\npublic class ExampleMod {\n    public static final String ID = "example";\n\n    static class Inner {\n    }\n}\n`), 600),

@@ -2,6 +2,10 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- You can now select multiple files within a mod jar at a time for the "override in a {data/resource}pack" feature
+
 ## [0.3.2] - 2026-10-29
 ### Added
 - After updating packraven, you'll now see a changelog popup with what's new. (hi)

@@ -175,11 +175,12 @@ pub fn pack_folder(state: State<'_, AppState>, path: String) -> CmdResult<PackFo
 }
 
 #[tauri::command]
-pub async fn copy_into_pack(state: State<'_, AppState>, source: String, pack: String, create: bool) -> CmdResult<Copied> {
+pub async fn copy_into_pack(state: State<'_, AppState>, sources: Vec<String>, pack: String, create: bool) -> CmdResult<Copied> {
     let settings = state.settings();
     let root = settings.instance_dir.clone();
     let meta = if create {
-        let kind = global_packs::inside_path(&source).and_then(PackKind::of).ok_or("Only files under data/ or assets/ in a mod's jar belong in a pack.")?;
+        let first = sources.first().ok_or("Pick something in a mod's jar to copy into a pack.")?;
+        let kind = global_packs::inside_path(first).and_then(PackKind::of).ok_or("Only files under data/ or assets/ in a mod's jar belong in a pack.")?;
         let lock = state.pack().map_err(err)?.lock;
         let name = pack.trim_end_matches('/').rsplit('/').next().unwrap_or(&pack).to_string();
         Some(global_packs::pack_meta(&settings.install_dir, lock.minecraft().map_err(err)?, kind, &name).map_err(err)?)
@@ -187,13 +188,13 @@ pub async fn copy_into_pack(state: State<'_, AppState>, source: String, pack: St
         None
     };
     let task_root = root.clone();
-    let task_source = source.clone();
-    let copied = tauri::async_runtime::spawn_blocking(move || global_packs::copy_into_pack(&task_root, &task_source, &pack, meta.as_deref()))
+    let task_sources = sources.clone();
+    let copied = tauri::async_runtime::spawn_blocking(move || global_packs::copy_into_pack(&task_root, &task_sources, &pack, meta.as_deref()))
         .await
         .map_err(|e| e.to_string())?
         .map_err(err)?;
     if !copied.created.is_empty() {
-        let label = format!("Override {}", history::describe(std::slice::from_ref(&source)));
+        let label = format!("Override {}", history::describe(&sources));
         let created = copied.created.iter().map(|p| root.join(p)).collect();
         state.history.lock().unwrap().record(&root, label, Some(Action::Trash(created)));
     }

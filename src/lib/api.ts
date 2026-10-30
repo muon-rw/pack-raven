@@ -503,7 +503,7 @@ export interface PackLoader {
 }
 
 export interface CopiedIntoPack {
-  path: string
+  paths: string[]
   created: string[]
   existing: number
 }
@@ -621,7 +621,7 @@ export const api = {
   mediaPath: (path: string) => invoke<string>('media_path', { path }),
   packLoaders: (kind: PackKind) => invoke<PackLoader[]>('pack_loaders', { kind }),
   packFolder: (path: string) => invoke<PackFolder>('pack_folder', { path }),
-  copyIntoPack: (source: string, pack: string, create: boolean) => invoke<CopiedIntoPack>('copy_into_pack', { source, pack, create }),
+  copyIntoPack: (sources: string[], pack: string, create: boolean) => invoke<CopiedIntoPack>('copy_into_pack', { sources, pack, create }),
   indexFiles: () => invoke<{ paths: string[]; truncated: boolean }>('index_files'),
   searchText: (query: TextQuery) => invoke<TextResults | null>('search_text', { query }),
   replaceText: (query: TextQuery, targets: { path: string; matches: [number, number][] }[]) => invoke<Replaced>('replace_text', { query, targets }),

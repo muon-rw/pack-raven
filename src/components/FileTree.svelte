@@ -3,7 +3,7 @@
   import { onMount, tick, untrack } from 'svelte'
   import { revealItemInDir } from '@tauri-apps/plugin-opener'
   import { getCurrentWebview, type DragDropEvent } from '@tauri-apps/api/webview'
-  import { api, errorText, type DirEntry, type GitStatus, type Pasted } from '../lib/api'
+  import { api, errorText, type DirEntry, type GitStatus, type PackKind, type Pasted } from '../lib/api'
   import { fs, moved, onDiskChange } from '../lib/workspace.svelte'
   import { drag } from '../lib/drag.svelte'
   import { gitMenu } from '../lib/gitActions'
@@ -12,6 +12,7 @@
   import { isGzip, outerArchive, packTarget } from '../lib/viewers'
   import BulkRename from './BulkRename.svelte'
   import ContextMenu from './ContextMenu.svelte'
+  import type { OverrideItem } from './PackOverrideDialog.svelte'
   import Twisty from './Twisty.svelte'
   import type { MenuItem } from '../lib/menu'
   import type { RenameItem } from '../lib/bulkRename.svelte'
@@ -35,7 +36,7 @@
     ondelete: (paths: string[]) => void
     onremoved: (paths: string[]) => void
     ongitchange: () => void
-    onoverride: (path: string, isDir: boolean) => void
+    onoverride: (items: OverrideItem[]) => void
   } = $props()
 
   const DRAG_THRESHOLD = 5
@@ -96,6 +97,14 @@
     if (expand) await expandDir(path)
     selectOnly(path)
     await focusRow(path)
+  }
+
+  export async function showMany(paths: string[]) {
+    const dirs = new Set(paths.flatMap((p) => p.split('/').slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join('/'))))
+    const byDepth = [...dirs].sort((a, b) => a.split('/').length - b.split('/').length)
+    for (const dir of byDepth) await expandDir(dir)
+    picker.replace(paths)
+    await focusRow(paths[0])
   }
 
   export function report(text: string, tone: 'fail' | 'note' = 'fail') {
@@ -202,7 +211,18 @@
   }
 
   function explainReadOnly(path: string) {
-    report(`Files inside ${nameOf(outerArchive(path))} are read-only. Extract it to change them.`, 'note')
+    const target = packTarget(path)
+    const how = target ? `Override them in a ${target.kind === 'resource' ? 'resource' : 'data'} pack to edit a copy.` : 'Extract it to change them.'
+    report(`Files inside ${nameOf(outerArchive(path))} are read-only. ${how}`, 'note')
+  }
+
+  /** Returns the selected entries inside a mod jar that can be overridden in a pack. */
+  export function selectedOverrides(kind?: PackKind): OverrideItem[] {
+    return selectedPaths().flatMap((path) => {
+      const entry = entries.get(path)
+      const target = entry?.archived && !entry.archive ? packTarget(path) : null
+      return entry && target && (!kind || target.kind === kind) ? [{ source: path, isDir: entry.isDir }] : []
+    })
   }
 
   /** Returns the paths you can change, leaving out entries inside jars and zips. */
@@ -441,20 +461,31 @@
 
   // Entries inside a jar or zip are read-only, so their menu only offers ways to look at them.
   function archivedMenu(paths: string[]): MenuItem[] {
-    const single = paths.length === 1 ? entries.get(paths[0]) : undefined
+    const archived = paths.filter((p) => entries.get(p)?.archived)
+    const single = archived.length === 1 ? entries.get(archived[0]) : undefined
     const inside = (path: string) => path.slice(outerArchive(path).length + 1)
-    const override = single ? packTarget(single.path) : null
+    const overrides = (kind: PackKind): OverrideItem[] =>
+      archived.flatMap((path) => {
+        const entry = entries.get(path)
+        return entry && !entry.archive && packTarget(path)?.kind === kind ? [{ source: path, isDir: entry.isDir }] : []
+      })
+    const data = overrides('data')
+    const resources = overrides('resource')
+    const archives = [...new Set(archived.map(outerArchive))]
     return [
       ...(single && !single.isDir && !single.archive ? [{ label: 'Open', run: () => onopen(single.path, true) }] : []),
       'separator',
-      ...(single && !single.archive && override ? [{ label: `Override in a ${override.kind === 'data' ? 'data' : 'resource'} pack…`, run: () => onoverride(single.path, single.isDir) }] : []),
+      ...(data.length ? [{ label: data.length > 1 ? `Override ${data.length} items in a data pack…` : 'Override in a data pack…', run: () => onoverride(data) }] : []),
+      ...(resources.length
+        ? [{ label: resources.length > 1 ? `Override ${resources.length} items in a resource pack…` : 'Override in a resource pack…', run: () => onoverride(resources) }]
+        : []),
       'separator',
-      { label: paths.length > 1 ? 'Copy paths inside the archive' : 'Copy path inside the archive', run: () => copyPaths(paths.map(inside), false) },
+      { label: archived.length > 1 ? 'Copy paths inside the archive' : 'Copy path inside the archive', run: () => copyPaths(archived.map(inside), false) },
       'separator',
       ...(single?.isDir ? [{ label: 'Expand all', shortcut: '*', run: () => expandAll(single.path) }] : []),
       ...(single && expandable(single) ? [{ label: 'Collapse all', run: () => collapseAll(single.path) }] : []),
       'separator',
-      { label: `Show the archive in ${fileManager}`, run: () => reveal(outerArchive(paths[0])) },
+      ...(archives.length === 1 ? [{ label: `Show the archive in ${fileManager}`, run: () => reveal(archives[0]) }] : []),
     ]
   }
 
@@ -1060,14 +1091,19 @@
   }
 
   .message {
+    position: sticky;
+    top: 4px;
+    z-index: 2;
     display: flex;
     align-items: start;
     gap: 6px;
     margin: 2px 6px 6px;
     padding: 4px 4px 4px 8px;
     font-size: var(--step--2);
+    border: 1px solid var(--line-strong);
     border-radius: var(--radius-control);
     background: var(--surface);
+    box-shadow: 0 4px 12px var(--shadow);
   }
 
   .message span {
