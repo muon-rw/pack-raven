@@ -447,14 +447,14 @@ async fn reports_modrinth_version_skew() {
         match cache.skew(&crate::publish::skew_key(&pack, entry)).flatten() {
             None => println!("none   {}", entry.path),
             Some(skew) => println!(
-                "linked {} -> {} ({:?}) shared={:?} modrinth_newest={:?} newer={} same_name_differs={}",
+                "linked {} -> {} ({:?}) shared={:?} modrinth_newest={:?} newer={} modrinth_build={:?}",
                 entry.path,
                 skew.link.title,
                 skew.link.evidence,
-                skew.shared.as_ref().map(|s| (&s.name, s.newer)),
+                skew.shared.as_ref().map(|s| (&s.version, s.newer)),
                 skew.modrinth_newest,
                 skew.modrinth_newer,
-                skew.same_name_differs
+                skew.modrinth_build.as_ref().map(|b| (&b.version, &b.differences))
             ),
         }
     }

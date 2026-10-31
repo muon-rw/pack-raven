@@ -19,11 +19,15 @@ pub struct MetadataCache {
 
 // Authors upload new versions all the time, so we look again after a day.
 const SKEW_RECHECK_SECS: u64 = 24 * 60 * 60;
+// Bump this when Skew gains something an older lookup didn't fill in, so we look again right away.
+const SKEW_FORMAT: u32 = 1;
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct CheckedSkew {
     checked_at: u64,
+    #[serde(default)]
+    format: u32,
     skew: Option<Skew>,
 }
 
@@ -132,11 +136,14 @@ impl MetadataCache {
 
     /// Returns what Modrinth has of the mod behind a file it doesn't host, when we looked within the last day.
     pub fn skew(&self, key: &str) -> Option<Option<&Skew>> {
-        self.skews.get(key).filter(|checked| unix_now().saturating_sub(checked.checked_at) < SKEW_RECHECK_SECS).map(|checked| checked.skew.as_ref())
+        self.skews
+            .get(key)
+            .filter(|checked| checked.format == SKEW_FORMAT && unix_now().saturating_sub(checked.checked_at) < SKEW_RECHECK_SECS)
+            .map(|checked| checked.skew.as_ref())
     }
 
     pub fn remember_skew(&mut self, key: String, skew: Option<Skew>) {
-        self.skews.insert(key, CheckedSkew { checked_at: unix_now(), skew });
+        self.skews.insert(key, CheckedSkew { checked_at: unix_now(), format: SKEW_FORMAT, skew });
     }
 
     #[cfg(test)]

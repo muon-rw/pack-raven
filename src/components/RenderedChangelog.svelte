@@ -63,6 +63,11 @@
     padding-left: 20px;
   }
 
+  .changelog :global(p),
+  .changelog :global(li) {
+    max-width: 75ch;
+  }
+
   .changelog :global(code) {
     font-family: var(--font-log);
     font-size: 0.9em;

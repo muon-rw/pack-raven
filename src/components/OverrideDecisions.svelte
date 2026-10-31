@@ -17,7 +17,7 @@
   }: {
     platform: Platform
     candidates: OverrideCandidate[]
-    // The pack goes to both platforms, so the other one's pack keeps these files either way.
+    // The pack goes to both platforms, so these files stay in the other one's pack either way.
     dual: boolean
     // We're looking up the files' authors, licenses and other versions.
     checking: boolean
@@ -29,13 +29,17 @@
     modrinth: { name: 'Modrinth', other: 'CurseForge', guide: 'https://support.modrinth.com/en/articles/8797527-obtaining-modpack-permissions', guideLabel: "Modrinth's guide to modpack permissions", how: 'How Modrinth checks permissions' },
     curseforge: { name: 'CurseForge', other: 'Modrinth', guide: 'https://docs.google.com/spreadsheets/d/176Wv-PZUo9hFxy6oC6N8tWdquBLPRtSuLbNK-r0_byM/htmlview', guideLabel: "CurseForge's list of allowed mods", how: 'How CurseForge checks jars' },
   } as const
-  const EVIDENCE: Record<Skew['link']['evidence'], string> = { sameFiles: 'matching file names', sameSource: 'the same source repository', sameAuthor: 'the same author' }
+  // How we linked the two projects. It says nothing about whether their files match, so the copy
+  // keeps it apart from what we say about builds.
+  const EVIDENCE: Record<Skew['link']['evidence'], string> = { sameFiles: 'they share file names', sameSource: 'they share a source repository', sameAuthor: 'they share an author' }
+  const DIFFERENCES_SHOWN = 12
   // Past a handful of rows, the notice would push the release notes out of view.
   const ROWS = 4
   // Long enough to catch the second press of a double click on a row that just moved up.
   const SETTLE_MS = 400
 
-  type Undo = { kind: 'files'; paths: string[]; restore?: { path: string; choice: OverrideChoice } } | { kind: 'author'; author: string }
+  type Undo = { kind: 'files'; paths: string[]; restore?: { path: string; choice: OverrideChoice } } | { kind: 'author'; author: string } | { kind: 'build'; path: string }
+  type SkewAction = { kind: 'build' | 'switch'; version: string; label: string; primary: boolean; tip: string; fileId?: number }
   // After a choice about one file, the result offers the same choice for its other versions.
   type Widen = { path: string; pattern: string; choice: OverrideChoice; earlier?: { path: string; choice: OverrideChoice } | null }
   let copy = $derived(PLATFORM[platform])
@@ -68,11 +72,11 @@
       platform === 'modrinth'
         ? "Modrinth's moderators may ask you for proof that you may share it."
         : "CurseForge automatically rejects the pack unless this mod is on its list of allowed mods, or CurseForge gave you permission to include it."
-    return `Bundle ${what} inside the ${copy.name} pack's overrides, so players get it even though ${copy.name} doesn't host it. ${rule}`
+    return `Bundle ${what} inside the ${copy.name} pack itself, so players get it even though ${copy.name} doesn't host it. ${rule}`
   }
 
   let leaveOutTip = $derived(
-    `Leave this file out of the ${copy.name} pack. Make sure the pack still runs without it, or tell players to download it themselves, for example with an in-game notice.${dual ? ` The ${copy.other} pack still includes it.` : ''}`,
+    `Leave this file out of the ${copy.name} pack. Use if you plan to tell players to download it themselves, for example with an in-game notice.${dual ? ` It stays in the ${copy.other} pack.` : ''}`,
   )
 
   async function showMore() {
@@ -85,8 +89,8 @@
     const them = chosen.length === 1 ? 'it' : 'them'
     const text =
       choice === 'ship'
-        ? `The ${copy.name} pack includes ${label}.`
-        : `The ${copy.name} pack leaves out ${label}, so players who install it won't get ${them}.${dual ? ` The ${copy.other} pack still has ${them}.` : ''}`
+        ? `We'll include ${label} in the ${copy.name} pack.`
+        : `We'll leave ${label} out of the ${copy.name} pack, so players who install that pack won't get ${them}.${dual ? ` ${them === 'it' ? 'It stays' : 'They stay'} in the ${copy.other} pack.` : ''}`
     const single = chosen.length === 1 ? candidates.find((file) => file.path === chosen[0]) : undefined
     const widen = single?.anyVersion ? { path: chosen[0], pattern: single.anyVersion, choice, earlier: single.earlier } : undefined
     await save(chosen, choice, `${choice}:${chosen.length === 1 ? chosen[0] : 'all'}`, text, { paths: chosen, index, target }, widen)
@@ -96,8 +100,8 @@
   async function chooseEveryVersion(path: string, pattern: string, choice: OverrideChoice, index: number, target: 'row' | 'result', earlier?: { path: string; choice: OverrideChoice } | null) {
     const text =
       choice === 'ship'
-        ? `The ${copy.name} pack includes every file matching ${pattern}, including versions you add later.`
-        : `The ${copy.name} pack leaves out every file matching ${pattern}, so players who install it won't get them.${dual ? ` The ${copy.other} pack still has them.` : ''}`
+        ? `We'll include every file matching ${pattern} in the ${copy.name} pack, along with versions you add later.`
+        : `We'll leave every file matching ${pattern} out of the ${copy.name} pack, so players who install that pack won't get them.${dual ? ` They stay in the ${copy.other} pack.` : ''}`
     const alreadyGone = !candidates.some((file) => file.path === path)
     await save([pattern], choice, `${choice}:${path}:every`, text, { paths: [path], index, target }, undefined, earlier ?? undefined)
     if (alreadyGone && target === 'result') {
@@ -129,10 +133,12 @@
       if (undo.kind === 'files') {
         await api.setOverrideChoice(platform, undo.paths, null)
         if (undo.restore) await api.setOverrideChoice(platform, [undo.restore.path], undo.restore.choice)
+      } else if (undo.kind === 'build') {
+        await api.useModrinthBuild(undo.path, false)
       } else {
         await api.setModrinthAuthor(undo.author, false)
       }
-      result = { ok: true, text: undo.kind === 'files' ? 'Undone. Decide again below.' : `Undone. The Modrinth pack no longer includes everything by ${undo.author}.` }
+      result = { ok: true, text: undo.kind === 'author' ? `Undone. We'll stop including everything by ${undo.author} in the Modrinth pack.` : 'Undone. Decide again below.' }
       onchange()
     } catch (error) {
       result = { ok: false, text: `Couldn't undo that: ${errorText(error)}` }
@@ -145,7 +151,7 @@
     choosing = `author:${author}`
     try {
       await api.setModrinthAuthor(author, true)
-      result = { ok: true, text: `The Modrinth pack includes everything by ${author}, including mods of theirs you add later.`, undo: { kind: 'author', author } }
+      result = { ok: true, text: `We'll include everything by ${author} in the Modrinth pack, along with mods of theirs you add later.`, undo: { kind: 'author', author } }
       permittingAuthor = ''
       refocus = { paths: covered, index: 0, target: 'result' }
       onchange()
@@ -170,6 +176,21 @@
     }
   }
 
+  async function useModrinthBuild(file: OverrideCandidate, version: string, index: number) {
+    const name = file.name ?? file.path
+    choosing = `build:${file.path}`
+    try {
+      await api.useModrinthBuild(file.path, true)
+      result = { ok: true, text: `We'll use Modrinth's build of ${name} ${version} in the Modrinth pack. CurseForge's build stays in your mods folder and the CurseForge pack.`, undo: { kind: 'build', path: file.path } }
+      refocus = { paths: [file.path], index, target: 'row' }
+      onchange()
+    } catch (error) {
+      result = { ok: false, text: `Couldn't use Modrinth's build of ${name}: ${errorText(error)}` }
+    } finally {
+      choosing = null
+    }
+  }
+
   $effect(() => {
     const current = candidates.map((file) => file.path)
     if (!refocus || current.some((path) => refocus!.paths.includes(path))) return
@@ -181,18 +202,58 @@
     tick().then(() => document.getElementById(target)?.focus())
   })
 
-  // What Modrinth has instead of this file, and the version to switch to when both platforms have one.
-  function describeSkew(skew: Skew): { text: string; switchTo: { fileId: number; name: string; label: string } | null } {
-    const { shared, modrinthNewest, modrinthNewer, newestOnCurseforge, sameNameDiffers } = skew
-    if (shared) {
-      const also = modrinthNewer && modrinthNewest && !newestOnCurseforge ? ` Modrinth also has ${modrinthNewest}, which CurseForge doesn't.` : ''
-      return shared.newer
-        ? { text: `Modrinth doesn't have this version. Both platforms have ${shared.name}.${also}`, switchTo: { ...shared, label: 'Switch to it on both' } }
-        : { text: `Modrinth doesn't have this version. Both platforms have an older one, ${shared.name}.${also}`, switchTo: { ...shared, label: 'Switch back to it on both' } }
+  // What Modrinth has instead of this file, and what you can do about it. Moving both packs back a
+  // version is never the primary action, since it changes the CurseForge pack too.
+  function describeSkew(skew: Skew): { text: string; actions: SkewAction[] } {
+    const { shared, modrinthNewest, modrinthNewer, newestOnCurseforge, modrinthBuild: build } = skew
+    const sentences: string[] = []
+    const actions: SkewAction[] = []
+    if (build) {
+      sentences.push(`Modrinth has its own build of ${build.version}, which differs from CurseForge's in ${differenceSummary(build.differences)}.`)
+      actions.push({
+        kind: 'build',
+        version: build.version,
+        label: `Use Modrinth's ${build.version}`,
+        primary: true,
+        tip: `List Modrinth's build in the Modrinth pack, so players download it from Modrinth. CurseForge's build stays in your mods folder and the CurseForge pack, so check that the differences don't matter first.`,
+      })
+    } else if (shared) {
+      sentences.push("Modrinth doesn't have this version.")
     }
-    if (sameNameDiffers) return { text: "Modrinth has a file with this name, but what's in it differs from CurseForge's.", switchTo: null }
-    if (!modrinthNewest) return { text: "Modrinth has no version of it for this pack's Minecraft and loader.", switchTo: null }
-    return { text: `Modrinth only has ${modrinthNewer ? 'newer' : 'older'} versions, up to ${modrinthNewest}, and CurseForge has none of them.`, switchTo: null }
+    if (shared) {
+      const match = shared.identical ? 'as identical files' : "with the same contents, though the files' hashes differ"
+      sentences.push(shared.newer ? `Both platforms have ${shared.version}, a newer version, ${match}.` : `Both platforms have an older version, ${shared.version}, ${match}.`)
+      actions.push({
+        kind: 'switch',
+        fileId: shared.fileId,
+        version: shared.version,
+        label: shared.newer ? `Update both packs to ${shared.version}` : `Move both packs back to ${shared.version}`,
+        primary: shared.newer && !build,
+        tip: `Replace this jar with ${shared.version} in your mods folder, so players of either pack get ${shared.version}.`,
+      })
+      if (modrinthNewer && modrinthNewest && !newestOnCurseforge) sentences.push(`Modrinth also has ${modrinthNewest}, which CurseForge doesn't.`)
+    }
+    if (!build && !shared) {
+      sentences.push(
+        modrinthNewest
+          ? `Modrinth only has ${modrinthNewer ? 'newer' : 'older'} versions, up to ${modrinthNewest}, and CurseForge has none of them.`
+          : "Modrinth has no version of it for this pack's Minecraft and loader.",
+      )
+    }
+    return { text: sentences.join(' '), actions }
+  }
+
+  // Changed code and a changed texture call for different levels of care, so we count them apart.
+  function differenceSummary(paths: string[]) {
+    const classes = paths.filter((path) => path.endsWith('.class')).length
+    const images = paths.filter((path) => /\.(png|jpe?g|gif|webp)$/i.test(path)).length
+    const rest = paths.length - classes - images
+    const parts = [
+      classes && `${classes} ${classes === 1 ? 'class' : 'classes'}`,
+      images && `${images} ${images === 1 ? 'image' : 'images'}`,
+      rest && `${rest} ${rest === paths.length ? '' : 'other '}${rest === 1 ? 'file' : 'files'}`,
+    ].filter((part): part is string => !!part)
+    return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0]
   }
 </script>
 
@@ -202,7 +263,7 @@
       <p>
         <strong>{notOnHostsSummary(paths, copy.name)}.</strong>
         Include the ones {platform === 'modrinth' ? 'you may share' : 'CurseForge allows'}, and leave out the rest. Players who install the {copy.name} pack won't get the
-        ones you leave out{#if dual}, though the {copy.other} pack keeps them{/if}.
+        ones you leave out{#if dual}, though those stay in the {copy.other} pack{/if}.
       </p>
       <details class="how">
         <summary>{copy.how}</summary>
@@ -211,8 +272,8 @@
             Modrinth's moderators check that you may share each file you include inside a pack, through its license, its project page or its author, and they
             may ask you for proof. Including a file without an open license rests on your word.
           {:else}
-            CurseForge automatically rejects a pack carrying a mod jar it doesn't host, unless the mod is on its list of allowed mods or CurseForge gave you
-            permission to include it.
+            CurseForge automatically rejects a pack with a mod jar inside that CurseForge doesn't host, unless the mod is on its list of allowed mods or
+            CurseForge gave you permission to include it.
           {/if}
           <button class="link" onclick={() => openUrl(copy.guide)}>{copy.guideLabel}</button>
         </p>
@@ -255,8 +316,9 @@
           {@const label = file.name ?? file.path}
           {@const skew = file.skew ? describeSkew(file.skew) : null}
           {@const switching = changeFor(file.path)}
+          {@const resolves = !!skew?.actions.some((action) => action.primary)}
           <li id={id(`row-${index}`)} tabindex="-1">
-            <span class="what">
+            <div class="what">
               {#if file.name && file.url}
                 <a href={file.url} onclick={(e) => { e.preventDefault(); openUrl(file.url!) }}>{file.name}<span class="visually-hidden"> on {copy.other}</span></a>
               {:else if file.name}
@@ -273,29 +335,58 @@
                 {/if}
               </span>
               {#if file.skew && skew}
-                <span class="skew">
-                  {skew.text}{#if skew.switchTo && file.locked}{' '}You locked its version in Mods.{/if}
+                {@const differences = file.skew.modrinthBuild?.differences ?? []}
+                <div class="skew">
+                  {skew.text}{#if file.locked && skew.actions.some((action) => action.kind === 'switch')}{' '}You locked its version in Mods.{/if}
                   <span class="muted">
-                    On Modrinth as <a href={file.skew.link.url} onclick={(e) => { e.preventDefault(); openUrl(file.skew!.link.url) }}>{file.skew.link.title}</a>, matched by
-                    {EVIDENCE[file.skew.link.evidence]}.
+                    On Modrinth as <a href={file.skew.link.url} onclick={(e) => { e.preventDefault(); openUrl(file.skew!.link.url) }}>{file.skew.link.title}</a>. We linked the two projects
+                    because {EVIDENCE[file.skew.link.evidence]}.
                   </span>
-                </span>
+                  {#if differences.length}
+                    <details class="differences">
+                      <summary>What differs</summary>
+                      <ul aria-label="Files that differ in Modrinth's build of {label}">
+                        {#each differences.slice(0, DIFFERENCES_SHOWN) as path (path)}
+                          <li class="file">{path}</li>
+                        {/each}
+                      </ul>
+                      {#if differences.length > DIFFERENCES_SHOWN}
+                        <p class="muted">and {differences.length - DIFFERENCES_SHOWN} more</p>
+                      {/if}
+                    </details>
+                  {/if}
+                </div>
               {:else if platform === 'modrinth' && !file.versionsKnown && checking}
-                <span class="skew muted">Checking which versions Modrinth has</span>
+                <div class="skew muted">Checking which versions Modrinth has</div>
               {/if}
               {#if file.earlier && file.anyVersion}
                 <span class="earlier muted">You {file.earlier.choice === 'ship' ? 'included' : 'left out'} another version before: <span class="file">{fileName(file.earlier.path)}</span></span>
               {/if}
               <span class="file" class:muted={!!file.name}>{file.path}</span>
-            </span>
+            </div>
             <span class="choices">
-              {#if skew?.switchTo}
-                {@const target = skew.switchTo}
-                <button class="primary" class:busy={!!switching && switching.stage !== 'finished'} disabled={busy || !!switching} onclick={() => switchVersion(file, target.fileId, target.name)}>
-                  {switching ? 'Switching' : target.label}<span class="visually-hidden">: {label} to {target.name}</span>
-                </button>
-              {/if}
-              {#if file.anyVersion && (file.earlier || !skew?.switchTo)}
+              {#each skew?.actions ?? [] as action (action.kind)}
+                <Tip tip={action.tip}>
+                  {#snippet children(why)}
+                    {#if action.kind === 'build'}
+                      <button class:primary={action.primary} class:busy={choosing === `build:${file.path}`} disabled={busy} aria-describedby={why} onclick={() => useModrinthBuild(file, action.version, index)}>
+                        {action.label}<span class="visually-hidden"> of {label} in the Modrinth pack</span>
+                      </button>
+                    {:else}
+                      <button
+                        class:primary={action.primary}
+                        class:busy={!!switching && switching.stage !== 'finished'}
+                        disabled={busy || !!switching}
+                        aria-describedby={why}
+                        onclick={() => switchVersion(file, action.fileId!, action.version)}
+                      >
+                        {switching ? 'Switching' : action.label}<span class="visually-hidden">: {label}</span>
+                      </button>
+                    {/if}
+                  {/snippet}
+                </Tip>
+              {/each}
+              {#if file.anyVersion && (file.earlier || !resolves)}
                 {@const choice = file.earlier?.choice ?? 'ship'}
                 {@const pattern = file.anyVersion}
                 {@const everyTip = file.earlier
@@ -304,7 +395,7 @@
                 <Tip tip={everyTip}>
                   {#snippet children(why)}
                     <button
-                      class:primary={!skew?.switchTo && choice === 'ship' && !!file.earlier}
+                      class:primary={!resolves && choice === 'ship' && !!file.earlier}
                       class:busy={choosing === `${choice}:${file.path}:every`}
                       disabled={busy}
                       aria-describedby={why}
@@ -347,13 +438,14 @@
     {#if result.undo}
       {@const last = result.undo}
       {@const widen = result.widen}
-      {' '}<button class="link" disabled={!!choosing} onclick={() => undo(last)}>Undo</button>,
-      {#if widen}
-        {@const action = widen.choice === 'ship' ? 'include' : 'leave out'}
-        <button class="link" disabled={!!choosing} onclick={() => chooseEveryVersion(widen.path, widen.pattern, widen.choice, 0, 'result', widen.earlier)}>{action} every version matching <span class="file">{widen.pattern}</span></button>,
+      {' '}<button class="link" disabled={!!choosing} onclick={() => undo(last)}>Undo</button>{#if last.kind === 'build'}.{:else},
+        {#if widen}
+          {@const action = widen.choice === 'ship' ? 'include' : 'leave out'}
+          <button class="link" disabled={!!choosing} onclick={() => chooseEveryVersion(widen.path, widen.pattern, widen.choice, 0, 'result', widen.earlier)}>{action} every version matching <span class="file">{widen.pattern}</span></button>,
+        {/if}
+        or change it later in
+        <button class="link" onclick={onsettings}>Pack settings</button>.
       {/if}
-      or change it later in
-      <button class="link" onclick={onsettings}>Pack settings</button>.
     {/if}
   {/if}
 </p>
@@ -365,15 +457,14 @@
   }
 
   .mod-list-notice > p {
-    max-width: 52ch;
+    max-width: 65ch;
   }
 
-  /* A cap keeps each file within reach of its buttons in a wide window. Notice caps the height of its
-     lists for plain file names, but we show at most a few of these taller rows until you ask for all. */
+  /* Notice caps the height of its lists for plain file names, but we show at most a few of these
+     taller rows until you ask for all. */
   .mod-list-notice .decisions {
     display: grid;
     gap: 8px;
-    max-width: 840px;
     max-height: none;
     overflow: visible;
     margin: 6px 0 0;
@@ -386,7 +477,7 @@
     overflow: auto;
   }
 
-  .decisions li {
+  .decisions > li {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -394,7 +485,13 @@
     gap: 4px 12px;
   }
 
-  .decisions li:focus-visible {
+  /* In a wide window the buttons sit far from a short row's text, so a rule carries the eye across. */
+  .decisions > li + li {
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--warn-border) 40%, transparent);
+  }
+
+  .decisions > li:focus-visible {
     outline-offset: 2px;
   }
 
@@ -416,6 +513,17 @@
   .skew {
     max-width: 65ch;
     margin: 2px 0;
+  }
+
+  .differences summary {
+    width: fit-content;
+    margin-top: 2px;
+    cursor: pointer;
+  }
+
+  .differences ul {
+    margin: 4px 0 0;
+    padding-left: 1.2em;
   }
 
   .how summary {

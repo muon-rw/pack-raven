@@ -328,7 +328,7 @@ test('the client only launches once you sign in to Minecraft', async ({ page }) 
   await expect(page.locator('#rail-player')).toHaveText('Minecraft: muonr')
   await expect(page.getByRole('button', { name: 'Quick test' })).toBeFocused()
   await expect(page.getByRole('button', { name: 'Launch client' })).toHaveAttribute('aria-disabled', 'false')
-  await expect(page.getByText('The client will play as muonr.')).toBeVisible()
+  await expect(page.getByText('Logged in as muonr for client runs.')).toBeVisible()
 })
 
 test('signing in beside Run unblocks the client there too', async ({ page }) => {
@@ -735,13 +735,13 @@ test('one override choice can cover every version of a file', async ({ page }) =
   await openApp(page, 'publish', 'dirty')
   const notice = page.getByRole('list', { name: 'Files not on Modrinth' })
   const result = page.locator('#modrinth-choice-result')
-  await page.getByRole('button', { name: 'Show 2 more' }).click()
+  await page.getByRole('button', { name: 'Show 3 more' }).click()
 
   // An update renamed a file you included, so the row offers to cover every version.
   const prominent = notice.getByRole('listitem').filter({ hasText: 'Prominent-GLOBAL-MC1.21.1-4.1.5.jar' })
   await expect(prominent).toContainText('You included another version before: Prominent-GLOBAL-MC1.21.1-4.1.4.jar')
   await prominent.getByRole('button', { name: /^Include every version/ }).click()
-  await expect(result).toContainText('includes every file matching mods/Prominent-GLOBAL-*.jar, including versions you add later')
+  await expect(result).toContainText('include every file matching mods/Prominent-GLOBAL-*.jar in the Modrinth pack, along with versions you add later')
   await expect(prominent).toHaveCount(0)
 
   // Undoing a choice that replaced an earlier version restores that earlier choice.
@@ -752,13 +752,13 @@ test('one override choice can cover every version of a file', async ({ page }) =
   // Unhosted files without a version number in their name still offer a choice for every version.
   const pack = notice.getByRole('listitem').filter({ hasText: 'resourcepacks/FreshAnimations-PT-BR.zip' })
   await pack.getByRole('button', { name: /^Include every version/ }).click()
-  await expect(result).toContainText('includes every file matching resourcepacks/FreshAnimations-PT-BR*.zip')
+  await expect(result).toContainText('include every file matching resourcepacks/FreshAnimations-PT-BR*.zip')
 
   // After a choice about one file, the result offers the same choice for its other versions.
   await notice.getByRole('listitem').filter({ hasText: 'AllTheLeaks' }).getByRole('button', { name: /^Include jar/ }).click()
   await notice.getByRole('button', { name: /^Leave out FTB Library/ }).click()
   await result.getByRole('button', { name: 'leave out every version matching mods/ftb-library-neoforge-*.jar' }).click()
-  await expect(result).toContainText('leaves out every file matching mods/ftb-library-neoforge-*.jar')
+  await expect(result).toContainText('leave every file matching mods/ftb-library-neoforge-*.jar out of')
 
   await result.getByRole('button', { name: 'Pack settings' }).click()
   const permissions = page.getByRole('region', { name: 'Modrinth permissions' })
@@ -771,6 +771,23 @@ test('one override choice can cover every version of a file', async ({ page }) =
   await expect(onYourWord).toContainText('Matches Prominent-GLOBAL-MC1.21.1-4.1.5.jar now.')
   await expect(onYourWord).toContainText('Matches FreshAnimations-PT-BR.zip now.')
   await expect(permissions.getByRole('list', { name: 'Left out of the Modrinth pack' })).toContainText('FTB Library (NeoForge), every version')
+})
+
+test("the Modrinth pack can use Modrinth's own build of a version", async ({ page }) => {
+  await openApp(page, 'publish', 'dirty')
+  const derelict = page.getByRole('list', { name: 'Files not on Modrinth' }).getByRole('listitem').filter({ hasText: 'mods/derelict-2.1.0.jar' })
+  const result = page.locator('#modrinth-choice-result')
+  await expect(derelict).toContainText("Modrinth has its own build of 2.1.0, which differs from CurseForge's in 1 class, 1 image and 2 other files.")
+  await expect(derelict).toContainText('We linked the two projects because they share file names.')
+  // Moving both packs back changes the CurseForge pack too, so it never takes the primary action's place.
+  await expect(derelict.getByRole('button', { name: /^Move both packs back to 2\.0\.0/ })).not.toHaveClass(/primary/)
+
+  await derelict.getByRole('button', { name: /^Use Modrinth's 2\.1\.0/ }).click()
+  await expect(result).toContainText("We'll use Modrinth's build of Mim1q's Derelict 2.1.0 in the Modrinth pack.")
+  await expect(derelict).toHaveCount(0)
+  await result.getByRole('button', { name: 'Undo' }).click()
+  await expect(result).toContainText('Undone. Decide again below.')
+  await expect(derelict).toHaveCount(1)
 })
 
 test('a link in one pane opens its target in the other', async ({ page }) => {

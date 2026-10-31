@@ -223,6 +223,7 @@ pub fn run() {
             commands::look_up_override_candidates,
             commands::override_choices,
             commands::set_modrinth_author,
+            commands::use_modrinth_build,
             commands::published_to,
             commands::build_server_pack,
             commands::start_test,

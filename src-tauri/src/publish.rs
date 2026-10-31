@@ -11,7 +11,7 @@ use crate::modrinth;
 use crate::git;
 use crate::jobs::Log;
 use crate::git::Identity;
-use crate::pack::{version_problem, LockEntry, ModLoader, Pack, Platform, CHANGELOG_ARCHIVE};
+use crate::pack::{version_problem, LockEntry, ModLoader, ModrinthFile, Pack, Platform, CHANGELOG_ARCHIVE};
 use crate::{links, twins};
 use crate::sides::{self, MetadataCache};
 use crate::modsync;
@@ -242,22 +242,32 @@ pub fn skew_key(pack: &Pack, entry: &LockEntry) -> String {
 }
 
 /// Looks up which versions of each mod Modrinth has, for the CurseForge files it doesn't host.
-pub async fn look_up_modrinth_skews(pack: &Pack, cache: &mut MetadataCache) -> Result<()> {
-    let Some(target) = twins::Target::of(&pack.lock).filter(|_| pack.config.targets_modrinth() && curseforge::core_key().is_some()) else { return Ok(()) };
+/// Returns the files whose Modrinth upload turned out to hold the same contents, which the caller
+/// records as twins.
+pub async fn look_up_modrinth_skews(pack: &Pack, cache: &mut MetadataCache) -> Result<Vec<(String, Option<ModrinthFile>)>> {
+    let Some(target) = twins::Target::of(&pack.lock).filter(|_| pack.config.targets_modrinth() && curseforge::core_key().is_some()) else { return Ok(Vec::new()) };
     let undecided = export::not_on(pack, cache, Platform::Modrinth)?;
     let wanting: Vec<&LockEntry> = pack.lock.files.iter().filter(|e| e.curseforge.is_some() && undecided.contains(&e.path) && cache.skew(&skew_key(pack, e)).is_none()).collect();
+    let mut found_twins = Vec::new();
     if wanting.is_empty() {
-        return Ok(());
+        return Ok(found_twins);
     }
     let projects = curseforge::mods(&wanting.iter().filter_map(|e| e.curseforge_project()).collect::<Vec<_>>()).await?;
     let loader_type = curseforge::loader_type(&pack.lock.mod_loader()?);
+    let cache_dir = pack.cache_dir()?;
     for entry in wanting {
-        let Some((file, project)) = entry.curseforge.as_ref().and_then(|file| Some((file, projects.get(&file.project_id)?))) else { continue };
+        let Some(project) = entry.curseforge_project().and_then(|id| projects.get(&id)) else { continue };
         let loader = entry.path.starts_with("mods/").then_some(loader_type);
-        let skew = links::skew(&target, loader, pack.config.updates.channel, file, project).await?;
+        let skew = links::skew(&target, loader, pack.config.updates.channel, &pack.dir, &cache_dir, entry, project).await?;
+        // The twin search waits a day before it looks at a missed file again, and an older packraven
+        // may have missed this one by stricter rules.
+        if let Some(build) = skew.as_ref().and_then(|s| s.modrinth_build.as_ref()).filter(|b| b.differences.is_empty()) {
+            found_twins.push((entry.path.clone(), Some(build.file.clone())));
+            continue;
+        }
         cache.remember_skew(skew_key(pack, entry), skew);
     }
-    Ok(())
+    Ok(found_twins)
 }
 
 pub struct PublishContext {

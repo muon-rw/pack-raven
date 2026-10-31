@@ -15,7 +15,7 @@ use crate::http;
 use crate::jobs::Log;
 use crate::instance::{self, Instance};
 use crate::modrinth;
-use crate::pack::{self, CurseforgeFile, LockEntry, Lockfile, ModKey, LOCKFILE, LOCK_FORMAT};
+use crate::pack::{self, CurseforgeFile, LockEntry, Lockfile, ModKey, ModrinthFile, LOCKFILE, LOCK_FORMAT};
 use crate::twins;
 
 const FOLDERS: [&str; 4] = ["mods", "resourcepacks", "shaderpacks", "datapacks"];
@@ -590,6 +590,19 @@ pub fn lock_at(dir: &Path, rev: &str) -> Result<Lockfile> {
 
 pub fn write_lock(dir: &Path, lock: &mut Lockfile) -> Result<()> {
     Repo::open(dir)?.write_lock(lock, false)?;
+    Ok(())
+}
+
+/// Records the Modrinth file that stands in for each file in the Modrinth pack, or that none does.
+pub async fn set_modrinth_files(dir: &Path, files: &[(String, Option<ModrinthFile>)]) -> Result<()> {
+    let _guard = MOD_LIST_GUARD.lock().await;
+    let repo = Repo::open(dir)?;
+    let mut lock = repo.read_lock()?;
+    for (path, file) in files {
+        let Some(entry) = lock.files.iter_mut().find(|e| e.path == *path) else { bail!("{path} isn't in the mod list any more.") };
+        entry.modrinth = file.clone();
+    }
+    repo.write_lock(&mut lock, false)?;
     Ok(())
 }
 

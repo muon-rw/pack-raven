@@ -93,7 +93,7 @@
         ? "This run's server checks each player's account, since online mode is on in server.properties."
         : "This run's server doesn't check accounts, since online mode is off in server.properties.",
   )
-  let clientLine = $derived(playerName ? `The client ${clientRunning ? 'plays' : 'will play'} as ${playerName}.` : null)
+  let clientLine = $derived(playerName ? `Logged in as ${playerName} for client runs.` : null)
   let modeLine = $derived([serverMode, clientLine].filter(Boolean).join(' '))
   let status = $derived(
     testState.players.length

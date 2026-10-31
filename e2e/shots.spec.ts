@@ -1,7 +1,8 @@
 import { test, type Page } from '@playwright/test'
 import { openApp, packViews, scenarios, type Scenario, type View } from './app.ts'
 
-// Captures every view in every scenario at the window sizes we design for, in both themes.
+// Captures every view in every scenario at the window sizes we design for, in both themes, plus
+// wide and zoomed-in windows in light.
 // Narrow the grid with comma-separated lists: SHOTS_VIEWS=publish,git SHOTS_SCENARIOS=dirty npm run shots
 // Views scroll inside their pane, so SHOTS_HEIGHT=2000 makes the window tall enough to see a long one whole.
 const pick = <T extends string>(env: string | undefined, all: readonly T[]) => (env ? all.filter((item) => env.split(',').includes(item)) : [...all])
@@ -14,6 +15,14 @@ const themes = ['light', 'dark'] as const
 // The zoom hotkeys shrink the layout, so a minimum-size window at 125% lays out at 768x512. That's
 // the most zoom we design for. Zoom doesn't change the theme's layout, so we capture it in light only.
 const zooms = [125]
+
+// A maximized window on a wide display, or a zoomed-out one, lays out far wider than the default. A
+// view that caps its width should still give its rows the room they need there. Like zoom, width
+// doesn't change the theme's layout, so we capture these in light only.
+const wides = [
+  { width: 1920, height: 1080 },
+  { width: 2560, height: 1440 },
+]
 
 // Tabs the URL can't open, captured as <view>-<tab>.png after the view's own shot.
 const tabs: Partial<Record<View, string[]>> = { server: ['Properties', 'Startup'] }
@@ -52,6 +61,20 @@ for (const scenario of pick(process.env.SHOTS_SCENARIOS, scenarios)) {
           await shootTabs(page, view, (name) => `shots/${scenario}-${width}-${theme}-${name}.png`)
         })
       }
+    }
+  }
+}
+
+for (const scenario of pick(process.env.SHOTS_SCENARIOS, scenarios)) {
+  for (const view of views(scenario)) {
+    for (const { width, height } of wides) {
+      test(`${scenario}-${width}-light-${view}`, async ({ page }) => {
+        await page.setViewportSize({ width, height: Number(process.env.SHOTS_HEIGHT) || height })
+        await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+        await openApp(page, view, scenario)
+        await page.screenshot({ path: `shots/${scenario}-${width}-light-${view}.png`, animations: 'disabled' })
+        await shootTabs(page, view, (name) => `shots/${scenario}-${width}-light-${name}.png`)
+      })
     }
   }
 }

@@ -111,7 +111,7 @@ const releases: ReleaseStatus[] = scenario === 'empty' ? [] : [
 ]
 
 // Files a platform doesn't host, which a dual pack has to ship there or keep off it.
-type MockSkew = { link: { projectId: string; title: string; url: string; evidence: 'sameFiles' | 'sameSource' | 'sameAuthor' }; shared: { fileId: number; name: string; newer: boolean } | null; modrinthNewest: string | null; modrinthNewer: boolean; newestOnCurseforge: boolean; sameNameDiffers: boolean }
+type MockSkew = { link: { projectId: string; title: string; url: string; evidence: 'sameFiles' | 'sameSource' | 'sameAuthor' }; shared: { fileId: number; version: string; newer: boolean; identical: boolean } | null; modrinthNewest: string | null; modrinthNewer: boolean; newestOnCurseforge: boolean; modrinthBuild: { version: string; differences: string[] } | null }
 type MockCandidate = { name: string | null; url: string | null; authors: string[]; license: string | null; openLicense: boolean; allowlisted: boolean; known: boolean; skew: MockSkew | null; versionsKnown: boolean; locked: boolean }
 const candidate = (fields: Partial<MockCandidate>): MockCandidate => ({ name: null, url: null, authors: [], license: null, openLicense: false, allowlisted: false, known: true, skew: null, versionsKnown: true, locked: false, ...fields })
 const onModrinthAs = (title: string, evidence: MockSkew['link']['evidence'], rest: Omit<MockSkew, 'link'>): MockSkew => ({ link: { projectId: title.slice(0, 8), title, url: `https://modrinth.com/project/${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, evidence }, ...rest })
@@ -119,10 +119,15 @@ const candidates: Record<Platform, Record<string, MockCandidate>> = {
   modrinth: scenario === 'dirty' ? {
     'mods/alltheleaks-1.1.13+1.21.1-neoforge.jar': candidate({ name: 'AllTheLeaks', url: 'https://www.curseforge.com/minecraft/mc-mods/alltheleaks', authors: ['Uncandango'], license: 'MIT License', openLicense: true }),
     'mods/framework-neoforge-1.21.1-0.13.11.jar': candidate({ name: 'Framework', url: 'https://www.curseforge.com/minecraft/mc-mods/framework', authors: ['MrCrayfish'], license: 'All Rights Reserved',
-      skew: onModrinthAs('Framework', 'sameFiles', { shared: { fileId: 7200001, name: 'framework-neoforge-1.21.1-0.13.12.jar', newer: true }, modrinthNewest: '0.13.12', modrinthNewer: true, newestOnCurseforge: true, sameNameDiffers: false }) }),
+      skew: onModrinthAs('Framework', 'sameFiles', { shared: { fileId: 7200001, version: '0.13.12', newer: true, identical: true }, modrinthNewest: '0.13.12', modrinthNewer: true, newestOnCurseforge: true, modrinthBuild: null }) }),
+    // The real Derelict 2.1.0 builds differ only in how one PNG is encoded, which we now count as the
+    // same build. This row stands in for builds that really differ.
+    'mods/derelict-2.1.0.jar': candidate({ name: "Mim1q's Derelict", url: 'https://www.curseforge.com/minecraft/mc-mods/derelict', authors: ['Mim1q'], license: 'All Rights Reserved',
+      skew: onModrinthAs("Mim1q's Derelict", 'sameFiles', { shared: { fileId: 5848521, version: '2.0.0', newer: false, identical: false }, modrinthNewest: '2.1.0', modrinthNewer: false, newestOnCurseforge: true,
+        modrinthBuild: { version: '2.1.0', differences: ['assets/derelict/lang/en_us.json', 'assets/derelict/textures/block/fancy_cobweb.png', 'com/github/mim1q/derelict/init/ModBlocks.class', 'META-INF/jars/gimm1q-0.6.1+1.20.1.jar!/fabric.mod.json'] } }) }),
     'mods/ftb-library-neoforge-2101.1.39.jar': candidate({ name: 'FTB Library (NeoForge)', url: 'https://www.curseforge.com/minecraft/mc-mods/ftb-library-forge', authors: ['FTB'], license: 'All Rights Reserved' }),
     'mods/overgrowns-origins-1.4.2.jar': candidate({ name: "Overgrown's Origins", url: 'https://www.curseforge.com/minecraft/mc-mods/overgrowns-origins', authors: ['Overgrown'], license: 'All Rights Reserved', locked: true,
-      skew: onModrinthAs("Overgrown's Origins", 'sameSource', { shared: null, modrinthNewest: '2.0.1', modrinthNewer: true, newestOnCurseforge: false, sameNameDiffers: false }) }),
+      skew: onModrinthAs("Overgrown's Origins", 'sameSource', { shared: null, modrinthNewest: '2.0.1', modrinthNewer: true, newestOnCurseforge: false, modrinthBuild: null }) }),
     'resourcepacks/FreshAnimations-PT-BR.zip': candidate({}),
     'mods/Prominent-GLOBAL-MC1.21.1-4.1.5.jar': candidate({}),
   } : {},
@@ -131,6 +136,7 @@ const candidates: Record<Platform, Record<string, MockCandidate>> = {
     'mods/ravens-patches-1.0.jar': candidate({}),
   } : {},
 }
+const usingModrinthBuild = new Set<string>()
 const choicesOf = (platform: Platform) => (platform === 'curseforge' ? config.curseforge : config.modrinth)
 const permittedAuthors = (platform: Platform): string[] => (platform === 'modrinth' ? config.modrinth.allowed_authors : [])
 // export::choice_covers and export::any_version_pattern, where only * is a wildcard.
@@ -172,7 +178,10 @@ const overrideChoices = (platform: Platform) => ({
 })
 const notOn = (platform: Platform) =>
   Object.keys(candidates[platform]).filter(
-    (path) => !isChosen(platform, path) && !candidates[platform][path].authors.some((author) => permittedAuthors(platform).includes(author)),
+    (path) =>
+      !isChosen(platform, path) &&
+      !(platform === 'modrinth' && usingModrinthBuild.has(path)) &&
+      !candidates[platform][path].authors.some((author) => permittedAuthors(platform).includes(author)),
   )
 // Like export::override_files_for, the files in the pack that a choice covers, not the choices.
 const decidedFiles = (platform: Platform, list: 'allowed_override_jars' | 'exclude') =>
@@ -1192,6 +1201,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     const others = config.modrinth.allowed_authors.filter((x) => x !== author)
     config.modrinth.allowed_authors = a.allowed ? [...others, author].sort() : others
   },
+  // Like the lock entry, the file Modrinth hosts drops it from the files to decide about.
+  use_modrinth_build: (a) => {
+    if (a.using) usingModrinthBuild.add(String(a.path))
+    else usingModrinthBuild.delete(String(a.path))
+  },
   modrinth_project_title: (a) => (String(a.id) === 'ravens-high-fantasy' ? "Raven's High Fantasy" : null),
   published_to: (a) => (releases.some((r) => r.version === a.version) ? { curseforge: true, modrinth: !!releases.find((r) => r.version === a.version)!.modrinth } : null),
   discover_instances: () => [pack, { ...pack, dir: 'C:/Instances/Shared Pack', name: 'Shared Pack', addonCount: 0, hasGit: false, hasLock: false, remote: null, added: false }],
@@ -1283,7 +1297,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     const switches = requests.filter((r) => r.replaces && candidates.modrinth[r.replaces]?.skew)
     if (!switches.length) return changeMods(requests)
     return queueModChange(
-      switches.map((r) => `Placed ${candidates.modrinth[r.replaces!].skew!.shared?.name}`),
+      switches.map((r) => `Placed ${candidates.modrinth[r.replaces!].skew!.shared?.version}`),
       `Updated ${switches.map((r) => candidates.modrinth[r.replaces!].name).join(', ')}.`,
       () => switches.forEach((r) => delete candidates.modrinth[r.replaces!]),
     )

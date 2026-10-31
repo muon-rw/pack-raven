@@ -615,7 +615,11 @@ pub async fn look_up_override_candidates(state: State<'_, AppState>) -> CmdResul
     if pack.config.targets_curseforge() {
         Allowlist::refresh(&state.allowlist_path()).await.map_err(err)?;
     }
-    skews.map_err(err)
+    let found_twins = skews.map_err(err)?;
+    if !found_twins.is_empty() {
+        modsync::set_modrinth_files(&pack.dir, &found_twins).await.map_err(err)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -628,6 +632,22 @@ pub fn set_modrinth_author(state: State<'_, AppState>, author: String, allowed: 
         authors.sort_by_key(|a| a.to_lowercase());
     }
     pack.save_config().map_err(err)
+}
+
+/// Lists Modrinth's own build of a file's version in the Modrinth pack, or stops listing it. Your mods
+/// folder and the CurseForge pack keep CurseForge's build either way.
+#[tauri::command]
+pub async fn use_modrinth_build(state: State<'_, AppState>, path: String, using: bool) -> CmdResult<()> {
+    let pack = state.pack().map_err(err)?;
+    let build = if using {
+        let entry = pack.lock.files.iter().find(|e| e.path == path).ok_or("That file isn't in the mod list any more.")?;
+        let cache = MetadataCache::load(&state.cache_path());
+        let skew = cache.skew(&publish::skew_key(&pack, entry)).flatten();
+        Some(skew.and_then(|s| s.modrinth_build.clone()).ok_or("packraven no longer knows Modrinth's build of it. Reopen Publish to check again.")?.file)
+    } else {
+        None
+    };
+    modsync::set_modrinth_files(&pack.dir, &[(path, build)]).await.map_err(err)
 }
 
 #[tauri::command]

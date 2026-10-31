@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
@@ -91,15 +92,11 @@ pub(crate) fn name_for_every_loader(name: &str) -> String {
 // We only download a candidate whose file name matches the jar's, since publishing tools upload the
 // same build under the same name to both platforms.
 async fn twin_in(root: &Path, cache_dir: &Path, target: &Target, entry: &LockEntry, project_id: &str) -> Result<Option<ModrinthFile>> {
-    let name = entry.path.rsplit('/').next().unwrap_or(&entry.path).trim_end_matches(".disabled");
+    let name = file_name(&entry.path);
     let loaders: &[&str] = if entry.path.starts_with("mods/") { &target.mod_loaders } else { &[] };
     for version in modrinth::project_versions(project_id, loaders, &target.minecraft).await? {
         for file in version.files.iter().filter(|f| f.filename.eq_ignore_ascii_case(name)) {
-            let cached = cache_dir.join(&file.hashes.sha1);
-            if !cached.exists() {
-                http::download(&file.url, &cached, Some(&file.hashes.sha1)).await?;
-            }
-            if same_contents(&root.join(&entry.path), &cached) {
+            if same_contents(&root.join(&entry.path), &cached(cache_dir, &file.url, &file.hashes.sha1).await?) {
                 return Ok(Some(version.lock_file(file)));
             }
         }
@@ -107,21 +104,76 @@ async fn twin_in(root: &Path, cache_dir: &Path, target: &Target, entry: &LockEnt
     Ok(None)
 }
 
+pub(crate) fn file_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path).trim_end_matches(".disabled")
+}
+
+pub(crate) async fn cached(cache_dir: &Path, url: &str, sha1: &str) -> Result<PathBuf> {
+    let path = cache_dir.join(sha1);
+    if !path.exists() {
+        http::download(url, &path, Some(sha1)).await?;
+    }
+    Ok(path)
+}
+
 // Gradle's publishing tasks can stamp each upload with its own timestamps and manifest attributes,
 // so the same build can hash differently on each platform. We compare what the jars hold instead,
 // ignoring the manifest and the signature files that cover it.
 pub fn same_contents(a: &Path, b: &Path) -> bool {
-    match (listing(a), listing(b)) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => false,
+    differences(a, b).is_ok_and(|differing| differing.is_empty())
+}
+
+/// Returns the entries that differ between two jars, naming an entry of a nested jar `outer.jar!/inner`.
+pub fn differences(a: &Path, b: &Path) -> Result<Vec<String>> {
+    let (ours, theirs) = (listing(a)?, listing(b)?);
+    let mut differing: Vec<String> = ours
+        .iter()
+        .filter(|(name, held)| theirs.get(*name) != Some(held))
+        .map(|(name, _)| name.clone())
+        .chain(theirs.keys().filter(|name| !ours.contains_key(*name)).cloned())
+        .collect();
+    differing.sort();
+    let images: Vec<&String> = differing.iter().filter(|name| is_image(name) && ours.contains_key(*name) && theirs.contains_key(*name)).collect();
+    if images.is_empty() || images.len() > MAX_IMAGES_DECODED {
+        return Ok(differing);
+    }
+    let unchanged: HashSet<String> = images.into_iter().filter(|name| same_image(a, b, name)).cloned().collect();
+    differing.retain(|name| !unchanged.contains(name));
+    Ok(differing)
+}
+
+// Some builds re-encode images without changing a pixel, so we compare those by what they show. A
+// build that re-encodes every texture would have us decode them all, so past this many we call the
+// jars different and leave the choice to you.
+const MAX_IMAGES_DECODED: usize = 64;
+
+fn is_image(name: &str) -> bool {
+    image::ImageFormat::from_path(name).is_ok_and(|format| format.reading_enabled())
+}
+
+fn same_image(a: &Path, b: &Path, name: &str) -> bool {
+    let pixels = |path: &Path| -> Result<image::RgbaImage> { Ok(image::load_from_memory(&read_entry(path, name)?)?.to_rgba8()) };
+    matches!((pixels(a), pixels(b)), (Ok(a), Ok(b)) if a == b)
+}
+
+fn read_entry(path: &Path, name: &str) -> Result<Vec<u8>> {
+    read_from(&mut zip::ZipArchive::new(std::fs::File::open(path)?)?, name)
+}
+
+fn read_from<R: std::io::Read + std::io::Seek>(archive: &mut zip::ZipArchive<R>, name: &str) -> Result<Vec<u8>> {
+    let (outer, inner) = name.split_once("!/").map_or((name, None), |(outer, inner)| (outer, Some(inner)));
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut archive.by_name(outer)?, &mut bytes)?;
+    match inner {
+        Some(inner) => read_from(&mut zip::ZipArchive::new(std::io::Cursor::new(bytes))?, inner),
+        None => Ok(bytes),
     }
 }
 
-fn listing(path: &Path) -> Result<Vec<(String, u32, u64)>> {
+fn listing(path: &Path) -> Result<BTreeMap<String, (u32, u64)>> {
     let mut entries = Vec::new();
     list_into(&mut zip::ZipArchive::new(std::fs::File::open(path)?)?, "", 0, &mut entries)?;
-    entries.sort();
-    Ok(entries)
+    Ok(entries.into_iter().map(|(name, crc, size)| (name, (crc, size))).collect())
 }
 
 // Fabric's META-INF/jars and NeoForge's META-INF/jarjar hold libraries the build re-zips for each
@@ -227,6 +279,38 @@ mod tests {
         jar(&c, &[("META-INF/jars/lib.jar", &changed), ("A.class", b"a")], "");
         assert!(same_contents(&a, &b));
         assert!(!same_contents(&a, &c));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn png(red: u8, filter: image::codecs::png::FilterType) -> Vec<u8> {
+        use image::ImageEncoder;
+        let pixels = image::RgbaImage::from_fn(4, 4, |x, _| image::Rgba([red, x as u8 * 60, 0, 255]));
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new_with_quality(&mut bytes, image::codecs::png::CompressionType::Default, filter)
+            .write_image(&pixels, 4, 4, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        bytes
+    }
+
+    #[test]
+    fn re_encoded_images_are_the_same() {
+        use image::codecs::png::FilterType;
+        let dir = std::env::temp_dir().join(format!("packraven-images-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b, c) = (dir.join("a.jar"), dir.join("b.jar"), dir.join("c.jar"));
+        let (plain, refiltered, recolored) = (png(10, FilterType::NoFilter), png(10, FilterType::Sub), png(200, FilterType::NoFilter));
+        assert_ne!(plain, refiltered, "the images' bytes differ");
+        let lib = |icon: &[u8]| {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            zip.start_file("icon.png", zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(icon).unwrap();
+            zip.finish().unwrap().into_inner()
+        };
+        jar(&a, &[("assets/x/web.png", &plain), ("META-INF/jars/lib.jar", &lib(&plain)), ("A.class", b"a")], "");
+        jar(&b, &[("assets/x/web.png", &refiltered), ("META-INF/jars/lib.jar", &lib(&refiltered)), ("A.class", b"a")], "");
+        jar(&c, &[("assets/x/web.png", &recolored), ("META-INF/jars/lib.jar", &lib(&plain)), ("A.class", b"changed")], "");
+        assert!(same_contents(&a, &b));
+        assert_eq!(differences(&a, &c).unwrap(), ["A.class", "assets/x/web.png"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

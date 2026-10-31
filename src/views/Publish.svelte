@@ -182,6 +182,7 @@
   })
 
   const nameOf = (file: OverrideFileView) => file.name ?? file.path
+  let unlisted = $derived(curseforgeShipped.filter((file) => !file.allowlisted))
 
   function describe(file: OverrideFileView): string {
     const name = file.name ?? file.path
@@ -261,7 +262,10 @@
         ? `Upload "${client.displayName}" (${client.fileName}) and its server pack "${server.displayName}" (${server.fileName}) to CurseForge as ${asType}${config?.curseforge.manual_release ? ', held until you release it' : ''}.`
         : null,
       toCurseforge && curseforgeShipped.length
-        ? `Include ${curseforgeShipped.length === 1 ? 'a jar' : `${curseforgeShipped.length} jars`} CurseForge doesn't host inside the client pack. CurseForge rejects the pack unless ${curseforgeShipped.length === 1 ? "it's" : "they're"} on its list of allowed mods or it gave you permission: ${curseforgeShipped.map(describe).join(', ')}.`
+        ? `Include ${curseforgeShipped.length === 1 ? 'a jar' : `${curseforgeShipped.length} jars`} CurseForge doesn't host inside the client pack: ${curseforgeShipped.map(describe).join(', ')}.`
+        : null,
+      toCurseforge && unlisted.length
+        ? `We checked CurseForge's list of allowed mods and didn't find ${unlisted.length < curseforgeShipped.length ? unlisted.map(nameOf).join(', ') : curseforgeShipped.length === 1 ? 'it' : 'any of them'}, so CurseForge will reject the pack unless you have permission for ${unlisted.length === 1 ? 'it' : 'them'}.`
         : null,
       toModrinth ? `Upload "${client.displayName}" (${withVersion(modrinthFile)}) to Modrinth as ${asType}, listed right away.` : null,
       toModrinth && modrinthShipped.length
@@ -510,10 +514,19 @@
           <dt>Jars CurseForge doesn't host</dt>
           <dd class="pack-names">
             {#if curseforgeShipped.length}
-              {@render fileGroup('curseforge-included', 'The client pack includes', curseforgeShipped, describe, "CurseForge rejects any that aren't on its list of allowed mods, unless it gave you permission.")}
+              {@const one = curseforgeShipped.length === 1}
+              {@render fileGroup(
+                'curseforge-included',
+                one ? "We'll include the jar itself in the client pack" : "We'll include the jars themselves in the client pack",
+                curseforgeShipped,
+                describe,
+                unlisted.length
+                  ? `We checked CurseForge's list of allowed mods and didn't find ${one ? 'this one' : unlisted.length === curseforgeShipped.length ? 'these' : `${unlisted.length} of these`}, so CurseForge will reject the pack unless you have permission for ${unlisted.length === 1 ? 'it' : 'them'}.`
+                  : null,
+              )}
             {/if}
             {#if curseforgeLeftOut.length}
-              {@render fileGroup('curseforge-left-out', `Left out of the CurseForge pack${toModrinth ? ', while the Modrinth pack includes them' : ''}`, curseforgeLeftOut, nameOf)}
+              {@render fileGroup('curseforge-left-out', `Left out of the CurseForge pack${toModrinth ? ', but still in the Modrinth pack' : ''}`, curseforgeLeftOut, nameOf)}
             {/if}
             <button class="link small" onclick={onsettings}>Change in Pack settings</button>
           </dd>
@@ -530,30 +543,31 @@
             <span class="muted small">
               One shared file for clients and servers.
             </span>
-            {#snippet modrinthIncludes()}
+            <!-- Without the "We'll include" summary above it, a lone reason has to say the files are included. -->
+            {#snippet modrinthIncludes(alone: boolean)}
               {#each shippedByAuthor as group (group.author)}
-                {@render fileGroup(`modrinth-author-${group.author}`, `On ${group.author}'s permission`, group.files, nameOf)}
+                {@render fileGroup(`modrinth-author-${group.author}`, `${alone ? 'Included, on' : 'On'} ${group.author}'s permission`, group.files, nameOf)}
               {/each}
               {#if shippedOpenLicense.length}
-                {@render fileGroup('modrinth-open-license', 'Under an open license', shippedOpenLicense, describe)}
+                {@render fileGroup('modrinth-open-license', alone ? 'Included, under an open license' : 'Under an open license', shippedOpenLicense, describe)}
               {/if}
               {#if shippedOnYourWord.length}
-                {@render fileGroup('modrinth-word', 'On your word that you may share', shippedOnYourWord, describe)}
+                {@render fileGroup('modrinth-word', alone ? 'Included, on your word that you may share' : 'On your word that you may share', shippedOnYourWord, describe)}
               {/if}
             {/snippet}
             <!-- Several reasons fold under one line; a single reason is its own group. -->
             {#if shippedByAuthor.length + (shippedOpenLicense.length ? 1 : 0) + (shippedOnYourWord.length ? 1 : 0) > 1}
               <details class="file-group" bind:open={groupsOpen['modrinth-included']}>
                 <summary class="muted small">
-                  <Twisty open={!!groupsOpen['modrinth-included']} />Includes files Modrinth doesn't host ({modrinthShipped.length} files)
+                  <Twisty open={!!groupsOpen['modrinth-included']} />We'll include files Modrinth doesn't host ({modrinthShipped.length} files)
                 </summary>
-                <div class="group-body">{@render modrinthIncludes()}</div>
+                <div class="group-body">{@render modrinthIncludes(false)}</div>
               </details>
             {:else if modrinthShipped.length}
-              {@render modrinthIncludes()}
+              {@render modrinthIncludes(true)}
             {/if}
             {#if modrinthLeftOut.length}
-              {@render fileGroup('modrinth-left-out', 'Leaves out, while the CurseForge pack includes them', modrinthLeftOut, nameOf)}
+              {@render fileGroup('modrinth-left-out', 'Left out, but still in the CurseForge pack', modrinthLeftOut, nameOf)}
             {/if}
             {#if modrinthShipped.length || modrinthLeftOut.length}<button class="link small" onclick={onsettings}>Change in Pack settings</button>{/if}
           </dd>
@@ -581,7 +595,7 @@
       <div>
         <dt>Notes</dt>
         <dd>
-          {#if trimmed}Archived to <span class="file">changelogs/{trimmed}.md</span>, and changelog.md is cleared{:else}<span class="muted">Set a version first</span>{/if}
+          {#if trimmed}We'll archive them to <span class="file">changelogs/{trimmed}.md</span>, then clear changelog.md{:else}<span class="muted">Set a version first</span>{/if}
         </dd>
       </div>
     </dl>
@@ -668,7 +682,7 @@
      rest of What we'll ship out of view. -->
 {#snippet fileGroup(id: string, label: string, files: OverrideFileView[], describeFile: (file: OverrideFileView) => string, note: string | null = null)}
   {#if files.length === 1}
-    <span class="muted small">{label}{note ? ` (${note.replace(/\.$/, '')})` : ''}: <span class="file">{describeFile(files[0])}</span></span>
+    <span class="muted small">{label}: <span class="file">{describeFile(files[0])}</span>{note ? `. ${note}` : ''}</span>
   {:else}
     <details class="file-group" bind:open={groupsOpen[id]}>
       <summary class="muted small"><Twisty open={!!groupsOpen[id]} />{label} ({files.length} files)</summary>
@@ -718,10 +732,11 @@
     text-align: right;
   }
 
+  /* Wide enough for a file decision's text and its buttons to share a row. Prose keeps its own measure. */
   .publish {
     display: grid;
     gap: 28px;
-    max-width: 860px;
+    max-width: 1240px;
   }
 
   .head {

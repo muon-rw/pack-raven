@@ -2,6 +2,16 @@
 
 We record notable changes to packraven here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and packraven uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4]
+### Added
+- Twin matching (modrinth equivalents of curseforge files) now offers a fallback option to ship same-named but hash-mismatched versions to each platform export, if packraven couldn't produce an exact match
+
+### Changed
+- Twin matching now also compares images whose metadata may have changed but whose contents are identical. Fixes Derelict 2.1.0 not being matched.
+- Improved Publish responsiveness at larger window widths (still condensed to a column, to prevent overseparation)
+- The CurseForge allowlist warning on Publish now only shows if the file wasn't found on the allowlist
+- Various other improvements to Publish view's ux
+
 ## [0.3.3] - 2026-10-30
 ### Added
 - You can now select multiple files within a mod jar at a time for the "override in a {data/resource}pack" feature

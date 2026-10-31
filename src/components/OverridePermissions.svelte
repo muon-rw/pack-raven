@@ -149,7 +149,7 @@
       {@const key = `author-${group.author}`}
       {#snippet authorBody()}
         <p class="hint">
-          The {name} pack includes everything by {group.author}, including mods of theirs you add later.
+          We include everything by {group.author} in the {name} pack, along with mods of theirs you add later.
           {#if !group.files.length}None of their files are in the pack yet.{/if}
         </p>
         {#if group.files.length}

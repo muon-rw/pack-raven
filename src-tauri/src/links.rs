@@ -1,12 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::curseforge::{self, CfFile, CfMod};
-use crate::modrinth::{self, Project, Version};
+use crate::modrinth::{self, Project, Version, VersionFile};
 use crate::mod_updates::release_type;
-use crate::pack::{CurseforgeFile, ReleaseType};
+use crate::pack::{LockEntry, ModrinthFile, ReleaseType};
 use crate::twins::{self, Target};
 
 const SEARCH_RESULTS: u32 = 3;
@@ -33,13 +34,27 @@ pub struct ModrinthLink {
     pub evidence: Evidence,
 }
 
-/// A version both platforms have, as CurseForge's file, which is the one we'd put on disk.
+/// A version both platforms have the same build of, as CurseForge's file, which is the one we'd put on disk.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SharedVersion {
     pub file_id: u64,
-    pub name: String,
+    #[serde(default)]
+    pub version: String,
     pub newer: bool,
+    /// The files hash the same. Otherwise only their contents match.
+    #[serde(default)]
+    pub identical: bool,
+}
+
+/// Modrinth's own build of the pack's version, under the same file name.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ModrinthBuild {
+    pub version: String,
+    pub file: ModrinthFile,
+    /// The entries that differ from the pack's jar.
+    pub differences: Vec<String>,
 }
 
 /// What Modrinth has of a mod when it doesn't host the pack's file of it.
@@ -54,23 +69,34 @@ pub struct Skew {
     pub modrinth_newer: bool,
     /// CurseForge has Modrinth's newest version too.
     pub newest_on_curseforge: bool,
-    /// Modrinth has a file named like the pack's, with different contents.
-    pub same_name_differs: bool,
+    #[serde(default)]
+    pub modrinth_build: Option<ModrinthBuild>,
 }
 
 /// Looks for the Modrinth project of a CurseForge mod whose file Modrinth doesn't host, and what
 /// versions of it each platform has.
-pub async fn skew(target: &Target, loader_type: Option<u32>, channel: ReleaseType, installed: &CurseforgeFile, project: &CfMod) -> Result<Option<Skew>> {
+pub async fn skew(target: &Target, loader_type: Option<u32>, channel: ReleaseType, root: &Path, cache_dir: &Path, entry: &LockEntry, project: &CfMod) -> Result<Option<Skew>> {
+    let Some(installed) = &entry.curseforge else { return Ok(None) };
     let curseforge_files = curseforge::project_files(project.id, &target.minecraft, loader_type).await?;
     let loaders: &[&str] = if loader_type.is_some() { &target.mod_loaders } else { &[] };
     let Some((found, versions, evidence)) = linked_project(target, loaders, project, &curseforge_files).await? else { return Ok(None) };
 
-    let modrinth_names: HashSet<String> = versions.iter().flat_map(|v| &v.files).map(|f| f.filename.to_lowercase()).collect();
-    let on_both = |file: &&CfFile| modrinth_names.contains(&file.file_name.to_lowercase());
-    let same_name_differs = curseforge_files.iter().filter(on_both).any(|f| f.id == installed.file_id);
-    let shared_files: Vec<&CfFile> = curseforge_files.iter().filter(on_both).filter(|f| f.id != installed.file_id).collect();
-    let in_channel = shared_files.iter().filter(|f| release_type(f.release_type) <= channel).max_by_key(|f| f.id);
-    let shared = in_channel.or_else(|| shared_files.iter().max_by_key(|f| f.id));
+    let by_name: HashMap<String, (&Version, &VersionFile)> = versions.iter().flat_map(|v| v.files.iter().map(move |f| (f.filename.to_lowercase(), (v, f)))).collect();
+    let modrinth_build = match by_name.get(&twins::file_name(&entry.path).to_lowercase()) {
+        Some((version, file)) => Some(ModrinthBuild {
+            version: version_label(version),
+            file: version.lock_file(file),
+            differences: twins::differences(&root.join(&entry.path), &twins::cached(cache_dir, &file.url, &file.hashes.sha1).await?)?,
+        }),
+        None => None,
+    };
+    let mut on_both: Vec<(&CfFile, &Version, &VersionFile)> = curseforge_files
+        .iter()
+        .filter(|f| f.id != installed.file_id)
+        .filter_map(|f| by_name.get(&f.file_name.to_lowercase()).map(|(version, file)| (f, *version, *file)))
+        .collect();
+    on_both.sort_by_key(|(f, ..)| (release_type(f.release_type) > channel, std::cmp::Reverse(f.id)));
+    let shared = first_same_build(&on_both, cache_dir).await?;
 
     let installed_date = curseforge_files.iter().find(|f| f.id == installed.file_id).map(|f| f.file_date.clone());
     let installed_date = match installed_date {
@@ -78,8 +104,9 @@ pub async fn skew(target: &Target, loader_type: Option<u32>, channel: ReleaseTyp
         None => curseforge::files(&[installed.file_id]).await?.remove(&installed.file_id).map(|f| f.file_date),
     };
     let modrinth_newest = versions.iter().max_by(|a, b| a.date_published.cmp(&b.date_published));
-    // Authors often upload to Modrinth after CurseForge, so when CurseForge has the same file we go by
-    // CurseForge's order instead of the upload dates.
+    // Authors often upload to Modrinth after CurseForge, so when CurseForge has the same version we go
+    // by CurseForge's order instead of the upload dates. Only the order matters here, so a matching
+    // file name is enough, even if the builds differ.
     let on_curseforge = |version: &Version| version.files.iter().find_map(|f| curseforge_files.iter().find(|c| c.file_name.eq_ignore_ascii_case(&f.filename))).map(|c| c.id);
     let newest_on_curseforge = modrinth_newest.and_then(on_curseforge);
     let modrinth_newer = match (modrinth_newest, newest_on_curseforge) {
@@ -88,13 +115,38 @@ pub async fn skew(target: &Target, loader_type: Option<u32>, channel: ReleaseTyp
         (None, None) => false,
     };
     Ok(Some(Skew {
-        link: ModrinthLink { url: found.url(), project_id: found.id, title: found.title, evidence },
-        shared: shared.map(|f| SharedVersion { file_id: f.id, name: f.display_name.clone(), newer: f.id > installed.file_id }),
+        shared: shared.map(|(f, version, identical)| SharedVersion { file_id: f.id, version: version_label(version), newer: f.id > installed.file_id, identical }),
         modrinth_newer,
         newest_on_curseforge: newest_on_curseforge.is_some(),
-        modrinth_newest: modrinth_newest.map(|v| if v.version_number.is_empty() { v.name.clone() } else { v.version_number.clone() }),
-        same_name_differs,
+        modrinth_newest: modrinth_newest.map(version_label),
+        modrinth_build,
+        link: ModrinthLink { url: found.url(), project_id: found.id, title: found.title, evidence },
     }))
+}
+
+fn version_label(version: &Version) -> String {
+    if version.version_number.is_empty() { version.name.clone() } else { version.version_number.clone() }
+}
+
+// One file name on both platforms can still be two builds, and switching to one of those would bring
+// its row back. Matching hashes settle it. Otherwise we compare the files, but only for the first few,
+// since each comparison downloads both.
+const SHARED_COMPARISONS: usize = 2;
+
+async fn first_same_build<'a>(on_both: &[(&'a CfFile, &'a Version, &'a VersionFile)], cache_dir: &Path) -> Result<Option<(&'a CfFile, &'a Version, bool)>> {
+    let mut compared = 0;
+    for &(curseforge_file, version, file) in on_both {
+        let Some(sha1) = curseforge_file.sha1() else { continue };
+        if sha1.eq_ignore_ascii_case(&file.hashes.sha1) {
+            return Ok(Some((curseforge_file, version, true)));
+        }
+        let Some(url) = curseforge_file.download_url.as_deref().filter(|_| compared < SHARED_COMPARISONS) else { continue };
+        compared += 1;
+        if twins::same_contents(&twins::cached(cache_dir, url, sha1).await?, &twins::cached(cache_dir, &file.url, &file.hashes.sha1).await?) {
+            return Ok(Some((curseforge_file, version, false)));
+        }
+    }
+    Ok(None)
 }
 
 // CurseForge and Modrinth both write ISO 8601 times, with different fractions of a second.

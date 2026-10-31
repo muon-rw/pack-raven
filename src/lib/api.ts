@@ -241,14 +241,16 @@ export interface OverrideCandidate {
 
 export interface Skew {
   link: { projectId: string; title: string; url: string; evidence: 'sameFiles' | 'sameSource' | 'sameAuthor' }
-  // The newest version both platforms have, as CurseForge's file.
-  shared: { fileId: number; name: string; newer: boolean } | null
+  // The newest version both platforms have the same build of, as CurseForge's file. `identical` when
+  // the files hash the same, otherwise only their contents match.
+  shared: { fileId: number; version: string; newer: boolean; identical: boolean } | null
   modrinthNewest: string | null
   modrinthNewer: boolean
   // CurseForge has Modrinth's newest version too.
   newestOnCurseforge: boolean
-  // Modrinth has a file named like the pack's, with different contents.
-  sameNameDiffers: boolean
+  // Modrinth's own build of the pack's version, under the same file name, and the entries that differ.
+  // When none differ, packraven records it as the file's twin instead, so the file never shows here.
+  modrinthBuild: { version: string; differences: string[] } | null
 }
 
 export interface OverrideFileView {
@@ -706,6 +708,7 @@ export const api = {
   overrideChoices: (platform: Platform) => invoke<OverrideChoices>('override_choices', { platform }),
   lookUpOverrideCandidates: () => invoke<void>('look_up_override_candidates'),
   setModrinthAuthor: (author: string, allowed: boolean) => invoke<void>('set_modrinth_author', { author, allowed }),
+  useModrinthBuild: (path: string, using: boolean) => invoke<void>('use_modrinth_build', { path, using }),
   modrinthProjectTitle: (id: string) => invoke<string | null>('modrinth_project_title', { id }),
   publishedTo: (version: string) => invoke<{ curseforge: boolean; modrinth: boolean } | null>('published_to', { version }),
   buildServerPack: () => invoke<void>('build_server_pack'),
